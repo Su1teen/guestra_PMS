@@ -8,6 +8,7 @@ import fr from './locales/fr.json';
 import hr from './locales/hr.json';
 import it from './locales/it.json';
 import ptBR from './locales/pt-BR.json';
+import ru from './locales/ru.json';
 import srLatn from './locales/sr-Latn.json';
 
 /**
@@ -26,14 +27,15 @@ import srLatn from './locales/sr-Latn.json';
  * See docs/i18n.md.
  */
 export const SUPPORTED_LANGUAGES = [
-  { code: 'en', label: 'English' },
-  { code: 'de', label: 'Deutsch' },
-  { code: 'es', label: 'Español' },
-  { code: 'fr', label: 'Français' },
-  { code: 'hr', label: 'Hrvatski' },
-  { code: 'it', label: 'Italiano' },
-  { code: 'pt-BR', label: 'Português (Brasil)' },
-  { code: 'sr-Latn', label: 'Srpski' },
+  { code: 'en', label: 'English', flag: '🇬🇧' },
+  { code: 'de', label: 'Deutsch', flag: '🇩🇪' },
+  { code: 'es', label: 'Español', flag: '🇪🇸' },
+  { code: 'fr', label: 'Français', flag: '🇫🇷' },
+  { code: 'hr', label: 'Hrvatski', flag: '🇭🇷' },
+  { code: 'it', label: 'Italiano', flag: '🇮🇹' },
+  { code: 'pt-BR', label: 'Português (Brasil)', flag: '🇧🇷' },
+  { code: 'ru', label: 'Русский (RU)', flag: '🇷🇺' },
+  { code: 'sr-Latn', label: 'Srpski', flag: '🇷🇸' },
 ] as const;
 
 // Include `pt` / `sr` so navigator locales resolve via nonExplicitSupportedLngs (not shown in switcher).
@@ -57,6 +59,7 @@ i18n
       it: { translation: it },
       pt: { translation: ptBR },
       'pt-BR': { translation: ptBR },
+      ru: { translation: ru },
       sr: { translation: srLatn },
       'sr-Latn': { translation: srLatn },
     },

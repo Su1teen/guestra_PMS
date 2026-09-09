@@ -1,5 +1,5 @@
 import type { Locale } from 'date-fns';
-import { de, enUS, es, fr, hr, it, ptBR, srLatn } from 'date-fns/locale';
+import { de, enUS, es, fr, hr, it, ptBR, ru, srLatn } from 'date-fns/locale';
 
 const DATE_LOCALES: Record<string, Locale> = {
   de,
@@ -9,6 +9,7 @@ const DATE_LOCALES: Record<string, Locale> = {
   hr,
   it,
   pt: ptBR,
+  ru,
   sr: srLatn,
 };
 

@@ -233,6 +233,95 @@
     "revpar": "RevPAR",
     "waitingForEvents": "Warte auf Echtzeitereignisse…"
   },
+  "dynamicPricing": {
+    "title": "",
+    "subtitle": "",
+    "noForecast": "",
+    "categories": {
+      "standard": "",
+      "deluxe": "",
+      "suite": ""
+    },
+    "controls": {
+      "title": "",
+      "baseRate": "",
+      "floorPrice": "",
+      "roundingStep": "",
+      "category": "",
+      "multipliers": "",
+      "occupancyTiers": "",
+      "lowBelow": "",
+      "lowAdjustment": "",
+      "neutralThrough": "",
+      "highThrough": "",
+      "highAdjustment": "",
+      "peakAdjustment": "",
+      "paceTriggers": "",
+      "paceTier1Above": "",
+      "paceTier1Adjustment": "",
+      "paceTier2Above": "",
+      "paceTier2Adjustment": "",
+      "paceSignal": "",
+      "leadTime": "",
+      "leadNearDays": "",
+      "leadNearAdjustment": "",
+      "leadMidDays": "",
+      "leadMidAdjustment": "",
+      "intradayToggle": "",
+      "intradayAmount": "",
+      "intradayFromHour": "",
+      "propertyClock": "",
+      "localZone": ""
+    },
+    "waterfall": {
+      "title": "",
+      "base": "",
+      "category": "",
+      "event": "",
+      "occupancy": "",
+      "pace": "",
+      "leadTime": "",
+      "clamp": "",
+      "intraday": "",
+      "floor": "",
+      "rounding": "",
+      "total": ""
+    },
+    "solver": {
+      "title": "",
+      "hint": "",
+      "targetAdr": "",
+      "currentAdr": "",
+      "action": "",
+      "updated": ""
+    },
+    "kpi": {
+      "adr": "",
+      "occupancy": "",
+      "revpar": "",
+      "revparSubtitle": ""
+    },
+    "forecast": {
+      "title": "",
+      "synthetic": "",
+      "occupancySeries": "",
+      "dynamicSeries": "",
+      "baseSeries": ""
+    },
+    "table": {
+      "title": "",
+      "hint": "",
+      "date": "",
+      "dayOfWeek": "",
+      "occupancy": "",
+      "price": "",
+      "today": "",
+      "decayed": "",
+      "occupancyFor": "",
+      "overrides": "",
+      "resetOverrides": ""
+    }
+  },
   "folios": {
     "confirmRefund": "Diese Zahlung erstatten?",
     "refund": "Erstatten",
@@ -394,7 +483,8 @@
     "settings": "Einstellungen",
     "tagline": "Hotel‑AI‑Plattform",
     "tax": "Steuereinstellungen",
-    "usersRoles": "Benutzer & Positionen"
+    "usersRoles": "Benutzer & Positionen",
+    "dynamicPricing": ""
   },
   "permissions": {
     "groups": {
@@ -687,13 +777,30 @@
       "error": "Die Anfrage konnte nicht angenommen werden. Überprüfen Sie die aktuelle Verfügbarkeit und versuchen Sie es erneut."
     },
     "modifyStay": {
-      "action": "Aufenthalt ändern", "title": "Angenommenen Aufenthalt ändern", "activeStay": "Aktiver Aufenthalt", "proposedStay": "Geplanter Aufenthalt", "originalRequest": "Ursprüngliche Anfrage",
-      "arrivalDate": "Anreisedatum", "departureDate": "Abreisedatum", "invalidDates": "Die Abreise muss nach der Anreise liegen und beide Daten müssen gültig sein.",
-      "checking": "Gesamten Aufenthalt und aktuelles Angebot prüfen…", "previewError": "Dieser Aufenthalt kann derzeit nicht berechnet werden. Prüfen Sie die Verfügbarkeit und versuchen Sie es erneut.",
-      "priceChoice": "Preisgrundlage für den geänderten Aufenthalt", "prior": "Bisherige angenommene Grundlage", "priorDescription": "Überschneidende Daten behalten ihre angenommenen Preiszeilen; zusätzliche Nächte verwenden den nächstgelegenen angenommenen Randpreis.",
-      "current": "Aktuelles Angebot", "currentDescription": "Verwenden Sie die jetzt verfügbaren maßgeblichen Preise für den gesamten geplanten Aufenthalt.", "custom": "Benutzerdefinierte Summe", "customDescription": "Legen Sie eine positive betriebliche Summe fest und dokumentieren Sie den Grund.",
-      "awaitingQuote": "Angebot ausstehend", "enterAmount": "Betrag eingeben", "customTotal": "Benutzerdefinierte Summe", "customReason": "Grund für die benutzerdefinierte Summe",
-      "apply": "Aufenthaltsänderung anwenden", "applying": "Wird angewendet…", "commitError": "Der Aufenthalt konnte nicht geändert werden. Prüfen Sie die aktuelle Verfügbarkeit und das Angebot."
+      "action": "Aufenthalt ändern",
+      "title": "Angenommenen Aufenthalt ändern",
+      "activeStay": "Aktiver Aufenthalt",
+      "proposedStay": "Geplanter Aufenthalt",
+      "originalRequest": "Ursprüngliche Anfrage",
+      "arrivalDate": "Anreisedatum",
+      "departureDate": "Abreisedatum",
+      "invalidDates": "Die Abreise muss nach der Anreise liegen und beide Daten müssen gültig sein.",
+      "checking": "Gesamten Aufenthalt und aktuelles Angebot prüfen…",
+      "previewError": "Dieser Aufenthalt kann derzeit nicht berechnet werden. Prüfen Sie die Verfügbarkeit und versuchen Sie es erneut.",
+      "priceChoice": "Preisgrundlage für den geänderten Aufenthalt",
+      "prior": "Bisherige angenommene Grundlage",
+      "priorDescription": "Überschneidende Daten behalten ihre angenommenen Preiszeilen; zusätzliche Nächte verwenden den nächstgelegenen angenommenen Randpreis.",
+      "current": "Aktuelles Angebot",
+      "currentDescription": "Verwenden Sie die jetzt verfügbaren maßgeblichen Preise für den gesamten geplanten Aufenthalt.",
+      "custom": "Benutzerdefinierte Summe",
+      "customDescription": "Legen Sie eine positive betriebliche Summe fest und dokumentieren Sie den Grund.",
+      "awaitingQuote": "Angebot ausstehend",
+      "enterAmount": "Betrag eingeben",
+      "customTotal": "Benutzerdefinierte Summe",
+      "customReason": "Grund für die benutzerdefinierte Summe",
+      "apply": "Aufenthaltsänderung anwenden",
+      "applying": "Wird angewendet…",
+      "commitError": "Der Aufenthalt konnte nicht geändert werden. Prüfen Sie die aktuelle Verfügbarkeit und das Angebot."
     },
     "deny": {
       "title": "Buchungsanfrage ablehnen",
@@ -911,6 +1018,28 @@
         "email_updated": "E-Mail-Zustellung aktualisiert",
         "stay_amended": "Angenommener Aufenthalt geändert"
       }
+    }
+  },
+  "reservations": {
+    "tape": {
+      "dragHint": "",
+      "unavailable": "",
+      "legendBooked": "",
+      "legendBlocked": "",
+      "legendDirty": "",
+      "legendSelecting": "",
+      "previousWeek": "",
+      "nextWeek": "",
+      "createTitle": "",
+      "quoteTitle": "",
+      "quoteHint": "",
+      "eveningDiscount": "",
+      "selectRatePlan": "",
+      "specialRequests": "",
+      "confirmCreate": "",
+      "created": "",
+      "guestRequired": "",
+      "ratePlanRequired": ""
     }
   }
 }

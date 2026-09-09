@@ -488,6 +488,95 @@
     "viewRevenueManagement": "Afficher le Revenue Management",
     "waitingForEvents": "En attente d’événements en temps réel…"
   },
+  "dynamicPricing": {
+    "title": "",
+    "subtitle": "",
+    "noForecast": "",
+    "categories": {
+      "standard": "",
+      "deluxe": "",
+      "suite": ""
+    },
+    "controls": {
+      "title": "",
+      "baseRate": "",
+      "floorPrice": "",
+      "roundingStep": "",
+      "category": "",
+      "multipliers": "",
+      "occupancyTiers": "",
+      "lowBelow": "",
+      "lowAdjustment": "",
+      "neutralThrough": "",
+      "highThrough": "",
+      "highAdjustment": "",
+      "peakAdjustment": "",
+      "paceTriggers": "",
+      "paceTier1Above": "",
+      "paceTier1Adjustment": "",
+      "paceTier2Above": "",
+      "paceTier2Adjustment": "",
+      "paceSignal": "",
+      "leadTime": "",
+      "leadNearDays": "",
+      "leadNearAdjustment": "",
+      "leadMidDays": "",
+      "leadMidAdjustment": "",
+      "intradayToggle": "",
+      "intradayAmount": "",
+      "intradayFromHour": "",
+      "propertyClock": "",
+      "localZone": ""
+    },
+    "waterfall": {
+      "title": "",
+      "base": "",
+      "category": "",
+      "event": "",
+      "occupancy": "",
+      "pace": "",
+      "leadTime": "",
+      "clamp": "",
+      "intraday": "",
+      "floor": "",
+      "rounding": "",
+      "total": ""
+    },
+    "solver": {
+      "title": "",
+      "hint": "",
+      "targetAdr": "",
+      "currentAdr": "",
+      "action": "",
+      "updated": ""
+    },
+    "kpi": {
+      "adr": "",
+      "occupancy": "",
+      "revpar": "",
+      "revparSubtitle": ""
+    },
+    "forecast": {
+      "title": "",
+      "synthetic": "",
+      "occupancySeries": "",
+      "dynamicSeries": "",
+      "baseSeries": ""
+    },
+    "table": {
+      "title": "",
+      "hint": "",
+      "date": "",
+      "dayOfWeek": "",
+      "occupancy": "",
+      "price": "",
+      "today": "",
+      "decayed": "",
+      "occupancyFor": "",
+      "overrides": "",
+      "resetOverrides": ""
+    }
+  },
   "folios": {
     "adjust": "Ajuster",
     "allStatus": "Tous les statuts",
@@ -1235,7 +1324,8 @@
     "settings": "Paramètres",
     "tagline": "Plateforme AI pour l’hôtellerie",
     "tax": "Paramètres fiscaux",
-    "usersRoles": "Utilisateurs et rôles"
+    "usersRoles": "Utilisateurs et rôles",
+    "dynamicPricing": ""
   },
   "nightAudit": {
     "anomalyDetection": "Détection d’anomalies par AI",
@@ -1604,7 +1694,27 @@
     "guestMoved": "Client déplacé vers l’autre chambre",
     "siblingRooms": "Autres chambres de ce dossier",
     "siblingRoomLine": "Chambre {{room}} — {{guest}} ({{status}})",
-    "siblingUnassignedLine": "{{type}} — {{guest}} ({{status}})"
+    "siblingUnassignedLine": "{{type}} — {{guest}} ({{status}})",
+    "tape": {
+      "dragHint": "",
+      "unavailable": "",
+      "legendBooked": "",
+      "legendBlocked": "",
+      "legendDirty": "",
+      "legendSelecting": "",
+      "previousWeek": "",
+      "nextWeek": "",
+      "createTitle": "",
+      "quoteTitle": "",
+      "quoteHint": "",
+      "eveningDiscount": "",
+      "selectRatePlan": "",
+      "specialRequests": "",
+      "confirmCreate": "",
+      "created": "",
+      "guestRequired": "",
+      "ratePlanRequired": ""
+    }
   },
   "revenue": {
     "activeAgents": "Agents actifs",
@@ -2001,13 +2111,30 @@
       "error": "La demande n'a pas pu être acceptée. Vérifiez la disponibilité actuelle et réessayez."
     },
     "modifyStay": {
-      "action": "Modifier le séjour", "title": "Modifier le séjour accepté", "activeStay": "Séjour actif", "proposedStay": "Séjour proposé", "originalRequest": "Demande d'origine",
-      "arrivalDate": "Date d'arrivée", "departureDate": "Date de départ", "invalidDates": "Le départ doit suivre l'arrivée et les deux dates doivent être valides.",
-      "checking": "Vérification du séjour complet et du tarif actuel…", "previewError": "Ce séjour ne peut pas être chiffré maintenant. Vérifiez la disponibilité et réessayez.",
-      "priceChoice": "Base tarifaire du séjour modifié", "prior": "Base acceptée précédente", "priorDescription": "Les dates communes conservent leurs lignes acceptées ; les nuits ajoutées reprennent le tarif accepté de limite le plus proche.",
-      "current": "Devis actuel", "currentDescription": "Utilisez les tarifs de référence disponibles maintenant pour l'ensemble du séjour proposé.", "custom": "Total personnalisé", "customDescription": "Définissez un total opérationnel positif et consignez la raison.",
-      "awaitingQuote": "Devis en attente", "enterAmount": "Saisissez un montant", "customTotal": "Total personnalisé", "customReason": "Raison du total personnalisé",
-      "apply": "Appliquer la modification", "applying": "Application…", "commitError": "Le séjour n'a pas pu être modifié. Vérifiez la disponibilité et le devis les plus récents."
+      "action": "Modifier le séjour",
+      "title": "Modifier le séjour accepté",
+      "activeStay": "Séjour actif",
+      "proposedStay": "Séjour proposé",
+      "originalRequest": "Demande d'origine",
+      "arrivalDate": "Date d'arrivée",
+      "departureDate": "Date de départ",
+      "invalidDates": "Le départ doit suivre l'arrivée et les deux dates doivent être valides.",
+      "checking": "Vérification du séjour complet et du tarif actuel…",
+      "previewError": "Ce séjour ne peut pas être chiffré maintenant. Vérifiez la disponibilité et réessayez.",
+      "priceChoice": "Base tarifaire du séjour modifié",
+      "prior": "Base acceptée précédente",
+      "priorDescription": "Les dates communes conservent leurs lignes acceptées ; les nuits ajoutées reprennent le tarif accepté de limite le plus proche.",
+      "current": "Devis actuel",
+      "currentDescription": "Utilisez les tarifs de référence disponibles maintenant pour l'ensemble du séjour proposé.",
+      "custom": "Total personnalisé",
+      "customDescription": "Définissez un total opérationnel positif et consignez la raison.",
+      "awaitingQuote": "Devis en attente",
+      "enterAmount": "Saisissez un montant",
+      "customTotal": "Total personnalisé",
+      "customReason": "Raison du total personnalisé",
+      "apply": "Appliquer la modification",
+      "applying": "Application…",
+      "commitError": "Le séjour n'a pas pu être modifié. Vérifiez la disponibilité et le devis les plus récents."
     },
     "deny": {
       "title": "Refuser la demande de réservation",

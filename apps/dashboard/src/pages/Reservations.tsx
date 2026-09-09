@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatMoney } from '../lib/money';
 import { Routes, Route, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -16,12 +16,17 @@ import { format, addDays, eachDayOfInterval } from 'date-fns';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { moneyString, requirePropertyId } from '../lib/api-helpers';
+import { getDateLocale } from '../lib/date-locale';
+import type { NightDemand } from '../lib/dynamic-pricing';
 import { useProperty } from '../context/PropertyContext';
 import { useToast } from '../components/ui/Toast';
 import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import FindGuest from '../components/guests/FindGuest';
 import ReservationPartyPanel from '../components/reservations/ReservationPartyPanel';
+import CreateReservationModal, {
+  type CreateReservationPrefill,
+} from '../components/reservations/CreateReservationModal';
 import type { Guest } from '../types/guest';
 
 interface Reservation {
@@ -809,17 +814,54 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ---- Tape Chart / Calendar ----
+// ---- Tape Chart (Шахматка) ----
+
+interface TapeRoom {
+  id: string;
+  number: string;
+  status?: string;
+  roomTypeId?: string;
+}
+
+/** Room-level states that cannot be sold, whatever the date. */
+const UNSELLABLE_ROOM_STATUSES = ['out_of_order', 'out_of_service'];
+
+/**
+ * Interactive tape chart: drag across a room row to select the nights, drop to
+ * open the create modal.
+ *
+ * Two rules that look like details and are not:
+ *
+ * 1. A drag is locked to the row it STARTED on. The pointer wandering onto a
+ *    neighbouring row must never retarget the booking — that is how a guest
+ *    ends up in someone else's room.
+ * 2. The release is finalised from a window-level mouseup, not the cell's. A
+ *    pointer let go outside the grid otherwise leaves the chart stuck in a
+ *    selecting state that keeps repainting as the mouse moves.
+ */
 function AvailabilityCalendar() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { propertyId } = useProperty();
   const navigate = useNavigate();
+  const { toast } = useToast();
+  const dateLocale = getDateLocale(i18n.resolvedLanguage);
   const [startDate, setStartDate] = useState(new Date());
   const days = eachDayOfInterval({ start: startDate, end: addDays(startDate, 13) });
+  const dayKeys = days.map((d) => format(d, 'yyyy-MM-dd'));
+  const todayKey = format(new Date(), 'yyyy-MM-dd');
+
+  const [drag, setDrag] = useState<{ roomId: string; anchor: string; hovered: string } | null>(null);
+  const [prefill, setPrefill] = useState<CreateReservationPrefill | null>(null);
 
   const { data: roomsData } = useQuery({
     queryKey: ['rooms', propertyId],
     queryFn: () => api.get('/v1/rooms', { params: { propertyId } }).then((r) => r.data),
+    enabled: !!propertyId,
+  });
+
+  const { data: roomTypeData } = useQuery({
+    queryKey: ['rooms', 'types', propertyId],
+    queryFn: () => api.get('/v1/rooms/types', { params: { propertyId } }).then((r) => r.data),
     enabled: !!propertyId,
   });
 
@@ -840,12 +882,119 @@ function AvailabilityCalendar() {
     enabled: !!propertyId,
   });
 
-  const rooms = roomsData?.data ?? roomsData ?? [];
-  const reservations: Reservation[] = resData?.data ?? resData ?? [];
+  const rooms: TapeRoom[] = roomsData?.data ?? roomsData ?? [];
+  const roomTypes: { id: string; name: string }[] = roomTypeData?.data ?? roomTypeData ?? [];
+  const reservations: Reservation[] = useMemo(
+    () => resData?.data ?? resData ?? [],
+    [resData],
+  );
 
-  function getResForCell(roomId: string, date: string) {
-    return reservations.find((r) => r.roomId === roomId && r.arrivalDate <= date && r.departureDate > date);
-  }
+  const getResForCell = useCallback(
+    (roomId: string, date: string) =>
+      reservations.find(
+        (r) => r.roomId === roomId && r.arrivalDate <= date && r.departureDate > date,
+      ),
+    [reservations],
+  );
+
+  /**
+   * Sellability of one cell.
+   *
+   * OOO / OOS is a property of the ROOM, so it blocks every date. "Vacant
+   * dirty" is a property of the room RIGHT NOW — it blocks tonight, because
+   * nobody can be walked into an uncleaned room, but it says nothing about next
+   * Tuesday, and refusing future bookings on it would take sellable inventory
+   * off the chart every morning.
+   */
+  const cellState = useCallback(
+    (room: TapeRoom, date: string): 'booked' | 'blocked' | 'dirty' | 'free' => {
+      if (getResForCell(room.id, date)) return 'booked';
+      if (room.status && UNSELLABLE_ROOM_STATUSES.includes(room.status)) return 'blocked';
+      if (room.status === 'vacant_dirty' && date === todayKey) return 'dirty';
+      return 'free';
+    },
+    [getResForCell, todayKey],
+  );
+
+  const rangeKeys = useCallback((from: string, to: string) => {
+    const [first, last] = from <= to ? [from, to] : [to, from];
+    return dayKeys.filter((key) => key >= first && key <= last);
+  }, [dayKeys]);
+
+  const isSelected = (roomId: string, date: string) =>
+    !!drag && drag.roomId === roomId && date >= drag.anchor && date <= drag.hovered;
+
+  // Finalising on the window means a release anywhere ends the drag — including
+  // outside the table, where a cell-level handler never fires.
+  useEffect(() => {
+    if (!drag) return;
+    function finish() {
+      setDrag(null);
+      if (!drag) return;
+      const room = rooms.find((r) => r.id === drag.roomId);
+      if (!room) return;
+      const nights = rangeKeys(drag.anchor, drag.hovered);
+      if (nights.length === 0) return;
+      if (nights.some((date) => cellState(room, date) !== 'free')) {
+        // Abort outright rather than silently trimming the range: a half-length
+        // stay the user did not ask for is worse than no selection at all.
+        toast('error', t('reservations.tape.unavailable'));
+        return;
+      }
+      const checkIn = nights[0];
+      const checkOut = format(addDays(new Date(`${nights[nights.length - 1]}T00:00:00`), 1), 'yyyy-MM-dd');
+      setPrefill({
+        roomId: room.id,
+        roomNumber: room.number,
+        roomTypeId: room.roomTypeId ?? '',
+        roomTypeName: roomTypes.find((rt) => rt.id === room.roomTypeId)?.name,
+        checkInDate: checkIn,
+        checkOutDate: checkOut,
+      });
+    }
+    window.addEventListener('mouseup', finish);
+    // Escape must abandon a drag: a user who starts one on a wrong row needs a
+    // way out that is not "release and cancel a modal".
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setDrag(null);
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('mouseup', finish);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [drag, rooms, roomTypes, rangeKeys, cellState, toast, t]);
+
+  /**
+   * Per-night occupancy of the visible window, from the rows already on screen.
+   * The create modal prices the stay from this, so the quote and the chart can
+   * never disagree.
+   */
+  const demandByDate = useMemo(() => {
+    const sellable = rooms.filter(
+      (r) => !r.status || !UNSELLABLE_ROOM_STATUSES.includes(r.status),
+    ).length;
+    const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const bookingsLast24h = reservations.filter(
+      (r) => r.createdAt && new Date(r.createdAt).getTime() >= dayAgo,
+    ).length;
+    return new Map<string, NightDemand>(
+      dayKeys.map((date) => {
+        const sold = reservations.filter(
+          (r) => r.arrivalDate <= date && r.departureDate > date,
+        ).length;
+        return [
+          date,
+          {
+            date,
+            occupancyPercent: sellable > 0 ? Math.min(100, (sold / sellable) * 100) : 0,
+            bookingsLast24h,
+            eventAdjustment: 0,
+          },
+        ];
+      }),
+    );
+  }, [rooms, reservations, dayKeys]);
 
   if (!propertyId) {
     return <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('common.selectProperty')}</div>;
@@ -858,44 +1007,89 @@ function AvailabilityCalendar() {
           <ChevronLeft size={20} />
         </button>
         <CalendarDays size={24} className="text-telivity-teal" />
-        <h1 className="text-2xl font-semibold text-telivity-navy">{t('reservations.availabilityCalendar')}</h1>
+        <div>
+          <h1 className="text-2xl font-semibold text-telivity-navy">{t('reservations.availabilityCalendar')}</h1>
+          <p className="text-xs text-telivity-mid-grey">{t('reservations.tape.dragHint')}</p>
+        </div>
         <div className="ml-auto flex gap-2">
-          <button onClick={() => setStartDate(addDays(startDate, -7))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-telivity-light-grey">
+          <button onClick={() => setStartDate(addDays(startDate, -7))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-telivity-light-grey" aria-label={t('reservations.tape.previousWeek')}>
             <ChevronLeft size={14} />
           </button>
           <button onClick={() => setStartDate(new Date())} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-telivity-light-grey">
             {t('reservations.today')}
           </button>
-          <button onClick={() => setStartDate(addDays(startDate, 7))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-telivity-light-grey">
+          <button onClick={() => setStartDate(addDays(startDate, 7))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-telivity-light-grey" aria-label={t('reservations.tape.nextWeek')}>
             <ChevronRight size={14} />
           </button>
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-4 mb-3 text-xs text-telivity-mid-grey">
+        <LegendSwatch className="bg-telivity-teal/20" label={t('reservations.tape.legendBooked')} />
+        <LegendSwatch className="bg-telivity-orange/25" label={t('reservations.tape.legendBlocked')} />
+        <LegendSwatch className="bg-yellow-100" label={t('reservations.tape.legendDirty')} />
+        <LegendSwatch className="bg-telivity-teal/60" label={t('reservations.tape.legendSelecting')} />
+      </div>
+
       <div className="bg-white rounded-xl shadow-sm overflow-x-auto">
-        <table className="w-full min-w-[900px]">
+        <table className="w-full min-w-[900px] select-none">
           <thead>
             <tr className="bg-telivity-teal/5 border-b border-gray-100">
               <th className="px-3 py-2 text-left text-xs font-semibold text-telivity-slate w-24 sticky left-0 bg-telivity-teal/5">{t('reservations.room')}</th>
               {days.map((d) => (
                 <th key={d.toISOString()} className="px-1 py-2 text-center text-xs font-medium text-telivity-slate min-w-[60px]">
-                  <div>{format(d, 'EEE')}</div>
-                  <div className="text-telivity-mid-grey">{format(d, 'd')}</div>
+                  <div>{format(d, 'EEE', { locale: dateLocale })}</div>
+                  <div className="text-telivity-mid-grey">{format(d, 'd MMM', { locale: dateLocale })}</div>
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {(rooms as { id: string; number: string }[]).map((room, i) => (
+            {rooms.map((room, i) => (
               <tr key={room.id} className={`border-b border-gray-50 ${i % 2 === 1 ? 'bg-gray-50/30' : ''}`}>
                 <td className="px-3 py-2 text-xs font-medium text-telivity-navy sticky left-0 bg-white">{room.number}</td>
-                {days.map((d) => {
-                  const dateStr = format(d, 'yyyy-MM-dd');
-                  const res = getResForCell(room.id, dateStr);
+                {dayKeys.map((dateStr) => {
+                  const state = cellState(room, dateStr);
+                  const res = state === 'booked' ? getResForCell(room.id, dateStr) : undefined;
+                  const selected = isSelected(room.id, dateStr);
+                  const selectable = state === 'free';
                   return (
-                    <td key={dateStr} className={`px-0.5 py-2 text-center ${res ? '' : 'cursor-pointer hover:bg-telivity-teal/5'}`}>
+                    <td
+                      key={dateStr}
+                      onMouseDown={(event) => {
+                        if (!selectable) return;
+                        // Suppress the browser's text-drag so the row does not
+                        // get selected while the pointer sweeps across it.
+                        event.preventDefault();
+                        setDrag({ roomId: room.id, anchor: dateStr, hovered: dateStr });
+                      }}
+                      onMouseEnter={() => {
+                        // Locked to the originating row, forwards only.
+                        if (!drag || drag.roomId !== room.id) return;
+                        if (dateStr < drag.anchor) return;
+                        setDrag({ ...drag, hovered: dateStr });
+                      }}
+                      title={
+                        state === 'blocked'
+                          ? t('reservations.tape.legendBlocked')
+                          : state === 'dirty'
+                            ? t('reservations.tape.legendDirty')
+                            : res?.confirmationNumber
+                      }
+                      className={`px-0.5 py-2 text-center ${
+                        selected
+                          ? 'bg-telivity-teal/60'
+                          : state === 'blocked'
+                            ? 'bg-telivity-orange/25'
+                            : state === 'dirty'
+                              ? 'bg-yellow-100'
+                              : selectable
+                                ? 'cursor-pointer hover:bg-telivity-teal/10'
+                                : ''
+                      }`}
+                    >
                       {res ? (
-                        <div className="bg-telivity-teal/20 text-telivity-navy text-[10px] font-medium rounded px-1 py-0.5 truncate" title={`${res.confirmationNumber}`}>
+                        <div className="bg-telivity-teal/20 text-telivity-navy text-[10px] font-medium rounded px-1 py-0.5 truncate">
                           {res.confirmationNumber?.slice(-4) ?? '—'}
                         </div>
                       ) : null}
@@ -910,7 +1104,23 @@ function AvailabilityCalendar() {
           </tbody>
         </table>
       </div>
+
+      <CreateReservationModal
+        open={!!prefill}
+        prefill={prefill}
+        demandByDate={demandByDate}
+        onClose={() => setPrefill(null)}
+      />
     </div>
+  );
+}
+
+function LegendSwatch({ className, label }: { className: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className={`inline-block w-3 h-3 rounded ${className}`} aria-hidden="true" />
+      {label}
+    </span>
   );
 }
 

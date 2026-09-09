@@ -17,6 +17,7 @@ import fr from '../../locales/fr.json';
 import hr from '../../locales/hr.json';
 import itMessages from '../../locales/it.json';
 import ptBR from '../../locales/pt-BR.json';
+import ru from '../../locales/ru.json';
 import srLatn from '../../locales/sr-Latn.json';
 
 vi.mock('../../lib/api', () => ({
@@ -830,7 +831,7 @@ describe('BookingEngineSettings request configuration', () => {
 
 describe('booking request settings translations', () => {
   it('defines every visible booking-engine string in every supported locale', () => {
-    const locales = { en, de, es, fr, hr, it: itMessages, 'pt-BR': ptBR, 'sr-Latn': srLatn };
+    const locales = { en, de, es, fr, hr, it: itMessages, 'pt-BR': ptBR, ru, 'sr-Latn': srLatn };
     const leafPaths = (value: unknown, prefix = ''): string[] => Object.entries(value as Record<string, unknown>)
       .flatMap(([key, child]) => child && typeof child === 'object'
         ? leafPaths(child, prefix ? `${prefix}.${key}` : key)

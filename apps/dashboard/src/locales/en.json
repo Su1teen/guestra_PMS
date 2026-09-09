@@ -488,6 +488,95 @@
     "viewRevenueManagement": "View Revenue Management",
     "waitingForEvents": "Waiting for real-time events…"
   },
+  "dynamicPricing": {
+    "title": "Dynamic Pricing",
+    "subtitle": "Simulate the rate ladder for the next 30 days. Nothing here changes live rates.",
+    "noForecast": "No forecast for this window",
+    "categories": {
+      "standard": "Standard",
+      "deluxe": "Deluxe",
+      "suite": "Suite"
+    },
+    "controls": {
+      "title": "Model inputs",
+      "baseRate": "Base rate (standard)",
+      "floorPrice": "Floor price",
+      "roundingStep": "Rounding step",
+      "category": "Room category",
+      "multipliers": "Category multipliers",
+      "occupancyTiers": "Occupancy tiers",
+      "lowBelow": "Low demand below",
+      "lowAdjustment": "Low demand adjustment",
+      "neutralThrough": "Neutral through",
+      "highThrough": "High demand through",
+      "highAdjustment": "High demand adjustment",
+      "peakAdjustment": "Peak adjustment",
+      "paceTriggers": "Pace triggers (bookings in last 24h)",
+      "paceTier1Above": "Tier 1 above",
+      "paceTier1Adjustment": "Tier 1 adjustment",
+      "paceTier2Above": "Tier 2 above",
+      "paceTier2Adjustment": "Tier 2 adjustment",
+      "paceSignal": "Measured pace: {{count}} bookings in the last 24h",
+      "leadTime": "Lead time",
+      "leadNearDays": "Near window through (days)",
+      "leadNearAdjustment": "Near window adjustment",
+      "leadMidDays": "Mid window through (days)",
+      "leadMidAdjustment": "Mid window adjustment",
+      "intradayToggle": "Discount after {{hour}}:00 on the arrival day",
+      "intradayAmount": "Discount amount",
+      "intradayFromHour": "Applies from hour",
+      "propertyClock": "Property clock: {{time}} ({{zone}})",
+      "localZone": "local time"
+    },
+    "waterfall": {
+      "title": "Price breakdown",
+      "base": "Base rate ({{category}})",
+      "category": "Category multiplier ({{category}} {{percent}})",
+      "event": "Event demand ({{percent}})",
+      "occupancy": "Occupancy {{occupancy}}% ({{percent}})",
+      "pace": "Booking surge, {{count}} in 24h ({{percent}})",
+      "leadTime": "Lead time {{days}} d ({{percent}})",
+      "clamp": "Discount capped at {{percent}}",
+      "intraday": "Evening discount after {{hour}}:00 ({{percent}})",
+      "floor": "Floor price applied ({{floor}})",
+      "rounding": "Rounded to a step of {{step}}",
+      "total": "Final rate"
+    },
+    "solver": {
+      "title": "Goal seek: target ADR",
+      "hint": "Solves the base rate that reaches the target ADR across the forecast, in one algebraic step.",
+      "targetAdr": "Target ADR",
+      "currentAdr": "Projected ADR",
+      "action": "Calculate base rate",
+      "updated": "Recommended base rate applied"
+    },
+    "kpi": {
+      "adr": "Forecast ADR",
+      "occupancy": "Average occupancy",
+      "revpar": "Expected RevPAR",
+      "revparSubtitle": "Projected revenue {{revenue}}"
+    },
+    "forecast": {
+      "title": "{{days}}-day forecast",
+      "synthetic": "Sample demand — too little history",
+      "occupancySeries": "Occupancy %",
+      "dynamicSeries": "Dynamic rate",
+      "baseSeries": "Static base rate"
+    },
+    "table": {
+      "title": "Simulation",
+      "hint": "Edit an occupancy to see the rate, chart and breakdown recalculate.",
+      "date": "Date",
+      "dayOfWeek": "Day",
+      "occupancy": "Occupancy %",
+      "price": "Dynamic rate",
+      "today": "today",
+      "decayed": "evening",
+      "occupancyFor": "Occupancy on {{date}}",
+      "overrides": "{{count}} edited day(s)",
+      "resetOverrides": "Reset edits"
+    }
+  },
   "folios": {
     "adjust": "Adjust",
     "allStatus": "All Status",
@@ -1235,7 +1324,8 @@
     "settings": "Settings",
     "tagline": "Hotel AI Platform",
     "tax": "Tax Settings",
-    "usersRoles": "Users & Roles"
+    "usersRoles": "Users & Roles",
+    "dynamicPricing": "Dynamic Pricing"
   },
   "nightAudit": {
     "anomalyDetection": "AI Anomaly Detection",
@@ -1604,7 +1694,27 @@
     "guestMoved": "Guest moved to the other room",
     "siblingRooms": "Other rooms on this booking",
     "siblingRoomLine": "Room {{room}} — {{guest}} ({{status}})",
-    "siblingUnassignedLine": "{{type}} — {{guest}} ({{status}})"
+    "siblingUnassignedLine": "{{type}} — {{guest}} ({{status}})",
+    "tape": {
+      "dragHint": "Drag across a room row to select nights, then release to create a reservation",
+      "unavailable": "The selected dates are not available for booking",
+      "legendBooked": "Booked",
+      "legendBlocked": "Out of order",
+      "legendDirty": "Vacant dirty — not sellable today",
+      "legendSelecting": "Selecting",
+      "previousWeek": "Previous week",
+      "nextWeek": "Next week",
+      "createTitle": "New reservation — room {{room}}",
+      "quoteTitle": "Stay total, {{count}} night(s)",
+      "quoteHint": "Priced per night by the dynamic pricing engine. A same-day evening discount applies to the arrival night only.",
+      "eveningDiscount": "evening rate",
+      "selectRatePlan": "Select a rate plan",
+      "specialRequests": "Special requests",
+      "confirmCreate": "Create and confirm — {{total}}",
+      "created": "Reservation created and room {{room}} assigned",
+      "guestRequired": "Select a guest first",
+      "ratePlanRequired": "Select a rate plan first"
+    }
   },
   "revenue": {
     "activeAgents": "Active Agents",

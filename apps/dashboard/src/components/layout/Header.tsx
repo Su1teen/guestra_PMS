@@ -134,11 +134,12 @@ export default function Header({ onMenuClick }: HeaderProps) {
               title={t('header.language')}
             >
               <Languages size={16} className="text-telivity-slate" />
+              <span aria-hidden="true">{currentLang.flag}</span>
               <span className="uppercase hidden sm:inline">{currentLang.code}</span>
               <ChevronDown size={12} />
             </button>
             {langOpen && (
-              <div className="absolute top-full right-0 mt-1 w-36 bg-white rounded-lg shadow-lg border border-gray-200 z-50 py-1" role="listbox">
+              <div className="absolute top-full right-0 mt-1 w-44 bg-white rounded-lg shadow-lg border border-gray-200 z-50 py-1" role="listbox">
                 {SUPPORTED_LANGUAGES.map((lang) => (
                   <button
                     key={lang.code}
@@ -149,8 +150,8 @@ export default function Header({ onMenuClick }: HeaderProps) {
                       lang.code === currentLang.code ? 'text-telivity-teal font-semibold' : ''
                     }`}
                   >
+                    <span className="mr-2" aria-hidden="true">{lang.flag}</span>
                     {lang.label}
-                    <span className="text-telivity-mid-grey ml-2 uppercase">({lang.code})</span>
                   </button>
                 ))}
               </div>

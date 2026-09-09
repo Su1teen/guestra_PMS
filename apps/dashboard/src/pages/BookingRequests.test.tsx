@@ -13,6 +13,7 @@ import fr from '../locales/fr.json';
 import hr from '../locales/hr.json';
 import itMessages from '../locales/it.json';
 import ptBR from '../locales/pt-BR.json';
+import ru from '../locales/ru.json';
 import srLatn from '../locales/sr-Latn.json';
 
 const context = vi.hoisted(() => ({
@@ -1290,8 +1291,8 @@ describe('Booking request locales', () => {
     }
   });
 
-  it('defines every visible booking-request leaf in all eight locales', () => {
-    const locales = { en, de, es, fr, hr, it: itMessages, 'pt-BR': ptBR, 'sr-Latn': srLatn };
+  it('defines every visible booking-request leaf in all nine locales', () => {
+    const locales = { en, de, es, fr, hr, it: itMessages, 'pt-BR': ptBR, ru, 'sr-Latn': srLatn };
     const leafPaths = (value: unknown, prefix = ''): string[] => {
       if (value == null || typeof value !== 'object' || Array.isArray(value)) return [prefix];
       return Object.entries(value as Record<string, unknown>)

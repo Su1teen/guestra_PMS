@@ -477,6 +477,95 @@
     "viewRevenueManagement": "Ver Gestão de Receita",
     "waitingForEvents": "Aguardando eventos em tempo real…"
   },
+  "dynamicPricing": {
+    "title": "",
+    "subtitle": "",
+    "noForecast": "",
+    "categories": {
+      "standard": "",
+      "deluxe": "",
+      "suite": ""
+    },
+    "controls": {
+      "title": "",
+      "baseRate": "",
+      "floorPrice": "",
+      "roundingStep": "",
+      "category": "",
+      "multipliers": "",
+      "occupancyTiers": "",
+      "lowBelow": "",
+      "lowAdjustment": "",
+      "neutralThrough": "",
+      "highThrough": "",
+      "highAdjustment": "",
+      "peakAdjustment": "",
+      "paceTriggers": "",
+      "paceTier1Above": "",
+      "paceTier1Adjustment": "",
+      "paceTier2Above": "",
+      "paceTier2Adjustment": "",
+      "paceSignal": "",
+      "leadTime": "",
+      "leadNearDays": "",
+      "leadNearAdjustment": "",
+      "leadMidDays": "",
+      "leadMidAdjustment": "",
+      "intradayToggle": "",
+      "intradayAmount": "",
+      "intradayFromHour": "",
+      "propertyClock": "",
+      "localZone": ""
+    },
+    "waterfall": {
+      "title": "",
+      "base": "",
+      "category": "",
+      "event": "",
+      "occupancy": "",
+      "pace": "",
+      "leadTime": "",
+      "clamp": "",
+      "intraday": "",
+      "floor": "",
+      "rounding": "",
+      "total": ""
+    },
+    "solver": {
+      "title": "",
+      "hint": "",
+      "targetAdr": "",
+      "currentAdr": "",
+      "action": "",
+      "updated": ""
+    },
+    "kpi": {
+      "adr": "",
+      "occupancy": "",
+      "revpar": "",
+      "revparSubtitle": ""
+    },
+    "forecast": {
+      "title": "",
+      "synthetic": "",
+      "occupancySeries": "",
+      "dynamicSeries": "",
+      "baseSeries": ""
+    },
+    "table": {
+      "title": "",
+      "hint": "",
+      "date": "",
+      "dayOfWeek": "",
+      "occupancy": "",
+      "price": "",
+      "today": "",
+      "decayed": "",
+      "occupancyFor": "",
+      "overrides": "",
+      "resetOverrides": ""
+    }
+  },
   "folios": {
     "allStatus": "Todos os status",
     "amount": "Valor",
@@ -1158,7 +1247,8 @@
     "settings": "Configurações",
     "tagline": "Plataforma de IA Hoteleira",
     "tax": "Configurações Fiscais",
-    "usersRoles": "Usuários e Cargos"
+    "usersRoles": "Usuários e Cargos",
+    "dynamicPricing": ""
   },
   "nightAudit": {
     "anomalyDetection": "Detecção de anomalias por IA",
@@ -1493,7 +1583,27 @@
     "messageDrafted": "Mensagem rascunhada (SMTP não configurado ou envio adiado)",
     "smsSent": "SMS enviado",
     "smsDrafted": "SMS rascunhado (provedor não configurado ou envio adiado)",
-    "messageFailed": "Falha ao enviar mensagem"
+    "messageFailed": "Falha ao enviar mensagem",
+    "tape": {
+      "dragHint": "",
+      "unavailable": "",
+      "legendBooked": "",
+      "legendBlocked": "",
+      "legendDirty": "",
+      "legendSelecting": "",
+      "previousWeek": "",
+      "nextWeek": "",
+      "createTitle": "",
+      "quoteTitle": "",
+      "quoteHint": "",
+      "eveningDiscount": "",
+      "selectRatePlan": "",
+      "specialRequests": "",
+      "confirmCreate": "",
+      "created": "",
+      "guestRequired": "",
+      "ratePlanRequired": ""
+    }
   },
   "revenue": {
     "activeAgents": "Agentes Ativos",
@@ -1886,13 +1996,30 @@
       "error": "A solicitação não pôde ser aceita. Revise a disponibilidade atual e tente novamente."
     },
     "modifyStay": {
-      "action": "Alterar estadia", "title": "Alterar estadia aceita", "activeStay": "Estadia ativa", "proposedStay": "Estadia proposta", "originalRequest": "Pedido original",
-      "arrivalDate": "Data de chegada", "departureDate": "Data de saída", "invalidDates": "A saída deve ser posterior à chegada e ambas as datas devem ser válidas.",
-      "checking": "Verificando toda a estadia e a cotação atual…", "previewError": "Não é possível calcular esta estadia agora. Revise a disponibilidade e tente novamente.",
-      "priceChoice": "Base de tarifa para a estadia alterada", "prior": "Base aceita anterior", "priorDescription": "As datas sobrepostas mantêm as linhas aceitas; noites adicionadas usam a tarifa limite aceita mais próxima.",
-      "current": "Cotação atual", "currentDescription": "Use as tarifas oficiais disponíveis agora para toda a estadia proposta.", "custom": "Total personalizado", "customDescription": "Defina um total operacional positivo e registre o motivo.",
-      "awaitingQuote": "Aguardando cotação", "enterAmount": "Informe um valor", "customTotal": "Total personalizado", "customReason": "Motivo do total personalizado",
-      "apply": "Confirmar alteração da estadia", "applying": "Confirmando…", "commitError": "Não foi possível alterar a estadia. Revise a disponibilidade e a cotação mais recentes."
+      "action": "Alterar estadia",
+      "title": "Alterar estadia aceita",
+      "activeStay": "Estadia ativa",
+      "proposedStay": "Estadia proposta",
+      "originalRequest": "Pedido original",
+      "arrivalDate": "Data de chegada",
+      "departureDate": "Data de saída",
+      "invalidDates": "A saída deve ser posterior à chegada e ambas as datas devem ser válidas.",
+      "checking": "Verificando toda a estadia e a cotação atual…",
+      "previewError": "Não é possível calcular esta estadia agora. Revise a disponibilidade e tente novamente.",
+      "priceChoice": "Base de tarifa para a estadia alterada",
+      "prior": "Base aceita anterior",
+      "priorDescription": "As datas sobrepostas mantêm as linhas aceitas; noites adicionadas usam a tarifa limite aceita mais próxima.",
+      "current": "Cotação atual",
+      "currentDescription": "Use as tarifas oficiais disponíveis agora para toda a estadia proposta.",
+      "custom": "Total personalizado",
+      "customDescription": "Defina um total operacional positivo e registre o motivo.",
+      "awaitingQuote": "Aguardando cotação",
+      "enterAmount": "Informe um valor",
+      "customTotal": "Total personalizado",
+      "customReason": "Motivo do total personalizado",
+      "apply": "Confirmar alteração da estadia",
+      "applying": "Confirmando…",
+      "commitError": "Não foi possível alterar a estadia. Revise a disponibilidade e a cotação mais recentes."
     },
     "deny": {
       "title": "Negar solicitação de reserva",

@@ -8,6 +8,7 @@ import {
   Sparkles,
   Receipt,
   BadgeDollarSign,
+  Gauge,
   TrendingUp,
   Moon,
   BarChart3,
@@ -72,6 +73,7 @@ const NAV_SECTIONS: NavSection[] = [
   {
     items: [
       { to: '/rate-plans', icon: BadgeDollarSign, labelKey: 'nav.ratePlans', permission: 'rateplans.read' },
+      { to: '/dynamic-pricing', icon: Gauge, labelKey: 'nav.dynamicPricing', permission: 'revenue.manage' },
       { to: '/revenue', icon: TrendingUp, labelKey: 'nav.revenueManagement', permission: 'revenue.manage' },
       { to: '/night-audit', icon: Moon, labelKey: 'nav.nightAudit', permission: 'nightaudit.run' },
       { to: '/reports', icon: BarChart3, labelKey: 'nav.reports', permission: 'reports.view' },

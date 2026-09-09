@@ -14,6 +14,7 @@ const Rooms = lazy(() => import('./pages/Rooms'));
 const Housekeeping = lazy(() => import('./pages/Housekeeping'));
 const Folios = lazy(() => import('./pages/Folios'));
 const RatePlans = lazy(() => import('./pages/RatePlans'));
+const DynamicPricing = lazy(() => import('./pages/DynamicPricing'));
 const Revenue = lazy(() => import('./pages/Revenue'));
 const NightAudit = lazy(() => import('./pages/NightAudit'));
 const Reports = lazy(() => import('./pages/Reports'));
@@ -56,6 +57,7 @@ export default function App() {
             <Route path="/accounting/*" element={<Accounting />} />
             <Route path="/tax/*" element={<TaxSettings />} />
             <Route path="/rate-plans/*" element={<RatePlans />} />
+            <Route path="/dynamic-pricing" element={<DynamicPricing />} />
             <Route path="/revenue/*" element={<Revenue />} />
             <Route path="/night-audit" element={<NightAudit />} />
             <Route path="/reports/*" element={<Reports />} />

@@ -488,6 +488,95 @@
     "viewRevenueManagement": "Prikaži upravljanje prihodima",
     "waitingForEvents": "Čekanje događaja u realnom vremenu…"
   },
+  "dynamicPricing": {
+    "title": "",
+    "subtitle": "",
+    "noForecast": "",
+    "categories": {
+      "standard": "",
+      "deluxe": "",
+      "suite": ""
+    },
+    "controls": {
+      "title": "",
+      "baseRate": "",
+      "floorPrice": "",
+      "roundingStep": "",
+      "category": "",
+      "multipliers": "",
+      "occupancyTiers": "",
+      "lowBelow": "",
+      "lowAdjustment": "",
+      "neutralThrough": "",
+      "highThrough": "",
+      "highAdjustment": "",
+      "peakAdjustment": "",
+      "paceTriggers": "",
+      "paceTier1Above": "",
+      "paceTier1Adjustment": "",
+      "paceTier2Above": "",
+      "paceTier2Adjustment": "",
+      "paceSignal": "",
+      "leadTime": "",
+      "leadNearDays": "",
+      "leadNearAdjustment": "",
+      "leadMidDays": "",
+      "leadMidAdjustment": "",
+      "intradayToggle": "",
+      "intradayAmount": "",
+      "intradayFromHour": "",
+      "propertyClock": "",
+      "localZone": ""
+    },
+    "waterfall": {
+      "title": "",
+      "base": "",
+      "category": "",
+      "event": "",
+      "occupancy": "",
+      "pace": "",
+      "leadTime": "",
+      "clamp": "",
+      "intraday": "",
+      "floor": "",
+      "rounding": "",
+      "total": ""
+    },
+    "solver": {
+      "title": "",
+      "hint": "",
+      "targetAdr": "",
+      "currentAdr": "",
+      "action": "",
+      "updated": ""
+    },
+    "kpi": {
+      "adr": "",
+      "occupancy": "",
+      "revpar": "",
+      "revparSubtitle": ""
+    },
+    "forecast": {
+      "title": "",
+      "synthetic": "",
+      "occupancySeries": "",
+      "dynamicSeries": "",
+      "baseSeries": ""
+    },
+    "table": {
+      "title": "",
+      "hint": "",
+      "date": "",
+      "dayOfWeek": "",
+      "occupancy": "",
+      "price": "",
+      "today": "",
+      "decayed": "",
+      "occupancyFor": "",
+      "overrides": "",
+      "resetOverrides": ""
+    }
+  },
   "folios": {
     "adjust": "Koriguj",
     "allStatus": "Svi statusi",
@@ -1235,7 +1324,8 @@
     "settings": "Podešavanja",
     "tagline": "Hotelska AI platforma",
     "tax": "Podešavanja poreza",
-    "usersRoles": "Korisnici i uloge"
+    "usersRoles": "Korisnici i uloge",
+    "dynamicPricing": ""
   },
   "nightAudit": {
     "anomalyDetection": "AI detekcija anomalija",
@@ -1604,7 +1694,27 @@
     "guestMoved": "Gost je premešten u drugu sobu",
     "siblingRooms": "Ostale sobe u okviru ove rezervacije",
     "siblingRoomLine": "Soba {{room}} — {{guest}} ({{status}})",
-    "siblingUnassignedLine": "{{type}} — {{guest}} ({{status}})"
+    "siblingUnassignedLine": "{{type}} — {{guest}} ({{status}})",
+    "tape": {
+      "dragHint": "",
+      "unavailable": "",
+      "legendBooked": "",
+      "legendBlocked": "",
+      "legendDirty": "",
+      "legendSelecting": "",
+      "previousWeek": "",
+      "nextWeek": "",
+      "createTitle": "",
+      "quoteTitle": "",
+      "quoteHint": "",
+      "eveningDiscount": "",
+      "selectRatePlan": "",
+      "specialRequests": "",
+      "confirmCreate": "",
+      "created": "",
+      "guestRequired": "",
+      "ratePlanRequired": ""
+    }
   },
   "revenue": {
     "activeAgents": "Aktivni agenti",
@@ -2001,13 +2111,30 @@
       "error": "Zahtev nije mogao biti prihvaćen. Pregledajte trenutnu dostupnost i pokušajte ponovo."
     },
     "modifyStay": {
-      "action": "Izmeni boravak", "title": "Izmeni prihvaćeni boravak", "activeStay": "Aktivni boravak", "proposedStay": "Predloženi boravak", "originalRequest": "Prvobitni zahtev",
-      "arrivalDate": "Datum dolaska", "departureDate": "Datum odlaska", "invalidDates": "Odlazak mora biti posle dolaska, a oba datuma moraju biti ispravna.",
-      "checking": "Provera celog boravka i trenutne ponude…", "previewError": "Ovaj boravak trenutno nije moguće obračunati. Proverite dostupnost i pokušajte ponovo.",
-      "priceChoice": "Osnova cene za izmenjeni boravak", "prior": "Prethodna prihvaćena osnova", "priorDescription": "Datumi koji se preklapaju zadržavaju prihvaćene stavke; dodate noći koriste najbližu graničnu prihvaćenu cenu.",
-      "current": "Trenutna ponuda", "currentDescription": "Koristite merodavne cene koje su sada dostupne za ceo predloženi boravak.", "custom": "Prilagođeni total", "customDescription": "Postavite pozitivan operativni zbir i zabeležite razlog.",
-      "awaitingQuote": "Ponuda se čeka", "enterAmount": "Unesite iznos", "customTotal": "Prilagođeni total", "customReason": "Razlog za prilagođeni total",
-      "apply": "Primeni izmenu boravka", "applying": "Izmena je u toku…", "commitError": "Boravak nije mogao biti izmenjen. Pregledajte najnoviju dostupnost i ponudu."
+      "action": "Izmeni boravak",
+      "title": "Izmeni prihvaćeni boravak",
+      "activeStay": "Aktivni boravak",
+      "proposedStay": "Predloženi boravak",
+      "originalRequest": "Prvobitni zahtev",
+      "arrivalDate": "Datum dolaska",
+      "departureDate": "Datum odlaska",
+      "invalidDates": "Odlazak mora biti posle dolaska, a oba datuma moraju biti ispravna.",
+      "checking": "Provera celog boravka i trenutne ponude…",
+      "previewError": "Ovaj boravak trenutno nije moguće obračunati. Proverite dostupnost i pokušajte ponovo.",
+      "priceChoice": "Osnova cene za izmenjeni boravak",
+      "prior": "Prethodna prihvaćena osnova",
+      "priorDescription": "Datumi koji se preklapaju zadržavaju prihvaćene stavke; dodate noći koriste najbližu graničnu prihvaćenu cenu.",
+      "current": "Trenutna ponuda",
+      "currentDescription": "Koristite merodavne cene koje su sada dostupne za ceo predloženi boravak.",
+      "custom": "Prilagođeni total",
+      "customDescription": "Postavite pozitivan operativni zbir i zabeležite razlog.",
+      "awaitingQuote": "Ponuda se čeka",
+      "enterAmount": "Unesite iznos",
+      "customTotal": "Prilagođeni total",
+      "customReason": "Razlog za prilagođeni total",
+      "apply": "Primeni izmenu boravka",
+      "applying": "Izmena je u toku…",
+      "commitError": "Boravak nije mogao biti izmenjen. Pregledajte najnoviju dostupnost i ponudu."
     },
     "deny": {
       "title": "Odbijte zahtev za rezervaciju",
