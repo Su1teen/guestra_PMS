@@ -10,7 +10,7 @@
 
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { createHash } from 'node:crypto';
 import {
   ROLE_DEFAULT_PERMISSIONS,
@@ -71,11 +71,17 @@ async function main() {
   const client = postgres(DATABASE_URL, postgresOptionsFromEnv());
   const db = drizzle(client, { schema });
 
-  // Idempotency check
+  // Idempotency check — match by code OR by the fixed demo id, since a
+  // previous seed run (or an earlier seed version) may have created the
+  // property with a different code but the same deterministic id.
+  const propertyId = sid('a0000001', 1);
   const existing = await db
     .select()
     .from(schema.properties)
-    .where(eq(schema.properties.code, PROPERTY_CODE))
+    .where(or(
+      eq(schema.properties.code, PROPERTY_CODE),
+      eq(schema.properties.id, propertyId),
+    ))
     .limit(1);
 
   if (existing.length > 0) {
@@ -89,7 +95,6 @@ async function main() {
   // -----------------------------------------------------------------------
   // 1. Property
   // -----------------------------------------------------------------------
-  const propertyId = sid('a0000001', 1);
 
   await db.insert(schema.properties).values({
     id: propertyId,
