@@ -6,6 +6,8 @@ import {
   IsObject,
   IsDateString,
   IsNumber,
+  IsString,
+  IsNotEmpty,
   Min,
   ValidateIf,
 } from 'class-validator';
@@ -63,6 +65,15 @@ export class CreateRateRestrictionDto {
   @IsNumber({ maxDecimalPlaces: 2 })
   @Min(0)
   rateOverride?: number | null;
+
+  @ApiPropertyOptional({
+    example: 'Corporate event demand adjustment',
+    description: 'Required business reason whenever a manual nightly rate override is set.',
+  })
+  @ValidateIf((o) => o.rateOverride !== null && o.rateOverride !== undefined)
+  @IsString()
+  @IsNotEmpty()
+  overrideReason?: string;
 
   @ApiPropertyOptional({
     example: { friday: 20, saturday: 30 },

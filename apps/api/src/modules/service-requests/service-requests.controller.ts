@@ -19,7 +19,9 @@ import {
   UpdateServiceRequestDto,
   ListServiceRequestsDto,
   CreateTaskFromRequestDto,
+  AddServiceRequestCommentDto,
 } from './dto/service-request.dto';
+import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
 
 @ApiTags('service-requests')
 @Controller('service-requests')
@@ -62,6 +64,17 @@ export class ServiceRequestsController {
     @Body() dto: UpdateServiceRequestDto,
   ) {
     return this.serviceRequestsService.update(id, propertyId, dto);
+  }
+
+  @Post(':id/comments')
+  @RequirePermissions('ops.manage')
+  @ApiOperation({ summary: 'Add an operational task comment' })
+  addComment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddServiceRequestCommentDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.serviceRequestsService.addComment(id, dto.propertyId, dto.body, actor.userId);
   }
 
   @Post(':id/create-task')

@@ -18,6 +18,7 @@ import { CreateRateRestrictionDto } from './dto/create-rate-restriction.dto';
 import { UpdateRateRestrictionDto } from './dto/update-rate-restriction.dto';
 import { EffectiveRateQueryDto } from './dto/effective-rate-query.dto';
 import { resolvePropertyId } from '../../common/property-id';
+import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
 
 @ApiTags('rate-plans')
 @Controller('rate-plans')
@@ -31,6 +32,13 @@ export class RatePlanController {
   @ApiResponse({ status: 200, description: 'List of rate plans' })
   getAllRatePlans(@Query('propertyId', ParseUUIDPipe) propertyId: string) {
     return this.ratePlanService.findAll(propertyId);
+  }
+
+  @Get('pricing-history')
+  @RequirePermissions('rateplans.read')
+  @ApiOperation({ summary: 'Get manual pricing override audit history' })
+  pricingHistory(@Query('propertyId', ParseUUIDPipe) propertyId: string) {
+    return this.ratePlanService.pricingHistory(propertyId);
   }
 
   @Post()
@@ -121,8 +129,9 @@ export class RatePlanController {
   createRestriction(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateRateRestrictionDto,
+    @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.ratePlanService.createRestriction(id, dto.propertyId, dto);
+    return this.ratePlanService.createRestriction(id, dto.propertyId, dto, actor);
   }
 
   @Patch(':id/restrictions/:restrictionId')
@@ -136,8 +145,9 @@ export class RatePlanController {
     @Param('restrictionId', ParseUUIDPipe) restrictionId: string,
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
     @Body() dto: UpdateRateRestrictionDto,
+    @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.ratePlanService.updateRestriction(restrictionId, propertyId, dto);
+    return this.ratePlanService.updateRestriction(restrictionId, propertyId, dto, actor);
   }
 
   @Delete(':id/restrictions/:restrictionId')

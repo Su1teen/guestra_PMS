@@ -103,6 +103,10 @@ export {
   serviceRequestStatusEnum,
   serviceRequestTypeEnum,
   serviceRequests,
+  maintenanceCategoryEnum,
+  maintenancePriorityEnum,
+  maintenanceStatusEnum,
+  maintenanceTickets,
 } from './ops.js';
 
 // Demand capture — turnaway + waitlist

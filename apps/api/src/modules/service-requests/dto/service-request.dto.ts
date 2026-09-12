@@ -4,6 +4,9 @@ import {
   IsString,
   IsEnum,
   IsInt,
+  IsDateString,
+  Min,
+  Max,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
@@ -16,9 +19,20 @@ const TYPES = [
   'stayover',
   'inspection',
   'service_request',
+  'housekeeping',
+  'late_checkout',
+  'early_checkin',
+  'extra_towel',
+  'extra_blanket',
+  'spa_booking',
+  'restaurant_request',
+  'transfer',
+  'breakfast',
+  'technical_problem',
+  'other',
 ] as const;
 
-const STATUSES = ['open', 'in_progress', 'done', 'cancelled'] as const;
+const STATUSES = ['open', 'assigned', 'in_progress', 'done', 'completed', 'cancelled'] as const;
 
 export class CreateServiceRequestDto {
   @ApiProperty()
@@ -35,6 +49,11 @@ export class CreateServiceRequestDto {
   @IsUUID()
   reservationId?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  guestId?: string;
+
   @ApiProperty({ enum: TYPES })
   @IsEnum(TYPES)
   type!: string;
@@ -43,7 +62,34 @@ export class CreateServiceRequestDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(0)
+  @Max(3)
   priority?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  assigneeId?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  dueAt?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  slaDeadline?: string;
 
   @ApiProperty()
   @IsString()
@@ -71,6 +117,11 @@ export class UpdateServiceRequestDto {
   @IsUUID()
   reservationId?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  guestId?: string;
+
   @ApiPropertyOptional({ enum: TYPES })
   @IsOptional()
   @IsEnum(TYPES)
@@ -80,7 +131,34 @@ export class UpdateServiceRequestDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(0)
+  @Max(3)
   priority?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  category?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  assigneeId?: string | null;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  dueAt?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  slaDeadline?: string;
 
   @ApiPropertyOptional({ enum: STATUSES })
   @IsOptional()
@@ -112,6 +190,24 @@ export class ListServiceRequestsDto {
   @IsOptional()
   @IsEnum(TYPES)
   type?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  department?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(3)
+  priority?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsUUID()
+  assigneeId?: string;
 }
 
 export class CreateTaskFromRequestDto {
@@ -123,4 +219,14 @@ export class CreateTaskFromRequestDto {
   @IsOptional()
   @IsString()
   serviceDate?: string;
+}
+
+export class AddServiceRequestCommentDto {
+  @ApiProperty()
+  @IsUUID()
+  propertyId!: string;
+
+  @ApiProperty()
+  @IsString()
+  body!: string;
 }

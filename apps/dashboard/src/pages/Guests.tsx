@@ -26,6 +26,7 @@ import { useProperty } from '../context/PropertyContext';
 import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import CreateGuestModal from '../components/guests/CreateGuestModal';
+import Guest360Panel from '../components/guests/Guest360Panel';
 import type { Guest } from '../types/guest';
 
 function guestListSearchParams(term: string): { search?: string; loyaltyNumber?: string } {
@@ -248,11 +249,12 @@ function GuestDetail() {
     enabled: !!id && !!propertyId,
   });
 
-  const { data: stays = [] } = useQuery({
-    queryKey: ['guest-stays', id, propertyId],
-    queryFn: () => api.get(`/v1/guests/${id}/stays`, { params: { propertyId } }).then((r) => r.data),
+  const { data: guest360 } = useQuery({
+    queryKey: ['guest-360', id, propertyId],
+    queryFn: () => api.get(`/v1/guests/${id}/360`, { params: { propertyId } }).then((r) => r.data),
     enabled: !!id && !!propertyId,
   });
+  const stays = guest360?.stays ?? [];
 
   const updateMutation = useMutation({
     mutationFn: () =>
@@ -387,6 +389,8 @@ function GuestDetail() {
         {guest.vipLevel && guest.vipLevel !== 'none' && <StatusBadge status={guest.vipLevel} />}
         {guest.isDnr && <StatusBadge status="error" label="DNR" />}
       </div>
+
+      {guest360 && propertyId && <Guest360Panel data={guest360} propertyId={propertyId} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Profile Card & Complete Data */}

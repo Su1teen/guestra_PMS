@@ -141,6 +141,16 @@ export const WEBHOOK_EVENTS = {
   'rate.ai_adjusted': 'rate.ai_adjusted',
   'housekeeping.ai_assigned': 'housekeeping.ai_assigned',
 
+  // Unified hotel operations and engineering
+  'operations.task_created': 'operations.task_created',
+  'operations.task_updated': 'operations.task_updated',
+  'operations.task_completed': 'operations.task_completed',
+  'guest_request.created': 'guest_request.created',
+  'guest_request.completed': 'guest_request.completed',
+  'maintenance.created': 'maintenance.created',
+  'maintenance.updated': 'maintenance.updated',
+  'maintenance.completed': 'maintenance.completed',
+
   // Guest engagement events
   'guest.communication_drafted': 'guest.communication_drafted',
   'guest.communication_sent': 'guest.communication_sent',

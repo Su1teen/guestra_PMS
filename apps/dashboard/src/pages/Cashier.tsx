@@ -292,10 +292,10 @@ function SessionReport() {
       ) : (
         <div className="space-y-4">
           <div className="bg-white rounded-xl shadow-sm p-5 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div><p className="text-xs text-telivity-mid-grey">{t('cashier.openingFloat')}</p><p className="font-semibold">${session?.openingFloat ?? '0.00'}</p></div>
-            <div><p className="text-xs text-telivity-mid-grey">{t('cashier.expected')}</p><p className="font-semibold">${report.expectedBalance ?? '0.00'}</p></div>
-            <div><p className="text-xs text-telivity-mid-grey">{t('cashier.counted')}</p><p className="font-semibold">${session?.countedBalance ?? '—'}</p></div>
-            <div><p className="text-xs text-telivity-mid-grey">{t('cashier.variance')}</p><p className="font-semibold">${session?.variance ?? '0.00'}</p></div>
+            <div><p className="text-xs text-telivity-mid-grey">{t('cashier.openingFloat')}</p><p className="font-semibold">{formatMoney(session?.openingFloat ?? 0, currencyCode)}</p></div>
+            <div><p className="text-xs text-telivity-mid-grey">{t('cashier.expected')}</p><p className="font-semibold">{formatMoney(report.expectedBalance ?? 0, currencyCode)}</p></div>
+            <div><p className="text-xs text-telivity-mid-grey">{t('cashier.counted')}</p><p className="font-semibold">{session?.countedBalance == null ? '—' : formatMoney(session.countedBalance, currencyCode)}</p></div>
+            <div><p className="text-xs text-telivity-mid-grey">{t('cashier.variance')}</p><p className="font-semibold">{formatMoney(session?.variance ?? 0, currencyCode)}</p></div>
           </div>
 
           <div className="bg-white rounded-xl shadow-sm overflow-hidden">

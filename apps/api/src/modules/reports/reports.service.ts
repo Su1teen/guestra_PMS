@@ -5,6 +5,7 @@ import {
   charges,
   payments,
   reservations,
+  bookings,
   folios,
   auditRuns,
   properties,
@@ -20,6 +21,130 @@ import { resolveReportDate } from './resolve-report-date';
 @Injectable()
 export class ReportsService {
   constructor(@Inject(DRIZZLE) private readonly db: any) {}
+
+  /** Management/DRR cockpit backed by the same KPI methods as Reports. */
+  async getManagementSummary(propertyId: string, date: string) {
+    const day = new Date(`${date}T00:00:00.000Z`);
+    const previous = new Date(day); previous.setUTCDate(previous.getUTCDate() - 1);
+    const lastWeek = new Date(day); lastWeek.setUTCDate(lastWeek.getUTCDate() - 7);
+    const previousDate = previous.toISOString().slice(0, 10);
+    const lastWeekDate = lastWeek.toISOString().slice(0, 10);
+    const monthStart = `${date.slice(0, 7)}-01`;
+    const pickupFrom = new Date(day); pickupFrom.setUTCDate(pickupFrom.getUTCDate() - 1);
+
+    const [financial, occupancy, daily, previousFinancial, lastWeekFinancial, pickup, pace] = await Promise.all([
+      this.getFinancialSummary(propertyId, date),
+      this.getOccupancy(propertyId, date),
+      this.getDailyRevenue(propertyId, date),
+      this.getFinancialSummary(propertyId, previousDate),
+      this.getFinancialSummary(propertyId, lastWeekDate),
+      this.getPickup(propertyId, date, pickupFrom.toISOString(), day.toISOString()),
+      this.getBookingPace(propertyId, date, date),
+    ]);
+
+    const [statusRows, depositRow, mtdRow, onBooksRow, forecastRow, channelRows, roomRows] = await Promise.all([
+      this.db.select({ status: reservations.status, count: sql<number>`count(*)::int` })
+        .from(reservations).where(and(
+          eq(reservations.propertyId, propertyId),
+          eq(reservations.arrivalDate, date),
+        )).groupBy(reservations.status),
+      this.db.select({
+        amount: sql<string>`coalesce(sum(${depositLedgerEntries.amount}::numeric), 0)`,
+        count: sql<number>`count(*)::int`,
+      }).from(depositLedgerEntries).where(and(
+        eq(depositLedgerEntries.propertyId, propertyId),
+        sql`${depositLedgerEntries.receivedAt}::date = ${date}`,
+        inArray(depositLedgerEntries.status, ['held', 'applied'] as any),
+      )).then((rows: any[]) => rows[0]),
+      this.db.select({ amount: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)` })
+        .from(charges).where(and(
+          eq(charges.propertyId, propertyId),
+          eq(charges.isReversal, false),
+          sql`${charges.serviceDate}::date between ${monthStart} and ${date}`,
+        )).then((rows: any[]) => rows[0]),
+      this.db.select({ count: sql<number>`count(*)::int` }).from(reservations).where(and(
+        eq(reservations.propertyId, propertyId),
+        inArray(reservations.status, ['pending', 'confirmed', 'assigned', 'checked_in', 'stayover', 'due_out'] as any),
+        sql`${reservations.departureDate} > ${date}`,
+      )).then((rows: any[]) => rows[0]),
+      this.db.select({ amount: sql<string>`coalesce(sum(${reservations.totalAmount}::numeric), 0)` })
+        .from(reservations).where(and(
+          eq(reservations.propertyId, propertyId),
+          inArray(reservations.status, ['pending', 'confirmed', 'assigned'] as any),
+          sql`${reservations.arrivalDate} >= ${date}`,
+        )).then((rows: any[]) => rows[0]),
+      this.db.select({ source: bookings.source, count: sql<number>`count(*)::int` })
+        .from(reservations).innerJoin(bookings, and(
+          eq(bookings.id, reservations.bookingId),
+          eq(bookings.propertyId, propertyId),
+        )).where(and(
+          eq(reservations.propertyId, propertyId),
+          eq(reservations.arrivalDate, date),
+        )).groupBy(bookings.source),
+      this.db.select({ status: rooms.status, count: sql<number>`count(*)::int` })
+        .from(rooms).where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true)))
+        .groupBy(rooms.status),
+    ]);
+
+    const statuses = Object.fromEntries(statusRows.map((r: any) => [r.status, Number(r.count)]));
+    const roomStatus = Object.fromEntries(roomRows.map((r: any) => [r.status, Number(r.count)]));
+    const compare = (current: number, baseline: number) => ({
+      value: baseline,
+      absolute: current - baseline,
+      percent: baseline === 0 ? null : ((current - baseline) / Math.abs(baseline)) * 100,
+    });
+    const currentKpis = financial.kpis;
+    return {
+      date,
+      currencyCode: (await this.db.select({ currencyCode: properties.currencyCode }).from(properties)
+        .where(eq(properties.id, propertyId)).then((r: any[]) => r[0]))?.currencyCode ?? null,
+      today: {
+        revenue: currentKpis.totalRevenue,
+        occupancy: currentKpis.occupancyRate,
+        adr: currentKpis.adr,
+        revpar: currentKpis.revpar,
+        arrivals: Object.values(statuses).reduce((sum: number, value: any) => sum + Number(value), 0),
+        departures: occupancy.departures,
+        inHouse: occupancy.stayovers,
+        confirmed: (statuses['confirmed'] ?? 0) + (statuses['assigned'] ?? 0),
+        cancellations: statuses['cancelled'] ?? occupancy.cancellations,
+        noShows: statuses['no_show'] ?? occupancy.noShows,
+        receivedDeposits: Number(depositRow?.amount ?? 0),
+        receivedDepositCount: Number(depositRow?.count ?? 0),
+        pendingPayments: financial.outstandingBalances.totalBalanceDue,
+        rooms: roomStatus,
+      },
+      drr: {
+        revenue: daily.netRevenue,
+        bookings: Number(onBooksRow?.count ?? 0),
+        occupancy: currentKpis.occupancyRate,
+        adr: currentKpis.adr,
+        revpar: currentKpis.revpar,
+        cancellations: statuses['cancelled'] ?? 0,
+        deposits: Number(depositRow?.amount ?? 0),
+        pickup: pickup.pickup,
+        pace: pace.daily?.[0] ?? { roomsOnBooks: 0, newBookings: 0 },
+        channelMix: channelRows.map((r: any) => ({ source: r.source, bookings: Number(r.count) })),
+        mtdRevenue: Number(mtdRow?.amount ?? 0),
+        onBooks: Number(onBooksRow?.count ?? 0),
+        forecastRevenue: Number(forecastRow?.amount ?? 0),
+        comparisons: {
+          previousDay: {
+            revenue: compare(currentKpis.totalRevenue, previousFinancial.kpis.totalRevenue),
+            occupancy: compare(currentKpis.occupancyRate, previousFinancial.kpis.occupancyRate),
+            adr: compare(currentKpis.adr, previousFinancial.kpis.adr),
+            revpar: compare(currentKpis.revpar, previousFinancial.kpis.revpar),
+          },
+          sameDayLastWeek: {
+            revenue: compare(currentKpis.totalRevenue, lastWeekFinancial.kpis.totalRevenue),
+            occupancy: compare(currentKpis.occupancyRate, lastWeekFinancial.kpis.occupancyRate),
+            adr: compare(currentKpis.adr, lastWeekFinancial.kpis.adr),
+            revpar: compare(currentKpis.revpar, lastWeekFinancial.kpis.revpar),
+          },
+        },
+      },
+    };
+  }
 
   /**
    * Daily Revenue Report — sums charges by type and payments by method for a date.

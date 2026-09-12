@@ -203,6 +203,15 @@ export class ReservationController {
     return this.reservationService.findById(id, propertyId);
   }
 
+  @Get(':id/audit-history')
+  @ApiOperation({ summary: 'Reservation operational audit timeline' })
+  auditHistory(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) {
+    return this.reservationService.auditHistory(id, propertyId);
+  }
+
   @Patch(':id')
   @RequirePermissions('reservations.write')
   @ApiOperation({

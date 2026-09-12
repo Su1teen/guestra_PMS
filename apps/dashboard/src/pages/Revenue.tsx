@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { TFunction } from 'i18next';
 import {
@@ -19,6 +20,9 @@ import { useProperty } from '../context/PropertyContext';
 import KpiCard from '../components/ui/KpiCard';
 import StatusBadge from '../components/ui/StatusBadge';
 import { useTranslation } from 'react-i18next';
+import RevenueWorkspaceNav from '../components/revenue/RevenueWorkspaceNav';
+import { formatMoney } from '../lib/money';
+import { formatOccupancyPercent } from '../lib/api-helpers';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -730,9 +734,52 @@ function SettingsSection({ propertyId, agents }: { propertyId: string; agents: A
 // Revenue Page (main)
 // ---------------------------------------------------------------------------
 
+function RevenueManagementSummary({ propertyId, currencyCode }: { propertyId: string; currencyCode: string | null }) {
+  const { i18n } = useTranslation();
+  const ru = i18n.language.startsWith('ru');
+  const date = new Date().toISOString().slice(0, 10);
+  const { data } = useQuery({
+    queryKey: ['reports', 'management-summary', propertyId, date],
+    queryFn: () => api.get('/v1/reports/management-summary', { params: { propertyId, date } }).then((r) => r.data?.data ?? r.data),
+  });
+  const drr = data?.drr;
+  if (!drr) return null;
+  const metrics = [
+    [ru ? 'Выручка' : 'Revenue', formatMoney(drr.revenue, currencyCode)],
+    [ru ? 'Загрузка' : 'Occupancy', formatOccupancyPercent(drr.occupancy)],
+    ['ADR', formatMoney(drr.adr, currencyCode)],
+    ['RevPAR', formatMoney(drr.revpar, currencyCode)],
+    ['Pickup', String(drr.pickup?.roomNights ?? 0)],
+    ['Pace', String(drr.pace?.newBookings ?? 0)],
+    [ru ? 'Прогноз' : 'Forecast', formatMoney(drr.forecastRevenue, currencyCode)],
+    ['On Books', String(drr.onBooks ?? 0)],
+  ];
+  return (
+    <section className="mb-6 rounded-xl bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <div><h2 className="font-semibold text-telivity-navy">{ru ? 'Состояние спроса и дохода' : 'Demand and revenue health'}</h2><p className="text-xs text-telivity-mid-grey">{ru ? 'Единые метрики с Dashboard и Reports' : 'The same metrics used by Dashboard and Reports'}</p></div>
+        <span className="ml-auto rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">{ru ? 'Ценообразование активно' : 'Pricing active'}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">{metrics.map(([label, value]) => <div key={label} className="rounded-lg bg-telivity-light-grey/60 p-3"><p className="text-[11px] text-telivity-mid-grey">{label}</p><p className="mt-1 font-semibold text-telivity-navy">{value}</p></div>)}</div>
+    </section>
+  );
+}
+
+function PricingHistory({ propertyId, currencyCode }: { propertyId: string; currencyCode: string | null }) {
+  const { i18n } = useTranslation();
+  const ru = i18n.language.startsWith('ru');
+  const { data = [] } = useQuery<any[]>({
+    queryKey: ['rate-plans', 'pricing-history', propertyId],
+    queryFn: () => api.get('/v1/rate-plans/pricing-history', { params: { propertyId } }).then((r) => r.data?.data ?? r.data ?? []),
+  });
+  return <section className="rounded-xl bg-white p-5 shadow-sm"><h2 className="mb-1 font-semibold text-telivity-navy">{ru ? 'История ручных изменений' : 'Manual pricing history'}</h2><p className="mb-4 text-xs text-telivity-mid-grey">{ru ? 'Старая и новая цена, автор, время и обязательная причина' : 'Old and new price, actor, timestamp and mandatory reason'}</p><div className="divide-y divide-gray-100">{data.map((row) => <div key={row.id} className="grid gap-2 py-3 text-sm md:grid-cols-[10rem_1fr_1fr_2fr]"><span className="text-telivity-mid-grey">{new Date(row.occurredAt).toLocaleString()}</span><span>{row.userEmail ?? (ru ? 'Система' : 'System')}</span><span className="font-semibold text-telivity-navy">{row.previousValue?.rateOverride == null ? '—' : formatMoney(row.previousValue.rateOverride, currencyCode)} → {row.newValue?.rateOverride == null ? '—' : formatMoney(row.newValue.rateOverride, currencyCode)}</span><span>{row.description}</span></div>)}{data.length === 0 && <p className="py-8 text-center text-sm text-telivity-mid-grey">{ru ? 'Ручных изменений пока нет' : 'No manual changes yet'}</p>}</div></section>;
+}
+
 export default function Revenue() {
   const { t } = useTranslation();
-  const { propertyId } = useProperty();
+  const { propertyId, currencyCode } = useProperty();
+  const [searchParams] = useSearchParams();
+  const showHistory = searchParams.get('section') === 'history';
 
   const { data: agentStatuses = [] } = useQuery<AgentStatus[]>({
     queryKey: ['agents', propertyId],
@@ -755,6 +802,11 @@ export default function Revenue() {
         <h1 className="text-2xl font-semibold text-telivity-navy">{t('revenue.title')}</h1>
       </div>
 
+      <RevenueWorkspaceNav />
+
+      {showHistory ? <PricingHistory propertyId={propertyId} currencyCode={currencyCode} /> : <>
+      <RevenueManagementSummary propertyId={propertyId} currencyCode={currencyCode} />
+
       <RevenueDashboard agents={agentStatuses} />
       <OrchestrationGraphSection propertyId={propertyId} />
       <RManagerRunsSection propertyId={propertyId} />
@@ -764,6 +816,7 @@ export default function Revenue() {
         <PerformanceSection propertyId={propertyId} />
         <SettingsSection propertyId={propertyId} agents={agentStatuses} />
       </div>
+      </>}
     </div>
   );
 }

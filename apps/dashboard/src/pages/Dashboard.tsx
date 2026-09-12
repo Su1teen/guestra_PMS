@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -13,6 +13,9 @@ import {
   DoorOpen,
   Brain,
   Building2,
+  AlertTriangle,
+  WalletCards,
+  CalendarCheck,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { format } from 'date-fns';
@@ -24,6 +27,7 @@ import { getSocket } from '../lib/socket';
 import KpiCard from '../components/ui/KpiCard';
 import { formatMoney } from '../lib/money';
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '../context/AuthContext';
 
 const ROOM_STATUS_COLORS: Record<string, string> = {
   occupied: '#06bdb4',
@@ -46,7 +50,9 @@ interface ActivityEvent {
 export default function Dashboard() {
   const { t, i18n } = useTranslation();
   const { propertyId, setPropertyId, isPortfolioMode, properties, currencyCode } = useProperty();
+  const { hasPermission } = useAuth();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const now = new Date();
   const dateLocale = getDateLocale(i18n.resolvedLanguage);
   const today = format(now, 'yyyy-MM-dd');
@@ -111,11 +117,28 @@ export default function Dashboard() {
     enabled: !!propertyId && !isPortfolioMode,
   });
 
+  const { data: management } = useQuery({
+    queryKey: ['reports', 'management-summary', propertyId, today],
+    queryFn: () => api.get('/v1/reports/management-summary', { params: { propertyId, date: today } }).then((r) => r.data),
+    enabled: !!propertyId && !isPortfolioMode && hasPermission('management_dashboard.view'),
+  });
+
+  const { data: attention } = useQuery({
+    queryKey: ['operations', 'attention', propertyId, today],
+    queryFn: () => api.get('/v1/operations/attention', { params: { propertyId, date: today } }).then((r) => r.data),
+    enabled: !!propertyId && !isPortfolioMode && hasPermission('ops.read'),
+  });
+
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
 
   const handleEvent = useCallback((payload: ActivityEvent) => {
     setActivities((prev) => [payload, ...prev].slice(0, 10));
-  }, []);
+    if (/^(maintenance\.|operations\.|guest_request\.|housekeeping\.|reservation\.|payment\.)/.test(payload.event)) {
+      void queryClient.invalidateQueries({ queryKey: ['operations'] });
+      void queryClient.invalidateQueries({ queryKey: ['reports', 'management-summary'] });
+      void queryClient.invalidateQueries({ queryKey: ['rooms', 'status-summary'] });
+    }
+  }, [queryClient]);
 
   useEffect(() => {
     if (isPortfolioMode) return;
@@ -254,6 +277,11 @@ export default function Dashboard() {
 
   const totalRooms = chartData.reduce((sum: number, d: { value: number }) => sum + d.value, 0);
   const occupiedCount = chartData.find((d: { status: string }) => d.status === 'occupied')?.value ?? 0;
+  const managementData = management?.data ?? management;
+  const drr = managementData?.drr;
+  const todayOps = managementData?.today;
+  const attentionItems = (attention?.data ?? attention)?.items ?? [];
+  const ru = i18n.language.startsWith('ru');
 
   return (
     <div>
@@ -262,6 +290,50 @@ export default function Dashboard() {
         <h1 className="text-2xl font-semibold text-telivity-navy">{t('nav.dashboard')}</h1>
         <span className="text-sm text-telivity-mid-grey ml-auto">{formattedToday}</span>
       </div>
+
+      {drr && (
+        <section className="bg-white rounded-xl shadow-sm p-5 mb-6">
+          <div className="flex flex-wrap items-center gap-3 mb-4">
+            <CalendarCheck size={20} className="text-telivity-teal" />
+            <div><h2 className="text-base font-semibold text-telivity-navy">{ru ? 'Ежедневный отчёт по выручке (DRR)' : 'Daily Revenue Report (DRR)'}</h2><p className="text-xs text-telivity-mid-grey">{ru ? 'Единые показатели Dashboard и Reports' : 'One source of truth for Dashboard and Reports'}</p></div>
+            <button onClick={() => navigate('/reports')} className="ml-auto text-xs font-semibold text-telivity-teal">{ru ? 'Открыть отчёты →' : 'Open reports →'}</button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+            <ManagementMetric label={ru ? 'Брони On Books' : 'On books'} value={drr.onBooks} />
+            <ManagementMetric label="Pickup" value={drr.pickup?.roomNights ?? 0} />
+            <ManagementMetric label="Pace" value={drr.pace?.newBookings ?? 0} />
+            <ManagementMetric label={ru ? 'Предоплаты' : 'Deposits'} value={formatMoney(drr.deposits, currencyCode)} />
+            <ManagementMetric label={ru ? 'Отмены' : 'Cancellations'} value={drr.cancellations} />
+            <ManagementMetric label={ru ? 'Выручка MTD' : 'MTD revenue'} value={formatMoney(drr.mtdRevenue, currencyCode)} />
+            <ManagementMetric label={ru ? 'Прогноз' : 'Forecast'} value={formatMoney(drr.forecastRevenue, currencyCode)} />
+            <ManagementMetric label={ru ? 'Изменение к вчера' : 'vs yesterday'} value={formatDelta(drr.comparisons?.previousDay?.revenue?.percent)} />
+          </div>
+          {Array.isArray(drr.channelMix) && drr.channelMix.length > 0 && <div className="mt-4 flex flex-wrap gap-2"><span className="text-xs text-telivity-mid-grey">Channel mix:</span>{drr.channelMix.map((channel: any) => <span key={channel.source} className="rounded-full bg-gray-100 px-2.5 py-1 text-xs text-telivity-slate">{channel.source}: {channel.bookings}</span>)}</div>}
+        </section>
+      )}
+
+      <section className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+        <div className="xl:col-span-2 bg-white rounded-xl shadow-sm p-5">
+          <div className="flex items-center gap-2 mb-4"><AlertTriangle size={18} className="text-amber-600"/><h2 className="text-sm font-semibold text-telivity-navy">{ru ? 'Требует внимания' : 'Requires attention'}</h2><span className="rounded-full bg-amber-100 text-amber-900 px-2 py-0.5 text-xs font-semibold">{attentionItems.length}</span><button onClick={() => navigate('/operations')} className="ml-auto text-xs font-semibold text-telivity-teal">{ru ? 'Все операции →' : 'All operations →'}</button></div>
+          <div className="space-y-2">
+            {attentionItems.slice(0, 6).map((item: any) => <button key={`${item.type}-${item.id}`} onClick={() => navigate(item.href)} className="w-full text-left flex items-center gap-3 rounded-lg border border-gray-100 p-3 hover:border-telivity-teal/40"><span className={`h-2 h-2 rounded-full ${item.priority === 'critical' ? 'bg-red-500' : item.priority === 'high' ? 'bg-amber-500' : 'bg-blue-400'}`} /><div className="min-w-0 flex-1"><p className="text-sm font-semibold text-telivity-navy truncate">{item.title}</p><p className="text-xs text-telivity-mid-grey truncate">{item.description}</p></div><span className="text-xs text-telivity-teal">→</span></button>)}
+            {attentionItems.length === 0 && <p className="py-6 text-center text-sm text-telivity-mid-grey">{ru ? 'Критичных отклонений нет' : 'No actionable exceptions'}</p>}
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm p-5">
+          <div className="flex items-center gap-2 mb-4"><WalletCards size={18} className="text-telivity-teal"/><h2 className="text-sm font-semibold text-telivity-navy">{ru ? 'Операционная сводка' : 'Operations summary'}</h2></div>
+          <div className="grid grid-cols-2 gap-3">
+            <ManagementMetric label={ru ? 'Подтверждено' : 'Confirmed'} value={todayOps?.confirmed ?? 0} />
+            <ManagementMetric label={ru ? 'Неявки' : 'No-shows'} value={todayOps?.noShows ?? 0} />
+            <ManagementMetric label={ru ? 'Ожидает оплаты' : 'Pending'} value={formatMoney(todayOps?.pendingPayments ?? 0, currencyCode)} />
+            <ManagementMetric label={ru ? 'Предоплат получено' : 'Deposits received'} value={formatMoney(todayOps?.receivedDeposits ?? 0, currencyCode)} />
+            <ManagementMetric label={ru ? 'Готовые номера' : 'Ready rooms'} value={(todayOps?.rooms?.guest_ready ?? 0) + (todayOps?.rooms?.vacant_clean ?? 0)} />
+            <ManagementMetric label={ru ? 'Грязные номера' : 'Dirty rooms'} value={todayOps?.rooms?.vacant_dirty ?? 0} />
+            <ManagementMetric label={ru ? 'В уборке' : 'Cleaning'} value={todayOps?.rooms?.clean ?? 0} />
+            <ManagementMetric label="Out of Order" value={todayOps?.rooms?.out_of_order ?? 0} />
+          </div>
+        </div>
+      </section>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <KpiCard
@@ -303,7 +375,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="bg-white rounded-xl shadow-sm p-5">
-          <h2 className="text-sm font-semibold text-telivity-navy mb-4">Today's Activity</h2>
+          <h2 className="text-sm font-semibold text-telivity-navy mb-4">{ru ? 'Сегодня' : "Today's activity"}</h2>
           <div className="space-y-3">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-telivity-teal/10 rounded-lg">
@@ -417,4 +489,13 @@ export default function Dashboard() {
       </div>
     </div>
   );
+}
+
+function ManagementMetric({ label, value }: { label: string; value: string | number }) {
+  return <div className="rounded-lg bg-gray-50 p-3 min-w-0"><p className="text-[11px] text-telivity-mid-grey truncate">{label}</p><p className="mt-1 text-sm font-semibold text-telivity-navy truncate">{value}</p></div>;
+}
+
+function formatDelta(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`;
 }

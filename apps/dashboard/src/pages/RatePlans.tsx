@@ -10,6 +10,7 @@ import Modal from '../components/ui/Modal';
 import { useTranslation } from 'react-i18next';
 import RatePlanCalendar from '../components/rates/RatePlanCalendar';
 import { formatMoney } from '../lib/money';
+import RevenueWorkspaceNav from '../components/revenue/RevenueWorkspaceNav';
 
 interface RatePlan {
   id: string;
@@ -38,6 +39,8 @@ interface RateRestriction {
   closedToDeparture?: boolean;
   isClosed?: boolean;
   dayOfWeekOverrides?: Record<string, number> | null;
+  rateOverride?: string | number | null;
+  overrideReason?: string | null;
 }
 
 interface RestrictionForm {
@@ -49,6 +52,8 @@ interface RestrictionForm {
   closedToDeparture: boolean;
   isClosed: boolean;
   dayOfWeekOverridesJson: string;
+  rateOverride: string;
+  overrideReason: string;
 }
 
 const emptyRestrictionForm = (): RestrictionForm => ({
@@ -60,6 +65,8 @@ const emptyRestrictionForm = (): RestrictionForm => ({
   closedToDeparture: false,
   isClosed: false,
   dayOfWeekOverridesJson: '',
+  rateOverride: '',
+  overrideReason: '',
 });
 
 function parseOverrides(json: string): Record<string, number> | undefined {
@@ -82,6 +89,8 @@ function buildRestrictionBody(form: RestrictionForm) {
   };
   if (form.minLos !== '') body.minLos = Number(form.minLos);
   if (form.maxLos !== '') body.maxLos = Number(form.maxLos);
+  body.rateOverride = form.rateOverride === '' ? null : Number(form.rateOverride);
+  if (form.rateOverride !== '') body.overrideReason = form.overrideReason.trim();
   const overrides = parseOverrides(form.dayOfWeekOverridesJson);
   if (overrides) body.dayOfWeekOverrides = overrides;
   return body;
@@ -254,7 +263,8 @@ function RatePlanList() {
 
 // ---- Restrictions panel ----
 function RestrictionsPanel({ ratePlanId }: { ratePlanId: string }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const ru = i18n.language.startsWith('ru');
   const { propertyId } = useProperty();
   const queryClient = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
@@ -291,6 +301,8 @@ function RestrictionsPanel({ ratePlanId }: { ratePlanId: string }) {
       dayOfWeekOverridesJson: r.dayOfWeekOverrides
         ? JSON.stringify(r.dayOfWeekOverrides)
         : '',
+      rateOverride: r.rateOverride == null ? '' : String(r.rateOverride),
+      overrideReason: r.overrideReason ?? '',
     });
     setFormError('');
     setFormOpen(true);
@@ -371,6 +383,7 @@ function RestrictionsPanel({ ratePlanId }: { ratePlanId: string }) {
               <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.ctd')}</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.isClosed')}</th>
               <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.dayOfWeekOverrides')}</th>
+              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{ru ? 'Ручная цена' : 'Manual rate'}</th>
               <th className="px-2 py-2 text-right text-xs font-semibold text-telivity-slate uppercase">{t('common.actions')}</th>
             </tr>
           </thead>
@@ -387,6 +400,7 @@ function RestrictionsPanel({ ratePlanId }: { ratePlanId: string }) {
                 <td className="px-2 py-2 text-xs font-mono text-telivity-slate max-w-[10rem] truncate">
                   {r.dayOfWeekOverrides ? JSON.stringify(r.dayOfWeekOverrides) : '—'}
                 </td>
+                <td className="px-2 py-2 text-sm">{r.rateOverride == null ? '—' : r.rateOverride}<span className="block max-w-[12rem] truncate text-[10px] text-telivity-mid-grey">{r.overrideReason}</span></td>
                 <td className="px-2 py-2 text-right">
                   <button onClick={() => openEdit(r)} className="p-1.5 rounded hover:bg-telivity-light-grey inline-flex" title={t('common.edit')}>
                     <Pencil size={14} />
@@ -407,7 +421,7 @@ function RestrictionsPanel({ ratePlanId }: { ratePlanId: string }) {
             ))}
             {restrictions.length === 0 && (
               <tr>
-                <td colSpan={9} className="px-2 py-6 text-center text-sm text-telivity-mid-grey">
+                <td colSpan={10} className="px-2 py-6 text-center text-sm text-telivity-mid-grey">
                   {t('ratePlans.noRestrictions')}
                 </td>
               </tr>
@@ -468,10 +482,20 @@ function RestrictionsPanel({ ratePlanId }: { ratePlanId: string }) {
             />
             <p className="text-xs text-telivity-mid-grey mt-1">{t('ratePlans.dayOfWeekOverridesHint')}</p>
           </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <div>
+              <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{ru ? 'Ручная цена за ночь' : 'Manual nightly rate'}</label>
+              <input type="number" min={0} step="0.01" value={form.rateOverride} onChange={(e) => setForm({ ...form, rateOverride: e.target.value })} placeholder={ru ? 'Оставьте пустым, чтобы снять override' : 'Leave empty to clear override'} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{ru ? 'Причина изменения' : 'Reason for change'}{form.rateOverride !== '' && ' *'}</label>
+              <input value={form.overrideReason} onChange={(e) => setForm({ ...form, overrideReason: e.target.value })} placeholder={ru ? 'Например: событие, VIP-группа, решение руководства' : 'Event, VIP group, management decision…'} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+            </div>
+          </div>
           {formError && <p className="text-sm text-red-600">{formError}</p>}
           <button
             onClick={() => saveMutation.mutate()}
-            disabled={!form.startDate || !form.endDate || saveMutation.isPending}
+            disabled={!form.startDate || !form.endDate || (form.rateOverride !== '' && !form.overrideReason.trim()) || saveMutation.isPending}
             className="w-full bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
           >
             {editingId ? t('common.save') : t('ratePlans.createRestriction')}
@@ -589,9 +613,12 @@ function RatePlanDetail() {
 export default function RatePlans() {
 
   return (
-    <Routes>
-      <Route index element={<RatePlanList />} />
-      <Route path=":id" element={<RatePlanDetail />} />
-    </Routes>
+    <div>
+      <RevenueWorkspaceNav />
+      <Routes>
+        <Route index element={<RatePlanList />} />
+        <Route path=":id" element={<RatePlanDetail />} />
+      </Routes>
+    </div>
   );
 }

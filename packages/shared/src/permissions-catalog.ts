@@ -19,6 +19,7 @@ export interface PermissionDef {
 
 export const PERMISSIONS: readonly PermissionDef[] = [
   { key: 'dashboard.view', label: 'View dashboard', group: 'General', navKey: '/' },
+  { key: 'management_dashboard.view', label: 'View management dashboard and DRR', group: 'General' },
   { key: 'frontdesk.access', label: 'Use front desk', group: 'Front Desk', navKey: '/front-desk' },
   { key: 'reservations.read', label: 'View reservations', group: 'Reservations', navKey: '/reservations' },
   { key: 'reservations.write', label: 'Create / modify reservations', group: 'Reservations' },
@@ -31,6 +32,10 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: 'housekeeping.manage', label: 'Assign / inspect housekeeping', group: 'Housekeeping' },
   { key: 'ops.read', label: 'View property ops (lost & found, discrepancies, service requests)', group: 'Housekeeping' },
   { key: 'ops.manage', label: 'Manage property ops (lost & found, service requests)', group: 'Housekeeping' },
+  { key: 'maintenance.view', label: 'View maintenance tickets', group: 'Operations', navKey: '/operations' },
+  { key: 'maintenance.create', label: 'Create maintenance tickets', group: 'Operations' },
+  { key: 'maintenance.update', label: 'Assign and update maintenance tickets', group: 'Operations' },
+  { key: 'maintenance.close', label: 'Close maintenance and return rooms to service', group: 'Operations' },
   { key: 'folios.read', label: 'View folios & billing', group: 'Billing', navKey: '/folios' },
   { key: 'folios.manage', label: 'Post charges / payments', group: 'Billing' },
   {
@@ -84,6 +89,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, readonly string[]> = {
   admin: ALL_PERMISSIONS,
   front_desk: [
     'dashboard.view',
+    'management_dashboard.view',
     'frontdesk.access',
     'reservations.read',
     'reservations.write',
@@ -105,11 +111,14 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, readonly string[]> = {
     'reviews.manage',
     'ops.read',
     'ops.manage',
+    'maintenance.view',
+    'maintenance.create',
+    'maintenance.update',
     'cashier.access',
     'accounting.manage',
     'payments.refund',
   ],
-  housekeeping: ['dashboard.view', 'rooms.read', 'housekeeping.read', 'ops.read'],
+  housekeeping: ['dashboard.view', 'rooms.read', 'housekeeping.read', 'ops.read', 'maintenance.view', 'maintenance.create'],
   housekeeping_manager: [
     'dashboard.view',
     'rooms.read',
@@ -118,6 +127,10 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, readonly string[]> = {
     'housekeeping.manage',
     'ops.read',
     'ops.manage',
+    'maintenance.view',
+    'maintenance.create',
+    'maintenance.update',
+    'maintenance.close',
   ],
   /**
    * Overnight FO + day balance. Folio/cashier/accounting.manage cover posting
@@ -157,6 +170,7 @@ export const ROLE_DEFAULT_PERMISSIONS: Record<string, readonly string[]> = {
   ),
   revenue_manager: [
     'dashboard.view',
+    'management_dashboard.view',
     'reservations.read',
     'guests.read',
     'rooms.read',

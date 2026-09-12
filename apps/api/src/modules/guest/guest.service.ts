@@ -1,6 +1,20 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, ilike, or, and, sql, inArray } from 'drizzle-orm';
-import { guests, reservations, reservationGuests, auditLogs } from '@telivityhaip/database';
+import { BadRequestException, Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { eq, ilike, or, and, sql, inArray, isNull, ne, desc } from 'drizzle-orm';
+import {
+  guests,
+  reservations,
+  reservationGuests,
+  auditLogs,
+  properties,
+  rooms,
+  roomTypes,
+  ratePlans,
+  folios,
+  charges,
+  bookings,
+  serviceRequests,
+  maintenanceTickets,
+} from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { actorFields, type AuditActor } from '../../common/audit/audit-actor';
 import { CreateGuestDto } from './dto/create-guest.dto';
@@ -82,7 +96,7 @@ export class GuestService {
     // Bug 4: after GDPR erasure, treat the guest as not found. Booking history
     // remains but the profile is tombstoned — returning anonymized PII here
     // would leak the fact that the user once existed (and the decision we made).
-    if (guest.isDeleted) {
+    if (guest.isDeleted || guest.mergedIntoGuestId) {
       throw new NotFoundException(`Guest ${id} not found`);
     }
     return guest;
@@ -194,6 +208,7 @@ export class GuestService {
     // Guests linked as reservation primary OR as named accompanying occupants.
     const conditions: any[] = [
       eq(guests.isDeleted, false),
+      isNull(guests.mergedIntoGuestId),
       or(
         inArray(
           guests.id,
@@ -265,5 +280,258 @@ export class GuestService {
       page,
       limit,
     };
+  }
+
+  /** Guest 360 is calculated from the operational ledgers, never stored from a mock/profile total. */
+  async get360(id: string, propertyId: string, authorizedPropertyIds: string[] = [propertyId]) {
+    await this.assertGuestAtProperty(id, propertyId);
+    const scope = [...new Set(authorizedPropertyIds.length ? authorizedPropertyIds : [propertyId])];
+    if (!scope.includes(propertyId)) scope.push(propertyId);
+    const guest = await this.findById(id, propertyId);
+
+    const stayRows = await this.db.selectDistinct({
+      reservation: reservations,
+      propertyName: properties.name,
+      roomNumber: rooms.number,
+      roomType: roomTypes.name,
+      ratePlan: ratePlans.name,
+    }).from(reservations)
+      .leftJoin(reservationGuests, and(
+        eq(reservationGuests.reservationId, reservations.id),
+        eq(reservationGuests.propertyId, reservations.propertyId),
+      ))
+      .innerJoin(properties, eq(properties.id, reservations.propertyId))
+      .leftJoin(rooms, and(eq(rooms.id, reservations.roomId), eq(rooms.propertyId, reservations.propertyId)))
+      .leftJoin(roomTypes, and(eq(roomTypes.id, reservations.roomTypeId), eq(roomTypes.propertyId, reservations.propertyId)))
+      .leftJoin(ratePlans, and(eq(ratePlans.id, reservations.ratePlanId), eq(ratePlans.propertyId, reservations.propertyId)))
+      .where(and(
+        inArray(reservations.propertyId, scope),
+        or(eq(reservations.guestId, id), eq(reservationGuests.guestId, id)),
+      )).orderBy(desc(reservations.arrivalDate));
+
+    const reservationIds = stayRows.map((s: any) => s.reservation.id);
+    const folioRows = reservationIds.length
+      ? await this.db.select().from(folios).where(and(
+          inArray(folios.propertyId, scope),
+          inArray(folios.reservationId, reservationIds),
+        ))
+      : [];
+    const folioIds = folioRows.map((f: any) => f.id);
+    const chargeRows = folioIds.length
+      ? await this.db.select().from(charges).where(and(
+          inArray(charges.propertyId, scope),
+          inArray(charges.folioId, folioIds),
+        )).orderBy(desc(charges.serviceDate))
+      : [];
+
+    const netCharge = (c: any) => c.isReversal ? -Math.abs(Number(c.amount)) : Number(c.amount);
+    const foliosByReservation = new Map<string, any[]>();
+    for (const folio of folioRows) {
+      if (!folio.reservationId) continue;
+      const list = foliosByReservation.get(folio.reservationId) ?? [];
+      list.push(folio);
+      foliosByReservation.set(folio.reservationId, list);
+    }
+    const chargesByFolio = new Map<string, any[]>();
+    for (const charge of chargeRows) {
+      if (!charge.folioId) continue;
+      const list = chargesByFolio.get(charge.folioId) ?? [];
+      list.push(charge);
+      chargesByFolio.set(charge.folioId, list);
+    }
+
+    const stays = stayRows.map((row: any) => {
+      const stayFolios = foliosByReservation.get(row.reservation.id) ?? [];
+      const stayCharges = stayFolios.flatMap((f: any) => chargesByFolio.get(f.id) ?? []);
+      return {
+        id: row.reservation.id,
+        propertyId: row.reservation.propertyId,
+        propertyName: row.propertyName,
+        arrivalDate: row.reservation.arrivalDate,
+        departureDate: row.reservation.departureDate,
+        nights: row.reservation.nights,
+        roomNumber: row.roomNumber,
+        roomType: row.roomType,
+        ratePlan: row.ratePlan,
+        status: row.reservation.status,
+        currencyCode: row.reservation.currencyCode,
+        totalRevenue: stayCharges.reduce((sum: number, c: any) => sum + netCharge(c), 0),
+      };
+    });
+
+    const ancillaryTypes = new Set(['food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'incidental', 'fee', 'package']);
+    const serviceHistory = chargeRows.filter((c: any) => ancillaryTypes.has(c.type)).map((c: any) => {
+      const folio = folioRows.find((f: any) => f.id === c.folioId);
+      const stay = stays.find((s: any) => s.id === folio?.reservationId);
+      return {
+        id: c.id,
+        date: c.serviceDate,
+        propertyId: c.propertyId,
+        propertyName: stay?.propertyName,
+        reservationId: folio?.reservationId,
+        folioId: c.folioId,
+        type: c.type,
+        description: c.description,
+        amount: netCharge(c),
+        currencyCode: c.currencyCode,
+        status: c.isReversal ? 'reversed' : 'posted',
+      };
+    });
+
+    const ltvByCurrency: Record<string, { roomRevenue: number; ancillaryRevenue: number; totalRevenue: number }> = {};
+    for (const c of chargeRows) {
+      const bucket = ltvByCurrency[c.currencyCode] ?? { roomRevenue: 0, ancillaryRevenue: 0, totalRevenue: 0 };
+      const amount = netCharge(c);
+      if (c.type === 'room') bucket.roomRevenue += amount;
+      else if (ancillaryTypes.has(c.type)) bucket.ancillaryRevenue += amount;
+      bucket.totalRevenue += amount;
+      ltvByCurrency[c.currencyCode] = bucket;
+    }
+    const totalStays = stays.filter((s: any) => s.status === 'checked_out').length;
+    const activePropertyCurrency = stays.find((s: any) => s.propertyId === propertyId)?.currencyCode
+      ?? Object.keys(ltvByCurrency)[0]
+      ?? null;
+    const activeLtv = activePropertyCurrency ? ltvByCurrency[activePropertyCurrency] : undefined;
+
+    const lineageRows = await this.db.select({ id: guests.id }).from(guests)
+      .where(eq(guests.mergedIntoGuestId, id));
+    const timelineGuestIds = [id, ...lineageRows.map((g: any) => g.id)];
+    const entityIds = [
+      ...timelineGuestIds,
+      ...reservationIds,
+      ...folioIds,
+      ...chargeRows.map((c: any) => c.id),
+    ];
+    const timeline = entityIds.length ? await this.db.select().from(auditLogs).where(and(
+      inArray(auditLogs.propertyId, scope),
+      inArray(auditLogs.entityId, entityIds),
+    )).orderBy(desc(auditLogs.occurredAt)).limit(100) : [];
+
+    const now = new Date().toISOString().slice(0, 10);
+    const currentOrUpcoming = stays.find((s: any) =>
+      ['checked_in', 'stayover', 'due_out', 'pending', 'confirmed', 'assigned'].includes(s.status)
+      && s.departureDate >= now,
+    ) ?? null;
+
+    return {
+      guest,
+      summary: {
+        totalStays,
+        firstStay: stays.length ? stays[stays.length - 1]?.arrivalDate : null,
+        lastStay: stays.length ? stays[0]?.departureDate : null,
+        propertiesVisited: [...new Set(stays.map((s: any) => s.propertyName))],
+        currentOrUpcoming,
+        currencyCode: activePropertyCurrency,
+        roomRevenue: activeLtv?.roomRevenue ?? 0,
+        ancillaryRevenue: activeLtv?.ancillaryRevenue ?? 0,
+        totalRevenue: activeLtv?.totalRevenue ?? 0,
+        averageSpendPerStay: totalStays > 0 ? (activeLtv?.totalRevenue ?? 0) / totalStays : 0,
+        byCurrency: ltvByCurrency,
+      },
+      stays,
+      services: serviceHistory,
+      timeline,
+    };
+  }
+
+  async findDuplicates(id: string, propertyId: string) {
+    const guest = await this.findById(id, propertyId);
+    const email = guest.email?.trim().toLowerCase();
+    const phoneDigits = guest.phone?.replace(/\D/g, '');
+    if (!email && !phoneDigits) return [];
+    const candidates = await this.db.select().from(guests).where(and(
+      ne(guests.id, id),
+      eq(guests.isDeleted, false),
+      isNull(guests.mergedIntoGuestId),
+      or(
+        ...(email ? [sql`lower(trim(${guests.email})) = ${email}`] : []),
+        ...(phoneDigits ? [sql`regexp_replace(coalesce(${guests.phone}, ''), '\\D', '', 'g') = ${phoneDigits}`] : []),
+      ),
+    ));
+    const accessible: any[] = [];
+    for (const candidate of candidates) {
+      try {
+        await this.assertGuestAtProperty(candidate.id, propertyId);
+        accessible.push(candidate);
+      } catch { /* do not disclose cross-property identities */ }
+    }
+    return accessible;
+  }
+
+  async merge(sourceId: string, targetId: string, propertyId: string, confirmed: boolean, actor?: AuditActor) {
+    if (!confirmed) throw new BadRequestException('Guest merge requires explicit confirmation');
+    if (sourceId === targetId) throw new BadRequestException('Source and target guests must differ');
+    const [source, target] = await Promise.all([
+      this.findById(sourceId, propertyId),
+      this.findById(targetId, propertyId),
+    ]);
+
+    // A guest identity is global. A user who only selected one property must not
+    // silently rewrite another property's guest history during a merge.
+    const linkedProperties = await this.db.select({ propertyId: reservations.propertyId })
+      .from(reservations)
+      .leftJoin(reservationGuests, and(
+        eq(reservationGuests.reservationId, reservations.id),
+        eq(reservationGuests.propertyId, reservations.propertyId),
+      ))
+      .where(or(
+        inArray(reservations.guestId, [sourceId, targetId]),
+        inArray(reservationGuests.guestId, [sourceId, targetId]),
+      ));
+    if (linkedProperties.some((row: { propertyId: string }) => row.propertyId !== propertyId)) {
+      throw new BadRequestException(
+        'These profiles contain history at another property; merge requires access to every linked property',
+      );
+    }
+
+    const merged = await this.db.transaction(async (tx: any) => {
+      const now = new Date();
+      const combinedPreferences = { ...(source.preferences ?? {}), ...(target.preferences ?? {}) };
+      const combinedNotes = [target.notes, source.notes].filter(Boolean).join('\n--- Merged profile ---\n') || null;
+      const [updatedTarget] = await tx.update(guests).set({
+        email: target.email ?? source.email,
+        phone: target.phone ?? source.phone,
+        idType: target.idType ?? source.idType,
+        idNumber: target.idNumber ?? source.idNumber,
+        idCountry: target.idCountry ?? source.idCountry,
+        nationality: target.nationality ?? source.nationality,
+        dateOfBirth: target.dateOfBirth ?? source.dateOfBirth,
+        loyaltyNumber: target.loyaltyNumber ?? source.loyaltyNumber,
+        companyName: target.companyName ?? source.companyName,
+        preferences: combinedPreferences,
+        notes: combinedNotes,
+        updatedAt: now,
+      }).where(eq(guests.id, targetId)).returning();
+
+      await tx.update(bookings).set({ guestId: targetId, updatedAt: now }).where(eq(bookings.guestId, sourceId));
+      await tx.update(reservations).set({ guestId: targetId, updatedAt: now }).where(eq(reservations.guestId, sourceId));
+      const targetOccupancies = await tx.select({ reservationId: reservationGuests.reservationId })
+        .from(reservationGuests).where(eq(reservationGuests.guestId, targetId));
+      const duplicateReservationIds = targetOccupancies.map((row: { reservationId: string }) => row.reservationId);
+      if (duplicateReservationIds.length > 0) {
+        await tx.delete(reservationGuests).where(and(
+          eq(reservationGuests.guestId, sourceId),
+          inArray(reservationGuests.reservationId, duplicateReservationIds),
+        ));
+      }
+      await tx.update(reservationGuests).set({ guestId: targetId, updatedAt: now }).where(eq(reservationGuests.guestId, sourceId));
+      await tx.update(folios).set({ guestId: targetId, updatedAt: now }).where(eq(folios.guestId, sourceId));
+      await tx.update(serviceRequests).set({ guestId: targetId, updatedAt: now }).where(eq(serviceRequests.guestId, sourceId));
+      await tx.update(maintenanceTickets).set({ guestId: targetId, updatedAt: now }).where(eq(maintenanceTickets.guestId, sourceId));
+      await tx.update(guests).set({ mergedIntoGuestId: targetId, mergedAt: now, updatedAt: now })
+        .where(eq(guests.id, sourceId));
+      await tx.insert(auditLogs).values({
+        propertyId,
+        action: 'merge',
+        entityType: 'guest',
+        entityId: targetId,
+        previousValue: { sourceGuestId: sourceId, targetGuestId: targetId },
+        newValue: { guestId: targetId },
+        description: 'guest_profiles_merged',
+        ...actorFields(actor),
+      });
+      return updatedTarget;
+    });
+    return { guest: merged, sourceGuestId: sourceId, targetGuestId: targetId };
   }
 }

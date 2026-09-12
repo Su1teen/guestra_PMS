@@ -1,8 +1,8 @@
 /**
- * HAIP Demo Seed — "Telivity Grand Hotel"
+ * HAIP Demo Seed — "ЛЕС Боровое"
  *
  * Creates a fully-populated demo property with enough data to exercise every
- * dashboard screen.  Idempotent: uses property code 'TGH' as the anchor and
+ * dashboard screen. Idempotent: uses property code 'LES' as the anchor and
  * skips if it already exists.
  *
  * Run:  pnpm --filter @telivityhaip/database seed
@@ -27,11 +27,13 @@ import { postgresOptionsFromEnv } from './postgres-options.js';
  * hash is stored. Real deployments generate their own keys in the dashboard.
  */
 const DEMO_BOOKING_KEY = 'pk_live_HAIPDEMO0000000000000000';
+const DEMO_CURRENCY = 'KZT';
+const DEMO_PROPERTY_NAME = 'ЛЕС Боровое';
 
 const DATABASE_URL =
   process.env['DATABASE_URL'] ?? 'postgresql://haip:haip@localhost:5432/haip';
 
-const PROPERTY_CODE = 'TGH';
+const PROPERTY_CODE = 'LES';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -82,7 +84,7 @@ async function main() {
     return;
   }
 
-  console.log('Seeding Telivity Grand Hotel...');
+  console.log(`Seeding ${DEMO_PROPERTY_NAME}...`);
 
   // -----------------------------------------------------------------------
   // 1. Property
@@ -91,29 +93,29 @@ async function main() {
 
   await db.insert(schema.properties).values({
     id: propertyId,
-    name: 'Telivity Grand Hotel',
+    name: DEMO_PROPERTY_NAME,
     code: PROPERTY_CODE,
-    description: 'A luxury demo property for the HAIP platform.',
-    addressLine1: '100 Ocean Drive',
-    city: 'Miami Beach',
-    stateProvince: 'FL',
-    postalCode: '33139',
-    countryCode: 'US',
-    timezone: 'America/New_York',
-    currencyCode: 'USD',
-    defaultLanguage: 'en',
+    description: 'Демо-объект загородного отдыха в Бурабае.',
+    addressLine1: 'ул. Кенесары, 1',
+    city: 'Бурабай',
+    stateProvince: 'Акмолинская область',
+    postalCode: '021700',
+    countryCode: 'KZ',
+    timezone: 'Asia/Almaty',
+    currencyCode: DEMO_CURRENCY,
+    defaultLanguage: 'ru',
     starRating: 5,
     totalRooms: 40,
-    phone: '+1-305-555-0100',
-    email: 'info@telivitygrand.demo',
-    website: 'https://telivitygrand.demo',
+    phone: '+7-716-555-0100',
+    email: 'info@les-borovoe.demo',
+    website: 'https://les-borovoe.demo',
     checkInTime: '15:00',
     checkOutTime: '11:00',
     nightAuditTime: '02:00',
     overbookingPercentage: 5,
     settings: {
-      earlyCheckInFee: 50,
-      lateCheckoutFee: 75,
+      earlyCheckInFee: 22500,
+      lateCheckoutFee: 33750,
       depositPercentage: 20,
       requireInspection: true,
       taxRate: 0.13,
@@ -149,7 +151,7 @@ async function main() {
 
   await db.insert(schema.media).values([
     // Property gallery
-    { id: sid('ed000001', 1), propertyId, ownerType: 'property' as const, ownerId: propertyId, url: img('1566073771259-6a8506099945'), category: 'hero' as const, caption: 'Telivity Grand Hotel — oceanfront facade', isPrimary: true, sortOrder: 0 },
+    { id: sid('ed000001', 1), propertyId, ownerType: 'property' as const, ownerId: propertyId, url: img('1566073771259-6a8506099945'), category: 'hero' as const, caption: 'ЛЕС Боровое — главный корпус', isPrimary: true, sortOrder: 0 },
     { id: sid('ed000001', 2), propertyId, ownerType: 'property' as const, ownerId: propertyId, url: img('1551882547-ff40c63fe5fa'), category: 'exterior' as const, caption: 'Pool terrace at golden hour', sortOrder: 1 },
     { id: sid('ed000001', 3), propertyId, ownerType: 'property' as const, ownerId: propertyId, url: img('1414235077428-338989a2e8c0'), category: 'dining' as const, caption: 'The Azure restaurant', sortOrder: 2 },
     // Standard King
@@ -341,11 +343,11 @@ async function main() {
   };
 
   await db.insert(schema.ratePlans).values([
-    { id: rpIds.stdBar, propertyId, roomTypeId: roomTypeIds.standard, name: 'Standard BAR', code: 'STK-BAR', type: 'bar', baseAmount: '189.00', currencyCode: 'USD', mealPlan: 'room_only', cancellationPolicyId: policyIds.flexible, sortOrder: 1 },
-    { id: rpIds.dlxBar, propertyId, roomTypeId: roomTypeIds.deluxe, name: 'Deluxe BAR', code: 'DOV-BAR', type: 'bar', baseAmount: '289.00', currencyCode: 'USD', mealPlan: 'breakfast', cancellationPolicyId: policyIds.flexible, sortOrder: 2 },
-    { id: rpIds.suiteBar, propertyId, roomTypeId: roomTypeIds.suite, name: 'Suite BAR', code: 'JST-BAR', type: 'bar', baseAmount: '429.00', currencyCode: 'USD', mealPlan: 'breakfast', cancellationPolicyId: policyIds.moderate, sortOrder: 3 },
-    { id: rpIds.phBar, propertyId, roomTypeId: roomTypeIds.penthouse, name: 'Penthouse BAR', code: 'PHS-BAR', type: 'bar', baseAmount: '799.00', currencyCode: 'USD', mealPlan: 'half_board', cancellationPolicyId: policyIds.moderate, sortOrder: 4 },
-    { id: rpIds.dlxPromo, propertyId, roomTypeId: roomTypeIds.deluxe, name: 'Deluxe Summer Promo', code: 'DOV-SUM', type: 'promotional', baseAmount: '239.00', currencyCode: 'USD', mealPlan: 'breakfast', validFrom: dateStr(0), validTo: dateStr(90), channelCodes: ['booking_com', 'expedia'], cancellationPolicyId: policyIds.nonRefundable, sortOrder: 5 },
+    { id: rpIds.stdBar, propertyId, roomTypeId: roomTypeIds.standard, name: 'Standard BAR', code: 'STK-BAR', type: 'bar', baseAmount: '85000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'room_only', cancellationPolicyId: policyIds.flexible, sortOrder: 1 },
+    { id: rpIds.dlxBar, propertyId, roomTypeId: roomTypeIds.deluxe, name: 'Deluxe BAR', code: 'DOV-BAR', type: 'bar', baseAmount: '130000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', cancellationPolicyId: policyIds.flexible, sortOrder: 2 },
+    { id: rpIds.suiteBar, propertyId, roomTypeId: roomTypeIds.suite, name: 'Suite BAR', code: 'JST-BAR', type: 'bar', baseAmount: '195000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', cancellationPolicyId: policyIds.moderate, sortOrder: 3 },
+    { id: rpIds.phBar, propertyId, roomTypeId: roomTypeIds.penthouse, name: 'Penthouse BAR', code: 'PHS-BAR', type: 'bar', baseAmount: '360000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'half_board', cancellationPolicyId: policyIds.moderate, sortOrder: 4 },
+    { id: rpIds.dlxPromo, propertyId, roomTypeId: roomTypeIds.deluxe, name: 'Deluxe Summer Promo', code: 'DOV-SUM', type: 'promotional', baseAmount: '108000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', validFrom: dateStr(0), validTo: dateStr(90), channelCodes: ['booking_com', 'expedia'], cancellationPolicyId: policyIds.nonRefundable, sortOrder: 5 },
   ]);
 
   // Rate restrictions — weekend surcharges + min-LOS
@@ -366,8 +368,8 @@ async function main() {
       name: 'Breakfast Buffet',
       description: 'Full breakfast buffet per person per night',
       chargeType: 'food_beverage',
-      price: '28.00',
-      currencyCode: 'USD',
+      price: '12500.00',
+      currencyCode: DEMO_CURRENCY,
       postingRule: 'per_night',
       sellChannels: ['booking_engine', 'front_desk', 'pre_arrival'],
       isActive: true,
@@ -380,8 +382,8 @@ async function main() {
       name: 'Valet Parking',
       description: 'Covered valet parking for the stay',
       chargeType: 'parking',
-      price: '45.00',
-      currencyCode: 'USD',
+      price: '20000.00',
+      currencyCode: DEMO_CURRENCY,
       postingRule: 'once',
       sellChannels: ['booking_engine', 'front_desk', 'pre_arrival'],
       isActive: true,
@@ -394,8 +396,8 @@ async function main() {
       name: 'Late Checkout',
       description: 'Checkout extended until 14:00',
       chargeType: 'fee',
-      price: '50.00',
-      currencyCode: 'USD',
+      price: '22500.00',
+      currencyCode: DEMO_CURRENCY,
       postingRule: 'once',
       sellChannels: ['front_desk'],
       isActive: true,
@@ -404,7 +406,7 @@ async function main() {
   ]);
 
   // -----------------------------------------------------------------------
-  // 5. Guests (15)
+  // 5. Guests (one controlled Guest 360 scenario is appended below)
   // -----------------------------------------------------------------------
   interface GuestDef {
     first: string; last: string; email: string; phone: string;
@@ -428,6 +430,14 @@ async function main() {
     { first: 'Robert', last: 'Brown', email: 'robert.b@example.com', phone: '+1-310-555-0213', vip: 'none', isDnr: true, dnrReason: 'Property damage incident - March 2025' },
     { first: 'Yuki', last: 'Tanaka', email: 'yuki.t@example.com', phone: '+81-6-555-0214', vip: 'silver' },
     { first: 'Carlos', last: 'Rivera', email: 'carlos.r@example.com', phone: '+52-55-555-0215', vip: 'none' },
+    {
+      first: 'Султан',
+      last: 'Советов',
+      email: 'sultan.sovetov@example.demo',
+      phone: '+7-700-555-01-16',
+      vip: 'gold',
+      loyalty: 'LES-G360-001',
+    },
   ];
 
   const guestIds = guestDefs.map((_, i) => sid('e0000001', i + 1));
@@ -450,6 +460,12 @@ async function main() {
       gdprConsentDate: new Date(),
     })),
   );
+
+  await db.update(schema.guests).set({
+    nationality: 'KZ',
+    preferences: { room: 'тихий номер', pillow: 'гипоаллергенная подушка', dietary: 'без орехов' },
+    notes: 'Предпочитает тихие номера; важно подтверждать SPA до заезда.',
+  }).where(eq(schema.guests.id, guestIds[15]!));
 
   // -----------------------------------------------------------------------
   // 6. Bookings + Reservations (various states)
@@ -497,12 +513,15 @@ async function main() {
     { guestIdx: 14, arrival: -1, departure: 1, roomNum: '108', typeKey: 'standard', rpKey: 'stdBar', status: 'no_show', source: 'ota', amount: 378 },
     // Cancelled
     { guestIdx: 11, arrival: 3, departure: 5, roomNum: '206', typeKey: 'deluxe', rpKey: 'dlxBar', status: 'cancelled', source: 'gds', amount: 578 },
+    // Controlled Guest 360 fixture: exactly two completed stays for Султан Советов.
+    { guestIdx: 15, arrival: -120, departure: -117, roomNum: '204', typeKey: 'deluxe', rpKey: 'dlxBar', status: 'checked_out', source: 'direct', amount: 420000 },
+    { guestIdx: 15, arrival: -45, departure: -41, roomNum: '302', typeKey: 'suite', rpKey: 'suiteBar', status: 'checked_out', source: 'direct', amount: 510000 },
   ];
 
   for (const [i, r] of resDefs.entries()) {
     const bookingId = sid('f0000001', i + 1);
     const resId = sid('f1000001', i + 1);
-    const confNum = `TGH-${(2025000 + i + 1).toString()}`;
+    const confNum = `LES-${(2025000 + i + 1).toString()}`;
     const guestId = guestIds[r.guestIdx]!;
 
     await db.insert(schema.bookings).values({
@@ -515,6 +534,7 @@ async function main() {
     });
 
     const nights = r.departure - r.arrival;
+    const reservationAmount = r.guestIdx === 15 ? r.amount : r.amount * 450;
     const checkedIn = ['checked_in', 'stayover', 'due_out'].includes(r.status);
     const checkedOut = r.status === 'checked_out';
 
@@ -530,8 +550,8 @@ async function main() {
       roomId: roomIdMap[r.roomNum] ?? null,
       status: r.status,
       ratePlanId: rpIds[r.rpKey],
-      totalAmount: r.amount.toFixed(2),
-      currencyCode: 'USD',
+      totalAmount: reservationAmount.toFixed(2),
+      currencyCode: DEMO_CURRENCY,
       adults: 2,
       children: 0,
       checkedInAt: checkedIn || checkedOut ? ts(r.arrival, 15, 30) : null,
@@ -544,7 +564,7 @@ async function main() {
     if (checkedIn || checkedOut) {
       const folioId = sid('f2000001', i + 1);
       const nightsStayed = checkedOut ? nights : Math.max(1, -r.arrival);
-      const roomRate = r.amount / nights;
+      const roomRate = reservationAmount / nights;
       const totalCharges = roomRate * nightsStayed * 1.13; // +13% tax
       const totalPayments = checkedOut ? totalCharges : roomRate * 1.13; // deposit
 
@@ -560,7 +580,7 @@ async function main() {
         totalCharges: totalCharges.toFixed(2),
         totalPayments: totalPayments.toFixed(2),
         balance: (totalCharges - totalPayments).toFixed(2),
-        currencyCode: 'USD',
+        currencyCode: DEMO_CURRENCY,
         settledAt: checkedOut ? ts(r.departure, 10, 50) : null,
         closedAt: checkedOut ? ts(r.departure, 10, 55) : null,
       });
@@ -576,7 +596,7 @@ async function main() {
           type: 'room',
           description: `Room ${r.roomNum} — Night ${n + 1}`,
           amount: roomRate.toFixed(2),
-          currencyCode: 'USD',
+          currencyCode: DEMO_CURRENCY,
           taxAmount: taxAmt.toFixed(2),
           taxRate: '0.1300',
           serviceDate: ts(chargeDay),
@@ -592,9 +612,9 @@ async function main() {
           folioId,
           type: 'minibar',
           description: 'Minibar consumption',
-          amount: '42.00',
-          currencyCode: 'USD',
-          taxAmount: '5.46',
+          amount: '19000.00',
+          currencyCode: DEMO_CURRENCY,
+          taxAmount: '2470.00',
           taxRate: '0.1300',
           serviceDate: ts(r.arrival + 1),
         });
@@ -606,9 +626,9 @@ async function main() {
           folioId,
           type: 'spa',
           description: 'Spa — Deep Tissue Massage',
-          amount: '180.00',
-          currencyCode: 'USD',
-          taxAmount: '23.40',
+          amount: '81000.00',
+          currencyCode: DEMO_CURRENCY,
+          taxAmount: '10530.00',
           taxRate: '0.1300',
           serviceDate: ts(r.arrival),
         });
@@ -622,13 +642,43 @@ async function main() {
         method: i % 2 === 0 ? 'credit_card' : 'cash',
         status: checkedOut ? 'settled' : 'captured',
         amount: totalPayments.toFixed(2),
-        currencyCode: 'USD',
+        currencyCode: DEMO_CURRENCY,
         cardLastFour: i % 2 === 0 ? '4242' : null,
         cardBrand: i % 2 === 0 ? 'Visa' : null,
         processedAt: ts(r.arrival, 15, 35),
       });
     }
   }
+
+  // Explicit database-backed ancillary chain for the controlled Guest 360
+  // fixture. Dates and amounts are intentionally fixed relative to the seeded
+  // stays so the demo remains coherent without frontend mocks.
+  const sultanFirstFolioId = sid('f2000001', 24);
+  const sultanSecondFolioId = sid('f2000001', 25);
+  await db.insert(schema.charges).values([
+    {
+      id: sid('f3300001', 1),
+      propertyId,
+      folioId: sultanFirstFolioId,
+      type: 'food_beverage',
+      description: 'Restaurant — dinner',
+      amount: '38500.00',
+      currencyCode: DEMO_CURRENCY,
+      taxAmount: '0.00',
+      serviceDate: ts(-119, 19, 30),
+    },
+    {
+      id: sid('f3300001', 2),
+      propertyId,
+      folioId: sultanSecondFolioId,
+      type: 'spa',
+      description: 'SPA — massage',
+      amount: '55000.00',
+      currencyCode: DEMO_CURRENCY,
+      taxAmount: '0.00',
+      serviceDate: ts(-43, 17, 0),
+    },
+  ]);
 
   // -----------------------------------------------------------------------
   // 7. Housekeeping Tasks
@@ -1248,7 +1298,7 @@ async function main() {
   await db.insert(schema.bookingEngineConfig).values({
     propertyId,
     isEnabled: true,
-    displayName: 'Telivity Grand Hotel',
+    displayName: 'ЛЕС Боровое',
     primaryColor: '#0F172A',
     accentColor: '#2563EB',
     sellableRoomTypeIds: Object.values(roomTypeIds),
@@ -1302,7 +1352,7 @@ async function main() {
       paymentTermsDays: 'NET30',
       status: 'open',
       balance: '0.00',
-      currencyCode: 'USD',
+      currencyCode: DEMO_CURRENCY,
       groupProfileId: commercialProfileIds.acme,
     },
     {
@@ -1313,7 +1363,7 @@ async function main() {
       paymentTermsDays: 'NET60',
       status: 'open',
       balance: '0.00',
-      currencyCode: 'USD',
+      currencyCode: DEMO_CURRENCY,
       groupProfileId: commercialProfileIds.convention,
     },
   ]);
@@ -1322,27 +1372,27 @@ async function main() {
       id: sid('b8000001', 1),
       propertyId,
       name: 'Front Desk 1',
-      startingFloat: '200.00',
+      startingFloat: '100000.00',
       isActive: true,
     },
     {
       id: sid('b8000001', 2),
       propertyId,
       name: 'Front Desk 2',
-      startingFloat: '150.00',
+      startingFloat: '75000.00',
       isActive: true,
     },
   ]);
 
   console.log('Seed complete.');
-  console.log('  Property:      Telivity Grand Hotel (TGH)');
+  console.log('  Property:      ЛЕС Боровое (LES)');
   console.log('  Room Types:    4');
   console.log('  Media:         12 stock photos (property + room types)');
   console.log('  RBAC:          10 system roles, 5 demo users');
   console.log('  Rooms:         40 across 4 floors');
-  console.log('  Guests:        15');
-  console.log('  Reservations:  23 (past, in-house, arrivals, future, no-show, cancelled)');
-  console.log('  Folios:        16 with charges & payments');
+  console.log('  Guests:        16');
+  console.log('  Reservations:  25 (past, in-house, arrivals, future, no-show, cancelled)');
+  console.log('  Folios:        18 with charges & payments');
   console.log('  Rate Plans:    5 with restrictions');
   console.log('  Cancel policies: 3 (FLEX-24, MOD-48, NRFN)');
   console.log('  Services:      3 (BREAKFAST, PARKING, LATECO)');

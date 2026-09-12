@@ -101,10 +101,10 @@ export default function GuestDetailsModal({
   const { data: profile } = useQuery<GuestProfile | null>({
     queryKey: ['guest-profile', guestId],
     queryFn: async () => {
-      const r = await api.get(`/v1/guests/${guestId}`);
+      const r = await api.get(`/v1/guests/${guestId}`, { params: { propertyId } });
       return (r.data?.data ?? r.data ?? null) as GuestProfile | null;
     },
-    enabled: open && !!guestId,
+    enabled: open && !!guestId && !!propertyId,
   });
 
   const { data: folio } = useQuery<FolioRow | null>({
@@ -135,6 +135,15 @@ export default function GuestDetailsModal({
       return (r.data?.data ?? r.data ?? []) as PaymentRow[];
     },
     enabled: open && !!folio?.id,
+  });
+
+  const { data: history = [] } = useQuery<any[]>({
+    queryKey: ['reservation-audit', reservation?.id, propertyId],
+    queryFn: async () => {
+      const r = await api.get(`/v1/reservations/${reservation!.id}/audit-history`, { params: { propertyId } });
+      return (r.data?.data ?? r.data ?? []) as any[];
+    },
+    enabled: open && !!reservation?.id && !!propertyId,
   });
 
   if (!reservation) return null;
@@ -289,6 +298,11 @@ export default function GuestDetailsModal({
             {t('frontDesk.viewFolio')}
           </Link>
         </div>
+
+        <details className="border border-gray-100 rounded-xl p-4">
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wider text-telivity-mid-grey">{t('common.history', { defaultValue: 'History' })}</summary>
+          <div className="mt-3 space-y-3">{history.map((item) => <div key={item.id} className="text-sm"><p className="text-telivity-navy">{item.description ?? item.action}</p><p className="text-xs text-telivity-mid-grey">{new Date(item.occurredAt).toLocaleString()} · {item.userEmail ?? 'System'}</p></div>)}{history.length === 0 && <p className="text-sm text-telivity-mid-grey">{t('audit.empty', { defaultValue: 'No audit history' })}</p>}</div>
+        </details>
 
         <div className="flex flex-wrap gap-2 pt-1">
           <button

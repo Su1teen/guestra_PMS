@@ -26,6 +26,7 @@ import {
   Calculator,
   ReceiptText,
   ClipboardList,
+  ClipboardCheck,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -56,6 +57,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/guests', icon: Users, labelKey: 'nav.guests', permission: 'guests.read' },
       { to: '/rooms', icon: DoorOpen, labelKey: 'nav.rooms', permission: 'rooms.read' },
       { to: '/housekeeping', icon: Sparkles, labelKey: 'nav.housekeeping', permission: 'housekeeping.read' },
+      { to: '/operations', icon: ClipboardCheck, labelKey: 'nav.operations', permission: 'ops.read' },
       { to: '/folios', icon: Receipt, labelKey: 'nav.foliosBilling', permission: 'folios.read' },
     ],
   },

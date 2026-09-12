@@ -5,8 +5,8 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { eq, and, lte, gte, sql } from 'drizzle-orm';
-import { ratePlans, rateRestrictions, roomTypes, cancellationPolicies, groupProfiles, properties, rooms, reservations } from '@telivityhaip/database';
+import { eq, and, lte, gte, sql, desc } from 'drizzle-orm';
+import { ratePlans, rateRestrictions, roomTypes, cancellationPolicies, groupProfiles, properties, rooms, reservations, auditLogs } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { WebhookService } from '../webhook/webhook.service';
 import { CreateRatePlanDto } from './dto/create-rate-plan.dto';
@@ -14,6 +14,7 @@ import { UpdateRatePlanDto } from './dto/update-rate-plan.dto';
 import { CreateRateRestrictionDto } from './dto/create-rate-restriction.dto';
 import { UpdateRateRestrictionDto } from './dto/update-rate-restriction.dto';
 import { EffectiveRateQueryDto } from './dto/effective-rate-query.dto';
+import { actorFields, type AuditActor } from '../../common/audit/audit-actor';
 import {
   applyRateAdjustment,
   nightsBetween,
@@ -409,12 +410,25 @@ export class RatePlanService {
     ratePlanId: string,
     propertyId: string,
     dto: CreateRateRestrictionDto,
+    actor?: AuditActor,
   ) {
     await this.findById(ratePlanId, propertyId); // Verify rate plan exists + tenant scope
+    if (dto.rateOverride != null && !dto.overrideReason?.trim()) {
+      throw new BadRequestException('A reason is required for a manual rate override');
+    }
     const [restriction] = await this.db
       .insert(rateRestrictions)
-      .values({ ...dto, ratePlanId, propertyId })
+      .values({
+        ...dto,
+        overrideReason: dto.overrideReason?.trim() || null,
+        overrideBy: dto.rateOverride != null ? actor?.userId ?? null : null,
+        ratePlanId,
+        propertyId,
+      })
       .returning();
+    if (dto.rateOverride != null) {
+      await this.writeOverrideAudit(restriction, null, propertyId, actor, dto.overrideReason!);
+    }
     await this.webhookService?.emit(
       'rate_restriction.created',
       'rate_restriction',
@@ -446,10 +460,27 @@ export class RatePlanService {
     id: string,
     propertyId: string,
     dto: UpdateRateRestrictionDto,
+    actor?: AuditActor,
   ) {
+    const [previous] = await this.db.select().from(rateRestrictions).where(and(
+      eq(rateRestrictions.id, id),
+      eq(rateRestrictions.propertyId, propertyId),
+    ));
+    if (!previous) throw new NotFoundException(`Rate restriction ${id} not found`);
+    if (dto.rateOverride != null && !dto.overrideReason?.trim()) {
+      throw new BadRequestException('A reason is required for a manual rate override');
+    }
+    const isOverrideChange = dto.rateOverride !== undefined;
     const [restriction] = await this.db
       .update(rateRestrictions)
-      .set({ ...dto, updatedAt: new Date() })
+      .set({
+        ...dto,
+        ...(isOverrideChange ? {
+          overrideReason: dto.rateOverride == null ? null : dto.overrideReason!.trim(),
+          overrideBy: actor?.userId ?? null,
+        } : {}),
+        updatedAt: new Date(),
+      })
       .where(
         and(
           eq(rateRestrictions.id, id),
@@ -457,8 +488,14 @@ export class RatePlanService {
         ),
       )
       .returning();
-    if (!restriction) {
-      throw new NotFoundException(`Rate restriction ${id} not found`);
+    if (isOverrideChange) {
+      await this.writeOverrideAudit(
+        restriction,
+        previous,
+        propertyId,
+        actor,
+        dto.rateOverride == null ? 'Manual rate override cleared' : dto.overrideReason!,
+      );
     }
     await this.webhookService?.emit(
       'rate_restriction.updated',
@@ -472,6 +509,33 @@ export class RatePlanService {
       propertyId,
     );
     return restriction;
+  }
+
+  async pricingHistory(propertyId: string) {
+    return this.db.select().from(auditLogs).where(and(
+      eq(auditLogs.propertyId, propertyId),
+      eq(auditLogs.entityType, 'rate_restriction'),
+      eq(auditLogs.action, 'manual_rate_override'),
+    )).orderBy(desc(auditLogs.occurredAt)).limit(200);
+  }
+
+  private async writeOverrideAudit(
+    next: any,
+    previous: any,
+    propertyId: string,
+    actor: AuditActor | undefined,
+    reason: string,
+  ) {
+    await this.db.insert(auditLogs).values({
+      propertyId,
+      action: 'manual_rate_override',
+      entityType: 'rate_restriction',
+      entityId: next.id,
+      previousValue: previous ? { rateOverride: previous.rateOverride, overrideReason: previous.overrideReason } : null,
+      newValue: { rateOverride: next.rateOverride, overrideReason: next.overrideReason, ratePlanId: next.ratePlanId },
+      description: reason.trim(),
+      ...actorFields(actor),
+    });
   }
 
   async deleteRestriction(id: string, propertyId: string) {

@@ -29,6 +29,7 @@ import { getDateLocale } from '../lib/date-locale';
 import { formatMoney } from '../lib/money';
 import { useProperty } from '../context/PropertyContext';
 import KpiCard from '../components/ui/KpiCard';
+import RevenueWorkspaceNav from '../components/revenue/RevenueWorkspaceNav';
 import {
   DEFAULT_PRICING_SETTINGS,
   FORECAST_DAYS,
@@ -356,6 +357,8 @@ export default function DynamicPricing() {
           <p className="text-xs text-telivity-mid-grey">{t('dynamicPricing.subtitle')}</p>
         </div>
       </div>
+
+      <RevenueWorkspaceNav />
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         {/* ---- Left: controls ---- */}

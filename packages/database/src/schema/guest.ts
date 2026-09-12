@@ -67,6 +67,11 @@ export const guests = pgTable('guests', {
   isDeleted: boolean('is_deleted').notNull().default(false),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
 
+  // Duplicate-profile merge tombstone. The source row remains for audit and
+  // regulatory traceability while all operational ownership moves to target.
+  mergedIntoGuestId: uuid('merged_into_guest_id'),
+  mergedAt: timestamp('merged_at', { withTimezone: true }),
+
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

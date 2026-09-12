@@ -6,9 +6,9 @@ import {
   ConflictException,
   forwardRef,
 } from '@nestjs/common';
-import { eq, and, sql, gte, lte, inArray, isNull } from 'drizzle-orm';
+import { eq, and, sql, gte, lte, inArray, isNull, desc } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { reservations, reservationGuests, bookings, guests, rooms, roomTypes, ratePlans, properties, payments } from '@telivityhaip/database';
+import { reservations, reservationGuests, bookings, guests, rooms, roomTypes, ratePlans, properties, payments, auditLogs } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { assertTransition, type ReservationStatus } from './reservation-state-machine';
 import {
@@ -1312,6 +1312,15 @@ export class ReservationService {
     }
 
     return results[0];
+  }
+
+  async auditHistory(id: string, propertyId: string) {
+    await this.findById(id, propertyId);
+    return this.db.select().from(auditLogs).where(and(
+      eq(auditLogs.propertyId, propertyId),
+      eq(auditLogs.entityType, 'reservation'),
+      eq(auditLogs.entityId, id),
+    )).orderBy(desc(auditLogs.occurredAt)).limit(200);
   }
 
   async list(dto: ListReservationsDto) {

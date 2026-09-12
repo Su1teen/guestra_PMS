@@ -53,6 +53,8 @@ import { LoyaltyModule } from './modules/loyalty/loyalty.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
 import { IcalModule } from './modules/ical/ical.module';
 import { FiscalModule } from './modules/fiscal/fiscal.module';
+import { MaintenanceModule } from './modules/maintenance/maintenance.module';
+import { OperationsModule } from './modules/operations/operations.module';
 import { bookingRequestsModules } from './booking-requests.bootstrap';
 
 const imports: any[] = [
@@ -114,6 +116,8 @@ const imports: any[] = [
   IntegrationsModule,
   IcalModule,
   FiscalModule,
+  MaintenanceModule,
+  OperationsModule,
 ];
 
 // Serve the bundled dashboard as static files. Enabled in production, or

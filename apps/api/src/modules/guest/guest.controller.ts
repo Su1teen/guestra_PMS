@@ -18,6 +18,8 @@ import { GuestService } from './guest.service';
 import { CreateGuestDto } from './dto/create-guest.dto';
 import { UpdateGuestDto } from './dto/update-guest.dto';
 import { SearchGuestsDto } from './dto/search-guests.dto';
+import { MergeGuestsDto } from './dto/merge-guests.dto';
+import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
 
 @ApiTags('guests')
 @Controller('guests')
@@ -48,6 +50,37 @@ export class GuestController {
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
   ) {
     return this.guestService.findById(id, propertyId);
+  }
+
+  @Get(':id/360')
+  @RequirePermissions('guests.read')
+  @ApiOperation({ summary: 'Guest 360 — profile, authorized stays, services, LTV, and timeline' })
+  getGuest360(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    const allowedPropertyIds = user?.propertyIds?.length ? user.propertyIds : [propertyId];
+    return this.guestService.get360(id, propertyId, allowedPropertyIds);
+  }
+
+  @Get(':id/duplicates')
+  @RequirePermissions('guests.read')
+  @ApiOperation({ summary: 'Find possible duplicate guest profiles by normalized email/phone' })
+  findDuplicates(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) { return this.guestService.findDuplicates(id, propertyId); }
+
+  @Post(':id/merge')
+  @RequirePermissions('guests.write')
+  @ApiOperation({ summary: 'Merge a duplicate guest after explicit comparison and confirmation' })
+  mergeGuest(
+    @Param('id', ParseUUIDPipe) sourceId: string,
+    @Body() dto: MergeGuestsDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.guestService.merge(sourceId, dto.targetGuestId, dto.propertyId, dto.confirmed, actor);
   }
 
   @Post()

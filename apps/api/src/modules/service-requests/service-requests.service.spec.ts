@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import { ServiceRequestsService } from './service-requests.service';
 import { HousekeepingService } from '../housekeeping/housekeeping.service';
 import { DRIZZLE } from '../../database/database.module';
+import { WebhookService } from '../webhook/webhook.service';
 
 const mockRequest = {
   id: 'sr-001',
@@ -40,6 +41,7 @@ function selectResolving(returnData: any[]) {
 }
 
 const mockHousekeepingService = { create: vi.fn() };
+const mockWebhookService = { emit: vi.fn().mockResolvedValue(undefined) };
 
 describe('ServiceRequestsService', () => {
   let service: ServiceRequestsService;
@@ -57,6 +59,7 @@ describe('ServiceRequestsService', () => {
         ServiceRequestsService,
         { provide: DRIZZLE, useValue: db },
         { provide: HousekeepingService, useValue: mockHousekeepingService },
+        { provide: WebhookService, useValue: mockWebhookService },
       ],
     }).compile();
 

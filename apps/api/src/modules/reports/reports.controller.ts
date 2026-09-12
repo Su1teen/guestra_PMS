@@ -62,6 +62,14 @@ export class ReportsController {
     return this.reportsService.getDailyRevenue(propertyId, date);
   }
 
+  @Get('/management-summary')
+  @RequirePermissions('management_dashboard.view')
+  @ApiOperation({ summary: 'Management dashboard + Daily Revenue Report cockpit' })
+  async getManagementSummary(
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Query('date') date: string,
+  ) { return this.reportsService.getManagementSummary(propertyId, resolveReportDate(date)); }
+
   @Get('/occupancy')
   @ApiOperation({ summary: 'Occupancy report' })
   @ApiQuery({ name: 'propertyId', required: true })
