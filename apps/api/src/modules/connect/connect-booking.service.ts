@@ -1,9 +1,21 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, notInArray, lt, gt } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { bookings, reservations, guests, ratePlans, roomTypes, folios, rooms } from '@telivityhaip/database';
+import {
+  bookings,
+  reservations,
+  reservationGuests,
+  guests,
+  ratePlans,
+  roomTypes,
+  folios,
+  rooms,
+} from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
-import { AvailabilityService } from '../reservation/availability.service';
+import {
+  assertFullStayAvailability,
+  AvailabilityService,
+} from '../reservation/availability.service';
 import { ReservationService } from '../reservation/reservation.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { RatePlanService } from '../rate-plan/rate-plan.service';
@@ -28,100 +40,180 @@ export class ConnectBookingService {
    * Agent bookings auto-confirm (skip pending status).
    */
   async book(dto: AgentBookDto) {
-    // 1. Verify rate is still available
-    const availability = await this.availabilityService.searchAvailability(
-      dto.propertyId,
-      dto.checkIn,
-      dto.checkOut,
-      dto.roomTypeId,
-    );
-
-    const minAvailable = availability.length > 0
-      ? Math.min(...availability.map((a) => a.available))
-      : 0;
-
-    if (minAvailable <= 0) {
-      throw new BadRequestException('No availability for the requested dates and room type');
-    }
-
-    // 2. Get rate plan to verify it exists and get amount
-    const [ratePlan] = await this.db
-      .select()
-      .from(ratePlans)
-      .where(
-        and(
-          eq(ratePlans.id, dto.ratePlanId),
-          eq(ratePlans.propertyId, dto.propertyId),
-          eq(ratePlans.isActive, true),
-        ),
-      );
-
-    if (!ratePlan) {
-      throw new NotFoundException(`Rate plan ${dto.ratePlanId} not found or inactive`);
-    }
-
-    // 2b. Enforce rate restrictions (stop-sell / CTA / CTD / min-max LOS). Without
-    // this, an agent/LLM booking via the Connect API could land on a closed date.
-    await this.ratePlanService.assertSellable(dto.propertyId, dto.ratePlanId, dto.checkIn, dto.checkOut);
-
-    // 3. Find or create guest
-    const guest = await this.findOrCreateGuest(dto);
-
-    // 4. Calculate nights and total
-    const arrival = new Date(dto.checkIn);
-    const departure = new Date(dto.checkOut);
+    const arrival = new Date(`${dto.checkIn}T00:00:00.000Z`);
+    const departure = new Date(`${dto.checkOut}T00:00:00.000Z`);
     const nights = Math.ceil((departure.getTime() - arrival.getTime()) / (1000 * 60 * 60 * 24));
-    // Monetary math via Decimal (baseAmount is a numeric string from PG)
-    const baseAmountDec = new Decimal(ratePlan.baseAmount);
-    const totalAmountDec = baseAmountDec.times(nights);
-    const baseAmount = baseAmountDec.toNumber();
-    const totalAmount = totalAmountDec.toNumber();
+    if (!Number.isFinite(nights) || nights <= 0) {
+      throw new BadRequestException('checkOut must be after checkIn');
+    }
 
-    // 5. Generate confirmation number. High-entropy (128 bits from randomBytes,
-    // Crockford base32, no ambiguous chars) so it can't be enumerated/guessed —
-    // the confirmation number is itself a bearer credential for the booking.
+    const guestCount = dto.adults + (dto.children ?? 0);
     const confirmationNumber = `HAIP-${generateConfirmationToken()}`;
 
-    // 6. Create booking
-    const [booking] = await this.db
-      .insert(bookings)
-      .values({
-        propertyId: dto.propertyId,
-        guestId: guest.id,
-        confirmationNumber,
-        externalConfirmation: dto.externalReference,
-        source: 'agent',
-        channelCode: dto.agentId ?? 'otaip',
-      })
-      .returning();
+    const committed = await this.db.transaction(async (tx: any) => {
+      // All canonical reservation writers lock the room-type inventory row first.
+      // The physical room row is then locked as the per-room mutex, so two voice
+      // calls cannot both pass the overlap check for the same room.
+      await this.reservationService.lockInventory(dto.propertyId, dto.roomTypeId, tx);
 
-    // 7. Create reservation — auto-confirm for agent bookings
-    const [reservation] = await this.db
-      .insert(reservations)
-      .values({
-        propertyId: dto.propertyId,
-        bookingId: booking.id,
-        guestId: guest.id,
-        arrivalDate: dto.checkIn,
-        departureDate: dto.checkOut,
-        nights,
-        roomTypeId: dto.roomTypeId,
-        ratePlanId: dto.ratePlanId,
-        totalAmount: totalAmountDec.toFixed(2),
-        currencyCode: ratePlan.currencyCode,
-        adults: dto.adults,
-        children: dto.children ?? 0,
-        specialRequests: dto.specialRequests,
-        status: 'confirmed', // Agent bookings skip pending
-      })
-      .returning();
+      const lockedRooms = await tx
+        .select()
+        .from(rooms)
+        .where(
+          and(
+            eq(rooms.id, dto.roomId),
+            eq(rooms.propertyId, dto.propertyId),
+          ),
+        )
+        .for('update');
+      const room = lockedRooms[0];
+      if (!room || !room.isActive) {
+        throw new NotFoundException(`Room ${dto.roomId} not found or inactive in this property`);
+      }
+      if (room.roomTypeId !== dto.roomTypeId) {
+        throw new BadRequestException(
+          `Room ${dto.roomId} belongs to room type ${room.roomTypeId}, not ${dto.roomTypeId}`,
+        );
+      }
 
-    // 8. Build nightly breakdown
+      const [roomType] = await tx
+        .select()
+        .from(roomTypes)
+        .where(
+          and(
+            eq(roomTypes.id, dto.roomTypeId),
+            eq(roomTypes.propertyId, dto.propertyId),
+            eq(roomTypes.isActive, true),
+          ),
+        );
+      if (!roomType) {
+        throw new NotFoundException(`Room type ${dto.roomTypeId} not found or inactive`);
+      }
+      if (guestCount > roomType.maxOccupancy) {
+        throw new BadRequestException(
+          `Room type ${dto.roomTypeId} allows ${roomType.maxOccupancy} guests, but ${guestCount} were requested`,
+        );
+      }
+
+      const [ratePlan] = await tx
+        .select()
+        .from(ratePlans)
+        .where(
+          and(
+            eq(ratePlans.id, dto.ratePlanId),
+            eq(ratePlans.propertyId, dto.propertyId),
+            eq(ratePlans.isActive, true),
+          ),
+        );
+      if (!ratePlan) {
+        throw new NotFoundException(`Rate plan ${dto.ratePlanId} not found or inactive`);
+      }
+      if (ratePlan.roomTypeId !== dto.roomTypeId) {
+        throw new BadRequestException(
+          `Rate plan ${dto.ratePlanId} belongs to room type ${ratePlan.roomTypeId}, not ${dto.roomTypeId}`,
+        );
+      }
+
+      await this.ratePlanService.assertSellable(
+        dto.propertyId,
+        dto.ratePlanId,
+        dto.checkIn,
+        dto.checkOut,
+        tx,
+      );
+
+      const availability = await this.availabilityService.searchAvailability(
+        dto.propertyId,
+        dto.checkIn,
+        dto.checkOut,
+        dto.roomTypeId,
+        tx,
+      );
+      assertFullStayAvailability(
+        availability,
+        dto.roomTypeId,
+        dto.checkIn,
+        dto.checkOut,
+      );
+
+      const conflicts = await tx
+        .select({ id: reservations.id })
+        .from(reservations)
+        .where(
+          and(
+            eq(reservations.propertyId, dto.propertyId),
+            eq(reservations.roomId, dto.roomId),
+            notInArray(reservations.status, ['cancelled', 'no_show', 'checked_out'] as any),
+            lt(reservations.arrivalDate, dto.checkOut),
+            gt(reservations.departureDate, dto.checkIn),
+          ),
+        )
+        .limit(1);
+      if (conflicts.length > 0) {
+        throw new BadRequestException(
+          `Room ${room.number} is already reserved for the requested dates`,
+        );
+      }
+
+      const guest = await this.findOrCreateGuest(dto, tx);
+      const baseAmountDec = new Decimal(ratePlan.baseAmount);
+      const totalAmountDec = baseAmountDec.times(nights);
+
+      const [booking] = await tx
+        .insert(bookings)
+        .values({
+          propertyId: dto.propertyId,
+          guestId: guest.id,
+          confirmationNumber,
+          externalConfirmation: dto.externalReference,
+          source: 'agent',
+          channelCode: dto.agentId ?? 'otaip',
+        })
+        .returning();
+
+      const [reservation] = await tx
+        .insert(reservations)
+        .values({
+          propertyId: dto.propertyId,
+          bookingId: booking.id,
+          guestId: guest.id,
+          arrivalDate: dto.checkIn,
+          departureDate: dto.checkOut,
+          nights,
+          roomTypeId: dto.roomTypeId,
+          roomId: dto.roomId,
+          ratePlanId: dto.ratePlanId,
+          totalAmount: totalAmountDec.toFixed(2),
+          currencyCode: ratePlan.currencyCode,
+          adults: dto.adults,
+          children: dto.children ?? 0,
+          specialRequests: dto.specialRequests,
+          status: 'assigned',
+        })
+        .returning();
+
+      await tx.insert(reservationGuests).values({
+        propertyId: dto.propertyId,
+        reservationId: reservation.id,
+        guestId: guest.id,
+        role: 'primary',
+      });
+
+      return {
+        reservation,
+        room,
+        ratePlan,
+        baseAmount: baseAmountDec.toNumber(),
+        totalAmount: totalAmountDec.toNumber(),
+      };
+    });
+
+    const { reservation, room, ratePlan, baseAmount, totalAmount } = committed;
+
     const settings = await this.getPropertySettings(dto.propertyId);
     const taxRate = (settings['taxRate'] as number) ?? 0;
     const nightlyBreakdown = this.buildNightlyBreakdown(baseAmount, nights, arrival, taxRate);
 
-    // 9. Determine payment status
     let paymentStatus: 'none' | 'authorized' | 'charged' = 'none';
     let depositAmount: number | undefined;
 
@@ -131,7 +223,6 @@ export class ConnectBookingService {
       depositAmount = totalAmount;
     }
 
-    // 10. Emit webhook
     await this.webhookService.emit(
       'connect.booking_created',
       'reservation',
@@ -150,7 +241,9 @@ export class ConnectBookingService {
       confirmationNumber,
       externalReference: dto.externalReference,
       reservationId: reservation.id,
-      status: 'confirmed',
+      status: 'assigned',
+      roomId: room.id,
+      roomNumber: room.number,
       confirmationCodes: {
         pms: confirmationNumber,
         external: dto.externalReference,
@@ -481,19 +574,19 @@ export class ConnectBookingService {
     return { booking, reservation };
   }
 
-  private async findOrCreateGuest(dto: AgentBookDto) {
+  private async findOrCreateGuest(dto: AgentBookDto, db: any = this.db) {
     // Try to find by email — but ONLY reuse a guest that is already linked to
     // THIS property via an existing reservation. The `guests` row is cross-property
     // by design, yet a bare email match would let one tenant attach to (and later,
     // via modify(), overwrite) another tenant's guest profile. Scope reuse to the
     // requesting property; otherwise create a fresh row (CLAUDE.md guest rule).
     if (dto.guestEmail) {
-      const matches = await this.db
+      const matches = await db
         .select()
         .from(guests)
         .where(eq(guests.email, dto.guestEmail));
       for (const candidate of matches) {
-        const links = await this.db
+        const links = await db
           .select({ id: reservations.id })
           .from(reservations)
           .where(
@@ -507,11 +600,11 @@ export class ConnectBookingService {
     }
 
     // Create new guest
-    const [guest] = await this.db
+    const [guest] = await db
       .insert(guests)
       .values({
-        firstName: dto.guestFirstName,
-        lastName: dto.guestLastName,
+        firstName: dto.guestFirstName.trim(),
+        lastName: dto.guestLastName?.trim() || 'Не указана',
         email: dto.guestEmail ?? null,
         phone: dto.guestPhone ?? null,
         loyaltyNumber: dto.loyaltyNumber ?? null,

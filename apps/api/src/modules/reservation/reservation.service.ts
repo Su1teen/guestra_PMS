@@ -6,7 +6,20 @@ import {
   ConflictException,
   forwardRef,
 } from '@nestjs/common';
-import { eq, and, sql, gte, lte, inArray, isNull, desc } from 'drizzle-orm';
+import {
+  eq,
+  and,
+  sql,
+  gte,
+  lte,
+  lt,
+  gt,
+  ne,
+  inArray,
+  notInArray,
+  isNull,
+  desc,
+} from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { reservations, reservationGuests, bookings, guests, rooms, roomTypes, ratePlans, properties, payments, auditLogs } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
@@ -265,40 +278,75 @@ export class ReservationService {
   }
 
   async assignRoom(id: string, propertyId: string, dto: AssignRoomDto) {
-    const reservation = await this.findByIdRaw(id, propertyId);
-    assertTransition(reservation.status as ReservationStatus, 'assigned');
+    return this.db.transaction(async (tx: any) => {
+      const lockedReservations = await tx
+        .select()
+        .from(reservations)
+        .where(and(eq(reservations.id, id), eq(reservations.propertyId, propertyId)))
+        .for('update');
+      const reservation = lockedReservations[0];
+      if (!reservation) {
+        throw new NotFoundException(`Reservation ${id} not found`);
+      }
+      assertTransition(reservation.status as ReservationStatus, 'assigned');
 
-    // Verify room exists, belongs to same property, and matches room type
-    const [room] = await this.db
-      .select()
-      .from(rooms)
-      .where(and(eq(rooms.id, dto.roomId), eq(rooms.propertyId, reservation.propertyId)));
-    if (!room) {
-      throw new NotFoundException(`Room ${dto.roomId} not found in this property`);
-    }
-    if (room.roomTypeId !== reservation.roomTypeId) {
-      throw new BadRequestException(
-        `Room ${dto.roomId} is type ${room.roomTypeId}, but reservation requires type ${reservation.roomTypeId}`,
-      );
-    }
+      // The physical-room lock serializes competing assignments. Re-reading
+      // overlaps after the lock prevents two future reservations from being
+      // assigned to the same room for intersecting stay dates.
+      const lockedRooms = await tx
+        .select()
+        .from(rooms)
+        .where(and(eq(rooms.id, dto.roomId), eq(rooms.propertyId, propertyId)))
+        .for('update');
+      const room = lockedRooms[0];
+      if (!room || !room.isActive) {
+        throw new NotFoundException(`Room ${dto.roomId} not found or inactive in this property`);
+      }
+      if (room.roomTypeId !== reservation.roomTypeId) {
+        throw new BadRequestException(
+          `Room ${dto.roomId} is type ${room.roomTypeId}, but reservation requires type ${reservation.roomTypeId}`,
+        );
+      }
 
-    const allowedStatuses = ['guest_ready', 'vacant_clean'];
-    if (!allowedStatuses.includes(room.status)) {
-      throw new BadRequestException(
-        `Room ${dto.roomId} is not available (status: ${room.status}). Must be 'guest_ready' or 'vacant_clean'.`,
-      );
-    }
+      const allowedStatuses = ['guest_ready', 'vacant_clean'];
+      if (!allowedStatuses.includes(room.status)) {
+        throw new BadRequestException(
+          `Room ${dto.roomId} is not available (status: ${room.status}). Must be 'guest_ready' or 'vacant_clean'.`,
+        );
+      }
 
-    // Bug 2: atomic claim — only one assign can win the race on the same
-    // reservation, and only from states the state machine allows.
-    const updated = await this.claimTransition(
-      id,
-      propertyId,
-      ['confirmed'],
-      { roomId: dto.roomId, status: 'assigned', updatedAt: new Date() },
-      'assigned',
-    );
-    return updated;
+      const conflicts = await tx
+        .select({ id: reservations.id })
+        .from(reservations)
+        .where(and(
+          eq(reservations.propertyId, propertyId),
+          eq(reservations.roomId, dto.roomId),
+          ne(reservations.id, id),
+          notInArray(reservations.status, ['cancelled', 'no_show', 'checked_out'] as any),
+          lt(reservations.arrivalDate, reservation.departureDate),
+          gt(reservations.departureDate, reservation.arrivalDate),
+        ))
+        .limit(1);
+      if (conflicts.length > 0) {
+        throw new ConflictException(
+          `Room ${room.number} is already reserved for these dates`,
+        );
+      }
+
+      const [updated] = await tx
+        .update(reservations)
+        .set({ roomId: dto.roomId, status: 'assigned', updatedAt: new Date() })
+        .where(and(
+          eq(reservations.id, id),
+          eq(reservations.propertyId, propertyId),
+          eq(reservations.status, 'confirmed'),
+        ))
+        .returning();
+      if (!updated) {
+        throw new ConflictException('Reservation changed while assigning the room');
+      }
+      return updated;
+    });
   }
 
   /**

@@ -99,6 +99,7 @@ export class DynamicPricingAgent implements HaipAgent, OnModuleInit {
         roomTypeId: string;
         baseAmount: string;
         name: string;
+        currencyCode: string;
       }>;
       pricingConfig: PricingConfig;
     };
@@ -144,6 +145,7 @@ export class DynamicPricingAgent implements HaipAgent, OnModuleInit {
             adjustmentPct: result.adjustmentPct,
             reason: result.reason,
             estimatedRevenueImpact: (result.rate - baseRate) * forecast.predictedOccupancy * 10, // rough estimate
+            currencyCode: plan.currencyCode,
           });
         }
       }
@@ -194,7 +196,7 @@ export class DynamicPricingAgent implements HaipAgent, OnModuleInit {
       changes.push({
         entity: 'rate_plan',
         action: 'adjust',
-        detail: `${adj.ratePlanId} on ${adj.date}: $${adj.currentRate} → $${adj.recommendedRate} (${adj.adjustmentPct > 0 ? '+' : ''}${adj.adjustmentPct}%)`,
+        detail: `${adj.ratePlanId} on ${adj.date}: ${adj.currentRate} ${adj.currencyCode} → ${adj.recommendedRate} ${adj.currencyCode} (${adj.adjustmentPct > 0 ? '+' : ''}${adj.adjustmentPct}%)`,
       });
     }
 

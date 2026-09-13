@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BarChart3, Percent, DollarSign, TrendingUp, Building2, Star } from 'lucide-react';
+import { BarChart3, Percent, DollarSign, TrendingUp, Building2, Download, Star } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { format, subDays } from 'date-fns';
 import { api } from '../lib/api';
@@ -26,7 +26,7 @@ const REPORT_OPTIONS: { value: ReportType; labelKey: string }[] = [
 const DEMO_FAVORITES_KEY = 'haip.reportFavorites';
 
 export default function Reports() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { propertyId, isPortfolioMode, properties, currencyCode } = useProperty();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
@@ -44,6 +44,8 @@ export default function Reports() {
   const [stayDate, setStayDate] = useState(format(subDays(new Date(), -30), 'yyyy-MM-dd'));
   const [pickupFrom, setPickupFrom] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'));
   const [pickupTo, setPickupTo] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
   const { data: prefsData } = useQuery({
     queryKey: ['me', 'preferences'],
@@ -133,6 +135,41 @@ export default function Reports() {
   const revenue = reportData.revenue ?? {};
   const payments = reportData.payments ?? {};
   const propertyNameMap = new Map(properties.map((p) => [p.id, p.name]));
+  const reportOption = REPORT_OPTIONS.find((option) => option.value === report);
+
+  async function exportReport(): Promise<void> {
+    setIsExporting(true);
+    setExportError('');
+    try {
+      const { downloadReportWorkbook } = await import('../lib/report-excel');
+      const parameters: Record<string, string> = {};
+      if (usesDateRange) {
+        parameters.startDate = startDate;
+        parameters.endDate = endDate;
+      } else if (report === 'pickup') {
+        parameters.stayDate = stayDate;
+        parameters.pickupFrom = pickupFrom;
+        parameters.pickupTo = pickupTo;
+      } else {
+        parameters.date = date;
+      }
+      await downloadReportWorkbook({
+        title: reportOption ? t(`reports.${reportOption.labelKey}`) : report,
+        reportType: report,
+        propertyName: isPortfolioMode
+          ? (i18n.language.startsWith('ru') ? 'Портфель объектов' : 'Property portfolio')
+          : (properties.find((property) => property.id === propertyId)?.name ?? propertyId ?? 'Property'),
+        currencyCode: currencyCode ?? 'KZT',
+        parameters,
+        data: reportData,
+      });
+    } catch (error) {
+      console.error('Failed to export report workbook', error);
+      setExportError(i18n.language.startsWith('ru') ? 'Не удалось скачать Excel-файл' : 'Could not download the Excel file');
+    } finally {
+      setIsExporting(false);
+    }
+  }
 
   if (!propertyId) {
     return <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('reports.selectProperty')}</div>;
@@ -250,6 +287,20 @@ export default function Reports() {
             </div>
           </>
         )}
+        <div className="ml-auto flex flex-col items-end gap-1">
+          <button
+            type="button"
+            onClick={() => void exportReport()}
+            disabled={!data || isExporting}
+            className="inline-flex items-center gap-2 rounded-lg bg-telivity-navy px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-telivity-navy/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Download size={16} />
+            {isExporting
+              ? (i18n.language.startsWith('ru') ? 'Создание файла…' : 'Creating file…')
+              : (i18n.language.startsWith('ru') ? 'Скачать Excel' : 'Download Excel')}
+          </button>
+          {exportError && <span className="text-xs text-red-600">{exportError}</span>}
+        </div>
       </div>
 
       {/* Financial Summary */}

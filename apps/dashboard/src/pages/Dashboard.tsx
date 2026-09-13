@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   WalletCards,
   CalendarCheck,
+  Download,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
 import { format } from 'date-fns';
@@ -130,6 +131,7 @@ export default function Dashboard() {
   });
 
   const [activities, setActivities] = useState<ActivityEvent[]>([]);
+  const [isExportingDrr, setIsExportingDrr] = useState(false);
 
   const handleEvent = useCallback((payload: ActivityEvent) => {
     setActivities((prev) => [payload, ...prev].slice(0, 10));
@@ -283,6 +285,26 @@ export default function Dashboard() {
   const attentionItems = (attention?.data ?? attention)?.items ?? [];
   const ru = i18n.language.startsWith('ru');
 
+  async function exportDrr(): Promise<void> {
+    if (!drr) return;
+    setIsExportingDrr(true);
+    try {
+      const { downloadReportWorkbook } = await import('../lib/report-excel');
+      await downloadReportWorkbook({
+        title: ru ? 'Ежедневный отчёт по выручке (DRR)' : 'Daily Revenue Report (DRR)',
+        reportType: `drr-${today}`,
+        propertyName: activeProperty?.name ?? propertyId ?? 'Property',
+        currencyCode: currencyCode ?? 'KZT',
+        parameters: { date: today },
+        data: drr,
+      });
+    } catch (error) {
+      console.error('Failed to export DRR workbook', error);
+    } finally {
+      setIsExportingDrr(false);
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center gap-3 mb-6">
@@ -296,7 +318,18 @@ export default function Dashboard() {
           <div className="flex flex-wrap items-center gap-3 mb-4">
             <CalendarCheck size={20} className="text-telivity-teal" />
             <div><h2 className="text-base font-semibold text-telivity-navy">{ru ? 'Ежедневный отчёт по выручке (DRR)' : 'Daily Revenue Report (DRR)'}</h2><p className="text-xs text-telivity-mid-grey">{ru ? 'Единые показатели Dashboard и Reports' : 'One source of truth for Dashboard and Reports'}</p></div>
-            <button onClick={() => navigate('/reports')} className="ml-auto text-xs font-semibold text-telivity-teal">{ru ? 'Открыть отчёты →' : 'Open reports →'}</button>
+            <div className="ml-auto flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void exportDrr()}
+                disabled={isExportingDrr}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-telivity-teal px-3 py-1.5 text-xs font-semibold text-telivity-teal hover:bg-telivity-teal/5 disabled:opacity-50"
+              >
+                <Download size={14} />
+                {isExportingDrr ? (ru ? 'Создание…' : 'Creating…') : 'Excel'}
+              </button>
+              <button onClick={() => navigate('/reports')} className="text-xs font-semibold text-telivity-teal">{ru ? 'Открыть отчёты →' : 'Open reports →'}</button>
+            </div>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
             <ManagementMetric label={ru ? 'Брони On Books' : 'On books'} value={drr.onBooks} />

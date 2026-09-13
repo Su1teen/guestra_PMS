@@ -124,7 +124,7 @@ async function main() {
       depositPercentage: 20,
       requireInspection: true,
       taxRate: 0.13,
-      noShowFeeAmount: 150,
+      noShowFeeAmount: 75000,
       noShowCutoffHour: 18,
     },
   });
@@ -140,10 +140,10 @@ async function main() {
   };
 
   await db.insert(schema.roomTypes).values([
-    { id: roomTypeIds.standard, propertyId, name: 'Standard King', code: 'STK', maxOccupancy: 2, defaultOccupancy: 2, bedType: 'king', bedCount: 1, squareMeters: 30, isAccessible: false, amenities: ['wifi', 'tv', 'minibar', 'safe'], sortOrder: 1 },
-    { id: roomTypeIds.deluxe, propertyId, name: 'Deluxe Ocean View', code: 'DOV', maxOccupancy: 3, defaultOccupancy: 2, bedType: 'king', bedCount: 1, squareMeters: 42, isAccessible: false, amenities: ['wifi', 'tv', 'minibar', 'safe', 'balcony', 'ocean_view'], sortOrder: 2 },
-    { id: roomTypeIds.suite, propertyId, name: 'Junior Suite', code: 'JST', maxOccupancy: 4, defaultOccupancy: 2, bedType: 'king', bedCount: 1, squareMeters: 55, isAccessible: false, amenities: ['wifi', 'tv', 'minibar', 'safe', 'balcony', 'ocean_view', 'living_area', 'espresso_machine'], sortOrder: 3 },
-    { id: roomTypeIds.penthouse, propertyId, name: 'Penthouse Suite', code: 'PHS', maxOccupancy: 4, defaultOccupancy: 2, bedType: 'king', bedCount: 1, squareMeters: 95, isAccessible: false, amenities: ['wifi', 'tv', 'minibar', 'safe', 'terrace', 'ocean_view', 'living_area', 'dining_area', 'espresso_machine', 'jacuzzi'], sortOrder: 4 },
+    { id: roomTypeIds.standard, propertyId, name: 'Sky House', code: 'SKY', maxOccupancy: 2, defaultOccupancy: 2, bedType: 'double', bedCount: 1, isAccessible: false, amenities: ['wifi', 'tv', 'minibar', 'terrace'], sortOrder: 1 },
+    { id: roomTypeIds.deluxe, propertyId, name: 'A-Frame', code: 'AFR', maxOccupancy: 4, defaultOccupancy: 2, bedType: 'double', bedCount: 2, isAccessible: false, amenities: ['wifi', 'tv', 'minibar', 'terrace', 'fireplace'], sortOrder: 2 },
+    { id: roomTypeIds.suite, propertyId, name: 'Forest House — 2 guests', code: 'FOR2', maxOccupancy: 2, defaultOccupancy: 2, bedType: 'double', bedCount: 1, isAccessible: false, amenities: ['wifi', 'tv', 'minibar', 'terrace'], sortOrder: 3 },
+    { id: roomTypeIds.penthouse, propertyId, name: 'Forest House — 6 guests', code: 'FOR6', maxOccupancy: 6, defaultOccupancy: 4, bedType: 'double', bedCount: 3, isAccessible: false, amenities: ['wifi', 'tv', 'minibar', 'terrace', 'living_area'], sortOrder: 4 },
   ]);
 
   // -----------------------------------------------------------------------
@@ -261,17 +261,17 @@ async function main() {
     { number: '308', floor: '3', typeKey: 'suite', status: 'vacant_clean' },
     { number: '309', floor: '3', typeKey: 'suite', status: 'occupied' },
     { number: '310', floor: '3', typeKey: 'suite', status: 'occupied' },
-    // Floor 4 — 10 rooms (Penthouse + mix)
+    // Floor 4 — 10 Forest House units for up to 6 guests
     { number: '401', floor: '4', typeKey: 'penthouse', status: 'occupied' },
     { number: '402', floor: '4', typeKey: 'penthouse', status: 'guest_ready' },
     { number: '403', floor: '4', typeKey: 'penthouse', status: 'vacant_dirty' },
     { number: '404', floor: '4', typeKey: 'penthouse', status: 'vacant_clean' },
-    { number: '405', floor: '4', typeKey: 'suite', status: 'occupied' },
-    { number: '406', floor: '4', typeKey: 'suite', status: 'guest_ready' },
-    { number: '407', floor: '4', typeKey: 'suite', status: 'clean' },
-    { number: '408', floor: '4', typeKey: 'deluxe', status: 'occupied' },
-    { number: '409', floor: '4', typeKey: 'deluxe', status: 'guest_ready' },
-    { number: '410', floor: '4', typeKey: 'deluxe', status: 'out_of_order' },
+    { number: '405', floor: '4', typeKey: 'penthouse', status: 'occupied' },
+    { number: '406', floor: '4', typeKey: 'penthouse', status: 'guest_ready' },
+    { number: '407', floor: '4', typeKey: 'penthouse', status: 'clean' },
+    { number: '408', floor: '4', typeKey: 'penthouse', status: 'occupied' },
+    { number: '409', floor: '4', typeKey: 'penthouse', status: 'guest_ready' },
+    { number: '410', floor: '4', typeKey: 'penthouse', status: 'out_of_order' },
   ];
 
   const roomIdMap: Record<string, string> = {};
@@ -348,11 +348,11 @@ async function main() {
   };
 
   await db.insert(schema.ratePlans).values([
-    { id: rpIds.stdBar, propertyId, roomTypeId: roomTypeIds.standard, name: 'Standard BAR', code: 'STK-BAR', type: 'bar', baseAmount: '85000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'room_only', cancellationPolicyId: policyIds.flexible, sortOrder: 1 },
-    { id: rpIds.dlxBar, propertyId, roomTypeId: roomTypeIds.deluxe, name: 'Deluxe BAR', code: 'DOV-BAR', type: 'bar', baseAmount: '130000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', cancellationPolicyId: policyIds.flexible, sortOrder: 2 },
-    { id: rpIds.suiteBar, propertyId, roomTypeId: roomTypeIds.suite, name: 'Suite BAR', code: 'JST-BAR', type: 'bar', baseAmount: '195000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', cancellationPolicyId: policyIds.moderate, sortOrder: 3 },
-    { id: rpIds.phBar, propertyId, roomTypeId: roomTypeIds.penthouse, name: 'Penthouse BAR', code: 'PHS-BAR', type: 'bar', baseAmount: '360000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'half_board', cancellationPolicyId: policyIds.moderate, sortOrder: 4 },
-    { id: rpIds.dlxPromo, propertyId, roomTypeId: roomTypeIds.deluxe, name: 'Deluxe Summer Promo', code: 'DOV-SUM', type: 'promotional', baseAmount: '108000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', validFrom: dateStr(0), validTo: dateStr(90), channelCodes: ['booking_com', 'expedia'], cancellationPolicyId: policyIds.nonRefundable, sortOrder: 5 },
+    { id: rpIds.stdBar, propertyId, roomTypeId: roomTypeIds.standard, name: 'Sky House BAR', code: 'SKY-BAR', type: 'bar', baseAmount: '85000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'room_only', cancellationPolicyId: policyIds.flexible, sortOrder: 1 },
+    { id: rpIds.dlxBar, propertyId, roomTypeId: roomTypeIds.deluxe, name: 'A-Frame BAR', code: 'AFR-BAR', type: 'bar', baseAmount: '130000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', cancellationPolicyId: policyIds.flexible, sortOrder: 2 },
+    { id: rpIds.suiteBar, propertyId, roomTypeId: roomTypeIds.suite, name: 'Forest House 2 BAR', code: 'FOR2-BAR', type: 'bar', baseAmount: '195000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', cancellationPolicyId: policyIds.moderate, sortOrder: 3 },
+    { id: rpIds.phBar, propertyId, roomTypeId: roomTypeIds.penthouse, name: 'Forest House 6 BAR', code: 'FOR6-BAR', type: 'bar', baseAmount: '360000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'half_board', cancellationPolicyId: policyIds.moderate, sortOrder: 4 },
+    { id: rpIds.dlxPromo, propertyId, roomTypeId: roomTypeIds.deluxe, name: 'A-Frame promo', code: 'AFR-PROMO', type: 'promotional', baseAmount: '108000.00', currencyCode: DEMO_CURRENCY, mealPlan: 'breakfast', validFrom: dateStr(0), validTo: dateStr(90), channelCodes: ['booking_com', 'expedia'], cancellationPolicyId: policyIds.nonRefundable, sortOrder: 5 },
   ]);
 
   // Rate restrictions — weekend surcharges + min-LOS
@@ -539,7 +539,9 @@ async function main() {
     });
 
     const nights = r.departure - r.arrival;
-    const reservationAmount = r.guestIdx === 15 ? r.amount : r.amount * 450;
+    const reservationAmount = r.guestIdx === 15
+      ? r.amount
+      : Math.round((r.amount * 450) / 500) * 500;
     const checkedIn = ['checked_in', 'stayover', 'due_out'].includes(r.status);
     const checkedOut = r.status === 'checked_out';
 
@@ -761,8 +763,8 @@ async function main() {
     propertyId,
     businessDate: dateStr(-1),
     status: 'completed',
-    roomChargesPosted: '4250.00',
-    taxChargesPosted: '552.50',
+    roomChargesPosted: '2125000.00',
+    taxChargesPosted: '276250.00',
     noShowsProcessed: '1',
     summary: {
       steps: [
@@ -1081,8 +1083,8 @@ async function main() {
   ] as const;
 
   const agentConfigPresets: Record<string, Record<string, unknown>> = {
-    revenue_manager: { objective: 'goppar', variableCostPerRoom: 25, fcpar: 60, baselineAdr: null, horizonDays: 30 },
-    pricing: { maxAdjustmentPct: 30, revparTarget: 120, weekendPremiumPct: 15, pricingHorizonDays: 30 },
+    revenue_manager: { objective: 'goppar', variableCostPerRoom: 12500, fcpar: 30000, baselineAdr: null, horizonDays: 30 },
+    pricing: { maxAdjustmentPct: 30, revparTarget: 120000, weekendPremiumPct: 15, pricingHorizonDays: 30 },
     overbooking: { maxOverbookingPct: 5 },
   };
 
@@ -1108,14 +1110,14 @@ async function main() {
       confidence: '0.88',
       status: 'pending' as const,
       createdAt: ts(0, 6, 5),
-      inputSnapshot: { objective: 'goppar', horizonDays: 30, baselineAdr: 289, forecastDays: 30 },
+      inputSnapshot: { objective: 'goppar', horizonDays: 30, baselineAdr: 144500, forecastDays: 30 },
       recommendation: {
         objective: 'goppar',
         horizonDays: 30,
         summary: {
           avgOccupancy: 0.78, peakDates: [dateStr(3), dateStr(4)], lowDates: [dateStr(16)],
           raiseDates: 11, holdDates: 14, lowerDates: 5, minLosDates: 2,
-          projectedRevPAR: 231.4, projectedGOPPAR: 96.2,
+          projectedRevPAR: 115500, projectedGOPPAR: 48000,
           guardrails: ['optimize_goppar_not_revenue_alone', 'discounting_is_last_resort', 'rate_grid_integrity_enforced'],
         },
         perDate: [
@@ -1148,10 +1150,10 @@ async function main() {
       createdAt: ts(-1, 9, 0),
       inputSnapshot: { ratePlanCount: 5, forecastDays: 30 },
       recommendation: {
-        summary: { totalAdjustments: 16, avgAdjustmentPct: 12.4, estimatedRevenueImpact: 4820 },
+        summary: { totalAdjustments: 16, avgAdjustmentPct: 12.4, estimatedRevenueImpact: 2410000 },
         adjustments: [
-          { ratePlanId: sid('a3000001', 2), date: dateStr(3), currentRate: 289, recommendedRate: 341, adjustmentPct: 18, reason: 'demand_surge, weekend_premium' },
-          { ratePlanId: sid('a3000001', 2), date: dateStr(4), currentRate: 289, recommendedRate: 353, adjustmentPct: 22, reason: 'demand_surge' },
+          { ratePlanId: rpIds.dlxBar, date: dateStr(3), currentRate: 130000, recommendedRate: 153500, adjustmentPct: 18, reason: 'demand_surge, weekend_premium', currencyCode: DEMO_CURRENCY },
+          { ratePlanId: rpIds.dlxBar, date: dateStr(4), currentRate: 130000, recommendedRate: 158500, adjustmentPct: 22, reason: 'demand_surge', currencyCode: DEMO_CURRENCY },
         ],
       },
     },

@@ -12,6 +12,7 @@ export interface RateRecommendation {
   adjustmentPct: number;
   reason: string;
   estimatedRevenueImpact: number;
+  currencyCode: string;
 }
 
 export interface PricingConfig {

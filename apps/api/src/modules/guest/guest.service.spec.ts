@@ -110,6 +110,18 @@ describe('GuestService', () => {
       expect(result).toEqual(mockGuest);
       expect(mockDb.insert).toHaveBeenCalled();
     });
+
+    it('converts the API date string to a Date for the timestamp column', async () => {
+      await service.create({
+        firstName: 'John',
+        lastName: 'Smith',
+        idExpiry: '2030-01-01',
+      });
+
+      const values = mockDb.insert.mock.results[0]!.value.values.mock.calls[0]![0];
+      expect(values.idExpiry).toBeInstanceOf(Date);
+      expect(values.idExpiry.toISOString()).toBe('2030-01-01T00:00:00.000Z');
+    });
   });
 
   describe('findById', () => {

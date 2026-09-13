@@ -82,6 +82,7 @@ export default function IdSwipeCapture({ active, onParsed }: IdSwipeCaptureProps
 
     function onKeyDown(e: KeyboardEvent) {
       if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (typeof e.key !== 'string') return;
 
       const now = Date.now();
       const gap = now - lastKeyAtRef.current;

@@ -2,7 +2,7 @@ import {
   IsString,
   IsUUID,
   IsDateString,
-  IsNumber,
+  IsInt,
   IsOptional,
   IsEmail,
   IsEnum,
@@ -23,6 +23,10 @@ export class AgentBookDto {
   @IsUUID()
   ratePlanId!: string;
 
+  @ApiProperty({ description: 'Physical room to assign to the reservation' })
+  @IsUUID()
+  roomId!: string;
+
   @ApiProperty({ example: '2024-06-01' })
   @IsDateString()
   checkIn!: string;
@@ -36,9 +40,13 @@ export class AgentBookDto {
   @IsString()
   guestFirstName!: string;
 
-  @ApiProperty({ example: 'Smith' })
+  @ApiPropertyOptional({
+    example: 'Smith',
+    description: 'Optional for voice bookings; the service stores a non-null fallback',
+  })
+  @IsOptional()
   @IsString()
-  guestLastName!: string;
+  guestLastName?: string;
 
   @ApiPropertyOptional({ example: 'john@example.com' })
   @IsOptional()
@@ -57,13 +65,13 @@ export class AgentBookDto {
 
   // Occupancy
   @ApiProperty({ example: 2 })
-  @IsNumber()
+  @IsInt()
   @Min(1)
   adults!: number;
 
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
-  @IsNumber()
+  @IsInt()
   @Min(0)
   children?: number;
 

@@ -95,8 +95,8 @@ export class ConnectController {
   // --- Booking Lifecycle (Agent 4.5, 4.6, 4.7) ---
 
   @Post('book')
-  @ApiOperation({ summary: 'Book a room — auto-confirms for agent bookings (Agent 4.5)' })
-  @ApiResponse({ status: 201, description: 'Booking confirmed with confirmation codes and nightly breakdown' })
+  @ApiOperation({ summary: 'Book and assign a physical room atomically (Agent 4.5)' })
+  @ApiResponse({ status: 201, description: 'Booking assigned with room, confirmation codes, and nightly breakdown' })
   async book(@Body() dto: AgentBookDto) {
     return this.bookingService.book(dto);
   }

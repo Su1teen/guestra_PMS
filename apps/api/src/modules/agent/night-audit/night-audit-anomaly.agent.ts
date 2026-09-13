@@ -1,6 +1,13 @@
 import { Injectable, Inject, OnModuleInit } from '@nestjs/common';
 import { eq, and, gte, lte, not, inArray } from 'drizzle-orm';
-import { reservations, folios, charges as chargesTable, guests, cashDrawerSessions } from '@telivityhaip/database';
+import {
+  reservations,
+  folios,
+  charges as chargesTable,
+  guests,
+  cashDrawerSessions,
+  properties,
+} from '@telivityhaip/database';
 import { DRIZZLE } from '../../../database/database.module';
 import { AgentService } from '../agent.service';
 import type {
@@ -37,6 +44,10 @@ export class NightAuditAnomalyAgent implements HaipAgent, OnModuleInit {
 
   async analyze(propertyId: string, _context?: AgentContext): Promise<AgentAnalysis> {
     const today = new Date().toISOString().split('T')[0]!;
+    const [property] = await this.db
+      .select({ currencyCode: properties.currencyCode })
+      .from(properties)
+      .where(eq(properties.id, propertyId));
 
     // Get in-house + recently checked-out reservations (should have charges posted).
     // Include checked_out so payment-mismatch detection has a reachable trigger —
@@ -123,12 +134,13 @@ export class NightAuditAnomalyAgent implements HaipAgent, OnModuleInit {
         chargeProfiles: Object.fromEntries(chargeProfiles),
         closedSessions,
         today,
+        currencyCode: property?.currencyCode ?? '',
       },
     };
   }
 
   async recommend(analysis: AgentAnalysis): Promise<AgentDecisionInput[]> {
-    const { checkedIn, confirmed, openFolios, charges, chargeProfiles, closedSessions, today } =
+    const { checkedIn, confirmed, openFolios, charges, chargeProfiles, closedSessions, today, currencyCode } =
       analysis.signals as any;
 
     const anomalies: Anomaly[] = [];
@@ -204,7 +216,7 @@ export class NightAuditAnomalyAgent implements HaipAgent, OnModuleInit {
               anomalyType: 'payment_mismatch',
               severity: getSeverity('payment_mismatch'),
               affectedEntity: { type: 'folio', id: folio.id },
-              description: `Folio balance mismatch: charges $${totalChargesAmt.toFixed(2)} vs payments $${totalPaymentsAmt.toFixed(2)}`,
+              description: `Folio balance mismatch: charges ${totalChargesAmt.toFixed(2)} ${folio.currencyCode ?? currencyCode} vs payments ${totalPaymentsAmt.toFixed(2)} ${folio.currencyCode ?? currencyCode}`,
               suggestedAction: 'Reconcile charges and payments',
               confidence: 0.95,
             });
@@ -218,7 +230,7 @@ export class NightAuditAnomalyAgent implements HaipAgent, OnModuleInit {
                 anomalyType: 'unusual_charge',
                 severity: getSeverity('unusual_charge'),
                 affectedEntity: { type: 'folio', id: folio.id },
-                description: `${charge.type} charge of $${charge.amount} is unusually high (avg: $${profile.mean.toFixed(2)})`,
+                description: `${charge.type} charge of ${charge.amount} ${charge.currencyCode ?? currencyCode} is unusually high (avg: ${profile.mean.toFixed(2)} ${charge.currencyCode ?? currencyCode})`,
                 suggestedAction: 'Verify this charge is correct',
                 confidence: 0.7,
               });
@@ -272,7 +284,7 @@ export class NightAuditAnomalyAgent implements HaipAgent, OnModuleInit {
           anomalyType: 'cash_variance_outlier',
           severity: getSeverity('cash_variance_outlier'),
           affectedEntity: { type: 'cash_session', id: session.id },
-          description: `Cash drawer session closed with variance $${variance.toFixed(2)}`,
+          description: `Cash drawer session closed with variance ${variance.toFixed(2)} ${currencyCode}`,
           suggestedAction: 'Review cashier shift and recount drawer',
           confidence: 0.9,
         });

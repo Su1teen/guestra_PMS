@@ -127,7 +127,7 @@ describe('ru locale', () => {
   });
 
   it('uses the hospitality glossary rather than literal translations', () => {
-    expect(ru.reservations.availabilityCalendar).toContain('Шахматка');
+    expect(ru.reservations.availabilityCalendar).toContain('Календарь');
     expect(ru.nav.frontDesk).toContain('Ресепшен');
     expect(ru.nav.housekeeping).toContain('Служба уборки');
     expect(ru.nav.reservations).toBe('Бронирования');

@@ -814,7 +814,7 @@ function Detail({ label, value }: { label: string; value: string }) {
   );
 }
 
-// ---- Tape Chart (Шахматка) ----
+// ---- Tape Chart (Календарь) ----
 
 interface TapeRoom {
   id: string;

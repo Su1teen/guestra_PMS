@@ -77,6 +77,9 @@ export class GuestService {
   async create(dto: CreateGuestDto, tx?: any) {
     const db = tx ?? this.db;
     const values: Record<string, unknown> = { ...dto };
+    if (dto.idExpiry) {
+      values['idExpiry'] = new Date(dto.idExpiry);
+    }
     if (dto.gdprConsentMarketing) {
       values['gdprConsentDate'] = new Date();
     }
@@ -113,6 +116,9 @@ export class GuestService {
       throw new NotFoundException(`Guest ${id} not found`);
     }
     const values: Record<string, unknown> = { ...dto, updatedAt: new Date() };
+    if (dto.idExpiry) {
+      values['idExpiry'] = new Date(dto.idExpiry);
+    }
     if (dto.isDnr === true && !dto.dnrReason) {
       // Keep existing reason if not provided
     }

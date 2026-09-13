@@ -165,3 +165,95 @@ describe('ReservationService — conditional-update race (Bug 2)', () => {
     expect(result.status).toBe('confirmed');
   });
 });
+
+function createAssignRoomDb(options: {
+  conflicts?: any[];
+  room?: any;
+  updateResult?: any[];
+} = {}) {
+  const reservation = {
+    ...mockReservation,
+    status: 'confirmed',
+    arrivalDate: '2026-09-20',
+    departureDate: '2026-09-23',
+  };
+  const room = options.room ?? {
+    id: 'room-301',
+    propertyId: 'prop-001',
+    roomTypeId: 'rt-1',
+    number: '301',
+    status: 'vacant_clean',
+    isActive: true,
+  };
+  const updated = options.updateResult ?? [{ ...reservation, roomId: room.id, status: 'assigned' }];
+  let lockSelectCount = 0;
+
+  const tx = {
+    select: vi.fn().mockImplementation((shape?: any) => {
+      if (shape && 'id' in shape) {
+        return {
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue(options.conflicts ?? []),
+            }),
+          }),
+        };
+      }
+
+      lockSelectCount++;
+      const rows = lockSelectCount === 1 ? [reservation] : [room];
+      return {
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            for: vi.fn().mockResolvedValue(rows),
+          }),
+        }),
+      };
+    }),
+    update: vi.fn().mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue(updated),
+        }),
+      }),
+    }),
+  };
+
+  return {
+    db: { transaction: vi.fn((callback: (innerTx: any) => unknown) => callback(tx)) },
+    tx,
+  };
+}
+
+describe('ReservationService — physical room assignment', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('assigns a clean room when no future stay overlaps', async () => {
+    const { db, tx } = createAssignRoomDb();
+    const svc = await createService(db);
+
+    const result = await svc.assignRoom('res-001', 'prop-001', { roomId: 'room-301' });
+
+    expect(result).toMatchObject({ roomId: 'room-301', status: 'assigned' });
+    expect(tx.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects assignment when the physical room has an overlapping stay', async () => {
+    const { db, tx } = createAssignRoomDb({ conflicts: [{ id: 'res-conflict' }] });
+    const svc = await createService(db);
+
+    await expect(
+      svc.assignRoom('res-001', 'prop-001', { roomId: 'room-301' }),
+    ).rejects.toThrow(ConflictException);
+    expect(tx.update).not.toHaveBeenCalled();
+  });
+
+  it('rejects assignment when the conditional update loses a race', async () => {
+    const { db } = createAssignRoomDb({ updateResult: [] });
+    const svc = await createService(db);
+
+    await expect(
+      svc.assignRoom('res-001', 'prop-001', { roomId: 'room-301' }),
+    ).rejects.toThrow(ConflictException);
+  });
+});

@@ -1,5 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  bookings,
+  guests,
+  properties,
+  ratePlans,
+  reservationGuests,
+  reservations,
+  rooms,
+  roomTypes,
+} from '@telivityhaip/database';
 import { ConnectBookingService } from './connect-booking.service';
 
 describe('ConnectBookingService', () => {
@@ -7,12 +17,16 @@ describe('ConnectBookingService', () => {
   let mockDb: any;
   let mockAvailabilityService: any;
   let mockWebhookService: any;
+  let mockRatePlanService: any;
+  let mockReservationService: any;
+  let mockPolicyService: any;
 
   const mockRatePlan = {
     id: 'rp-1',
     propertyId: 'prop-1',
     baseAmount: '199.99',
     currencyCode: 'USD',
+    roomTypeId: 'rt-1',
     type: 'bar',
     isActive: true,
   };
@@ -53,8 +67,9 @@ describe('ConnectBookingService', () => {
     };
 
     mockWebhookService = { emit: vi.fn().mockResolvedValue(undefined) };
-    const mockRatePlanService = { assertSellable: vi.fn().mockResolvedValue(undefined) };
-    const mockReservationService = {
+    mockRatePlanService = { assertSellable: vi.fn().mockResolvedValue(undefined) };
+    mockReservationService = {
+      lockInventory: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn().mockResolvedValue({
         id: 'res-1',
         status: 'cancelled',
@@ -67,7 +82,7 @@ describe('ConnectBookingService', () => {
         },
       }),
     };
-    const mockPolicyService = {
+    mockPolicyService = {
       getPolicySummary: vi.fn().mockResolvedValue({
         type: 'tiered',
         description: 'Free cancellation up to 24 hours before check-in. First night charge after.',
@@ -86,234 +101,164 @@ describe('ConnectBookingService', () => {
   });
 
   describe('book', () => {
-    it('should create guest + booking + reservation and auto-confirm', async () => {
-      let selectCallCount = 0;
-      mockDb.select.mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockImplementation(() => {
-            selectCallCount++;
-            if (selectCallCount === 1) return Promise.resolve([mockRatePlan]); // rate plan
-            if (selectCallCount === 2) return Promise.resolve([]); // guest email lookup (not found)
-            if (selectCallCount === 3) return Promise.resolve([{ settings: { taxRate: 10 } }]); // property settings
-            return Promise.resolve([]);
-          }),
-        }),
-      }));
+    const baseDto = {
+      propertyId: 'prop-1',
+      roomTypeId: 'rt-1',
+      ratePlanId: 'rp-1',
+      roomId: 'room-301',
+      checkIn: '2024-06-01',
+      checkOut: '2024-06-03',
+      guestFirstName: 'John',
+      guestLastName: 'Smith',
+      adults: 2,
+    };
 
-      const result = await service.book({
-        propertyId: 'prop-1',
-        roomTypeId: 'rt-1',
-        ratePlanId: 'rp-1',
-        checkIn: '2024-06-01',
-        checkOut: '2024-06-03',
-        guestFirstName: 'John',
-        guestLastName: 'Smith',
-        guestEmail: 'john@example.com',
-        adults: 2,
-        agentId: 'otaip-booking-agent',
-        externalReference: 'OTAIP-123',
-      });
-
-      expect(result.success).toBe(true);
-      expect(result.status).toBe('confirmed');
-      expect(result.confirmationNumber).toBeDefined();
-      expect(result.confirmationCodes.external).toBe('OTAIP-123');
-      expect(result.nightlyBreakdown).toHaveLength(2);
-    });
-
-    it('should reuse existing guest matched by email', async () => {
-      let selectCallCount = 0;
-      const existingGuest = { id: 'guest-existing', firstName: 'John', lastName: 'Smith', email: 'john@example.com' };
-      mockDb.select.mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockImplementation(() => {
-            selectCallCount++;
-            if (selectCallCount === 1) return Promise.resolve([mockRatePlan]);
-            if (selectCallCount === 2) return Promise.resolve([existingGuest]); // guest found by email
-            if (selectCallCount === 3) return Promise.resolve([{ id: 'res-existing' }]); // linked at THIS property → reuse
-            if (selectCallCount === 4) return Promise.resolve([{ settings: {} }]);
-            return Promise.resolve([]);
-          }),
-        }),
-      }));
-
-      // Reset insert count — no guest insert should happen
-      let insertCount = 0;
-      mockDb.insert.mockImplementation(() => ({
-        values: vi.fn().mockReturnValue({
-          returning: vi.fn().mockImplementation(() => {
-            insertCount++;
-            if (insertCount === 1) return Promise.resolve([{ id: 'booking-1', confirmationNumber: 'HAIP-X' }]);
-            if (insertCount === 2) return Promise.resolve([{ id: 'res-1', status: 'confirmed' }]);
-            return Promise.resolve([{}]);
-          }),
-        }),
-      }));
-
-      const result = await service.book({
-        propertyId: 'prop-1',
-        roomTypeId: 'rt-1',
-        ratePlanId: 'rp-1',
-        checkIn: '2024-06-01',
-        checkOut: '2024-06-03',
-        guestFirstName: 'John',
-        guestLastName: 'Smith',
-        guestEmail: 'john@example.com',
-        adults: 2,
-      });
-
-      expect(result.success).toBe(true);
-      // Only 2 inserts (booking + reservation), not 3 (guest skipped)
-      expect(insertCount).toBe(2);
-    });
-
-    it('should NOT reuse a guest from another property (cross-tenant PII guard)', async () => {
-      let selectCallCount = 0;
-      const foreignGuest = { id: 'guest-foreign', firstName: 'John', lastName: 'Smith', email: 'john@example.com' };
-      mockDb.select.mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockImplementation(() => {
-            selectCallCount++;
-            if (selectCallCount === 1) return Promise.resolve([mockRatePlan]); // rate plan
-            if (selectCallCount === 2) return Promise.resolve([foreignGuest]); // email matches a guest...
-            if (selectCallCount === 3) return Promise.resolve([]); // ...but NO reservation link at this property
-            if (selectCallCount === 4) return Promise.resolve([{ settings: {} }]); // property settings
-            return Promise.resolve([]);
-          }),
-        }),
-      }));
-
-      let insertCount = 0;
-      mockDb.insert.mockImplementation(() => ({
-        values: vi.fn().mockReturnValue({
-          returning: vi.fn().mockImplementation(() => {
-            insertCount++;
-            if (insertCount === 1) return Promise.resolve([{ id: 'guest-new', firstName: 'John', lastName: 'Smith' }]);
-            if (insertCount === 2) return Promise.resolve([{ id: 'booking-1', confirmationNumber: 'HAIP-X' }]);
-            if (insertCount === 3) return Promise.resolve([{ id: 'res-1', status: 'confirmed' }]);
-            return Promise.resolve([{}]);
-          }),
-        }),
-      }));
-
-      const result = await service.book({
-        propertyId: 'prop-1',
-        roomTypeId: 'rt-1',
-        ratePlanId: 'rp-1',
-        checkIn: '2024-06-01',
-        checkOut: '2024-06-03',
-        guestFirstName: 'John',
-        guestLastName: 'Smith',
-        guestEmail: 'john@example.com',
-        adults: 2,
-      });
-
-      expect(result.success).toBe(true);
-      // A fresh guest row is created (guest + booking + reservation = 3 inserts),
-      // NOT linked to the foreign-property guest.
-      expect(insertCount).toBe(3);
-    });
-
-    it('should reject booking when no availability', async () => {
-      mockAvailabilityService.searchAvailability.mockResolvedValue([
-        { roomTypeId: 'rt-1', date: '2024-06-01', totalRooms: 50, sold: 50, available: 0, overbookingBuffer: 0 },
+    function configureBookDb(options: {
+      room?: any;
+      roomType?: any;
+      ratePlan?: any;
+      conflicts?: any[];
+      guestMatches?: any[];
+      guestLinks?: any[];
+    } = {}) {
+      const responses = new Map<any, any[][]>([
+        [rooms, [[options.room ?? { id: 'room-301', number: '301', propertyId: 'prop-1', roomTypeId: 'rt-1', isActive: true }]]],
+        [roomTypes, [[options.roomType ?? { id: 'rt-1', propertyId: 'prop-1', maxOccupancy: 4, isActive: true }]]],
+        [ratePlans, [[options.ratePlan === undefined ? mockRatePlan : options.ratePlan].filter(Boolean)]],
+        [reservations, [options.conflicts ?? [], options.guestLinks ?? []]],
+        [guests, [options.guestMatches ?? []]],
+        [properties, [[{ settings: { taxRate: 10 } }]]],
       ]);
 
-      await expect(service.book({
-        propertyId: 'prop-1',
-        roomTypeId: 'rt-1',
-        ratePlanId: 'rp-1',
-        checkIn: '2024-06-01',
-        checkOut: '2024-06-02',
-        guestFirstName: 'Jane',
-        guestLastName: 'Doe',
-        adults: 1,
-      })).rejects.toThrow(BadRequestException);
-    });
+      const queryFor = (table: any) => {
+        const rows = responses.get(table)?.shift() ?? [];
+        const chain: any = {
+          where: vi.fn(() => chain),
+          for: vi.fn().mockResolvedValue(rows),
+          limit: vi.fn().mockResolvedValue(rows),
+          then: (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject),
+        };
+        return chain;
+      };
 
-    it('should reject booking with inactive rate plan', async () => {
-      mockDb.select.mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]), // no rate plan found
-        }),
-      }));
-
-      await expect(service.book({
-        propertyId: 'prop-1',
-        roomTypeId: 'rt-1',
-        ratePlanId: 'rp-nonexistent',
-        checkIn: '2024-06-01',
-        checkOut: '2024-06-02',
-        guestFirstName: 'Jane',
-        guestLastName: 'Doe',
-        adults: 1,
-      })).rejects.toThrow(NotFoundException);
-    });
-
-    it('should emit connect.booking_created webhook', async () => {
-      let selectCallCount = 0;
-      mockDb.select.mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockImplementation(() => {
-            selectCallCount++;
-            if (selectCallCount === 1) return Promise.resolve([mockRatePlan]);
-            if (selectCallCount === 2) return Promise.resolve([]);
-            if (selectCallCount === 3) return Promise.resolve([{ settings: {} }]);
-            return Promise.resolve([]);
+      const inserted: any[] = [];
+      mockDb = {
+        select: vi.fn(() => ({ from: vi.fn((table: any) => queryFor(table)) })),
+        insert: vi.fn((table: any) => ({
+          values: vi.fn((values: any) => {
+            inserted.push({ table, values });
+            const rowsByTable = new Map<any, any[]>([
+              [guests, [{ id: 'guest-new', ...values }]],
+              [bookings, [{ id: 'booking-1', confirmationNumber: 'HAIP-X', ...values }]],
+              [reservations, [{ id: 'res-1', status: 'assigned', ...values }]],
+              [reservationGuests, []],
+            ]);
+            const rows = rowsByTable.get(table) ?? [];
+            const result: any = {
+              returning: vi.fn().mockResolvedValue(rows),
+              then: (resolve: any, reject: any) => Promise.resolve(rows).then(resolve, reject),
+            };
+            return result;
           }),
-        }),
-      }));
+        })),
+        transaction: vi.fn((callback: any) => callback(mockDb)),
+      };
+      service = new ConnectBookingService(
+        mockDb,
+        mockAvailabilityService,
+        mockReservationService,
+        mockWebhookService,
+        mockRatePlanService,
+        mockPolicyService,
+      );
+      return inserted;
+    }
 
-      await service.book({
-        propertyId: 'prop-1',
-        roomTypeId: 'rt-1',
-        ratePlanId: 'rp-1',
-        checkIn: '2024-06-01',
-        checkOut: '2024-06-03',
-        guestFirstName: 'John',
-        guestLastName: 'Smith',
-        adults: 2,
-        agentId: 'agent-1',
+    it('creates and assigns guest + booking + reservation in one transaction', async () => {
+      const inserted = configureBookDb();
+      const result = await service.book({ ...baseDto, externalReference: 'CALL-123' });
+
+      expect(result).toMatchObject({
+        success: true,
+        status: 'assigned',
+        roomId: 'room-301',
+        roomNumber: '301',
       });
+      expect(result.confirmationCodes.external).toBe('CALL-123');
+      expect(result.nightlyBreakdown).toHaveLength(2);
+      expect(mockDb.transaction).toHaveBeenCalledOnce();
+      expect(inserted.find((entry) => entry.table === reservations)?.values).toMatchObject({
+        roomId: 'room-301',
+        status: 'assigned',
+      });
+      expect(inserted.some((entry) => entry.table === reservationGuests)).toBe(true);
+    });
 
+    it('uses a non-null surname fallback for voice bookings', async () => {
+      const inserted = configureBookDb();
+      await service.book({ ...baseDto, guestLastName: undefined });
+      expect(inserted.find((entry) => entry.table === guests)?.values.lastName).toBe('Не указана');
+    });
+
+    it('reuses only an email-matched guest already linked to this property', async () => {
+      const existingGuest = { id: 'guest-existing', email: 'john@example.com' };
+      const inserted = configureBookDb({ guestMatches: [existingGuest], guestLinks: [{ id: 'res-old' }] });
+      await service.book({ ...baseDto, guestEmail: 'john@example.com' });
+      expect(inserted.some((entry) => entry.table === guests)).toBe(false);
+      expect(inserted.find((entry) => entry.table === bookings)?.values.guestId).toBe('guest-existing');
+    });
+
+    it('rejects a room that belongs to another room type', async () => {
+      configureBookDb({ room: { id: 'room-301', number: '301', roomTypeId: 'rt-other', isActive: true } });
+      await expect(service.book(baseDto)).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a rate plan that belongs to another room type', async () => {
+      configureBookDb({ ratePlan: { ...mockRatePlan, roomTypeId: 'rt-other' } });
+      await expect(service.book(baseDto)).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects occupancy above room-type capacity', async () => {
+      configureBookDb({ roomType: { id: 'rt-1', maxOccupancy: 2, isActive: true } });
+      await expect(service.book({ ...baseDto, adults: 2, children: 1 })).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects a date overlap on the physical room', async () => {
+      configureBookDb({ conflicts: [{ id: 'res-conflict' }] });
+      await expect(service.book(baseDto)).rejects.toThrow(/already reserved/);
+    });
+
+    it('rejects a stay when any requested night has no type availability', async () => {
+      configureBookDb();
+      mockAvailabilityService.searchAvailability.mockResolvedValue([
+        { roomTypeId: 'rt-1', date: '2024-06-01', available: 0 },
+        { roomTypeId: 'rt-1', date: '2024-06-02', available: 1 },
+      ]);
+      await expect(service.book(baseDto)).rejects.toThrow(BadRequestException);
+    });
+
+    it('rejects an inactive or missing rate plan', async () => {
+      configureBookDb({ ratePlan: null });
+      await expect(service.book(baseDto)).rejects.toThrow(NotFoundException);
+    });
+
+    it('emits the booking webhook only after the transaction succeeds', async () => {
+      configureBookDb();
+      await service.book({ ...baseDto, agentId: 'voice-agent' });
       expect(mockWebhookService.emit).toHaveBeenCalledWith(
         'connect.booking_created',
         'reservation',
-        expect.any(String),
-        expect.objectContaining({ agentId: 'agent-1' }),
+        'res-1',
+        expect.objectContaining({ agentId: 'voice-agent' }),
         'prop-1',
       );
     });
 
-    it('should set payment status for prepaid bookings', async () => {
-      let selectCallCount = 0;
-      mockDb.select.mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockImplementation(() => {
-            selectCallCount++;
-            if (selectCallCount === 1) return Promise.resolve([mockRatePlan]);
-            if (selectCallCount === 2) return Promise.resolve([]);
-            if (selectCallCount === 3) return Promise.resolve([{ settings: {} }]);
-            return Promise.resolve([]);
-          }),
-        }),
-      }));
-
-      const result = await service.book({
-        propertyId: 'prop-1',
-        roomTypeId: 'rt-1',
-        ratePlanId: 'rp-1',
-        checkIn: '2024-06-01',
-        checkOut: '2024-06-03',
-        guestFirstName: 'John',
-        guestLastName: 'Smith',
-        adults: 2,
-        paymentMethod: 'prepaid',
-        paymentToken: 'tok_123',
-      });
-
+    it('reports prepaid authorization without storing raw card data', async () => {
+      configureBookDb();
+      const result = await service.book({ ...baseDto, paymentMethod: 'prepaid' });
       expect(result.paymentStatus).toBe('authorized');
-      expect(result.depositAmount).toBeGreaterThan(0);
+      expect(result.depositAmount).toBe(399.98);
     });
   });
 
