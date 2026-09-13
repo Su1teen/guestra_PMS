@@ -259,7 +259,6 @@ function GuestDetail() {
   const updateMutation = useMutation({
     mutationFn: () =>
       api.patch(`/v1/guests/${id}`, {
-        propertyId,
         firstName,
         lastName,
         email: email || undefined,
@@ -295,7 +294,7 @@ function GuestDetail() {
             hasMinorAuthorization,
           } : {}),
         },
-      }),
+      }, { params: { propertyId } }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['guest', id] });
       setEditing(false);
@@ -305,10 +304,9 @@ function GuestDetail() {
   const dnrMutation = useMutation({
     mutationFn: () =>
       api.patch(`/v1/guests/${id}`, {
-        propertyId,
         isDnr: !guest?.isDnr,
         dnrReason: !guest?.isDnr ? 'Flagged via staff dashboard' : null,
-      }),
+      }, { params: { propertyId } }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['guest', id] }),
   });
 

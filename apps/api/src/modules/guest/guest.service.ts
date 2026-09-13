@@ -295,24 +295,31 @@ export class GuestService {
     if (!scope.includes(propertyId)) scope.push(propertyId);
     const guest = await this.findById(id, propertyId);
 
-    const stayRows = await this.db.selectDistinct({
+    const occupantReservationIds = this.db
+      .select({ reservationId: reservationGuests.reservationId })
+      .from(reservationGuests)
+      .where(and(
+        eq(reservationGuests.guestId, id),
+        inArray(reservationGuests.propertyId, scope),
+      ));
+
+    const stayRows = await this.db.select({
       reservation: reservations,
       propertyName: properties.name,
       roomNumber: rooms.number,
       roomType: roomTypes.name,
       ratePlan: ratePlans.name,
     }).from(reservations)
-      .leftJoin(reservationGuests, and(
-        eq(reservationGuests.reservationId, reservations.id),
-        eq(reservationGuests.propertyId, reservations.propertyId),
-      ))
       .innerJoin(properties, eq(properties.id, reservations.propertyId))
       .leftJoin(rooms, and(eq(rooms.id, reservations.roomId), eq(rooms.propertyId, reservations.propertyId)))
       .leftJoin(roomTypes, and(eq(roomTypes.id, reservations.roomTypeId), eq(roomTypes.propertyId, reservations.propertyId)))
       .leftJoin(ratePlans, and(eq(ratePlans.id, reservations.ratePlanId), eq(ratePlans.propertyId, reservations.propertyId)))
       .where(and(
         inArray(reservations.propertyId, scope),
-        or(eq(reservations.guestId, id), eq(reservationGuests.guestId, id)),
+        or(
+          eq(reservations.guestId, id),
+          inArray(reservations.id, occupantReservationIds),
+        ),
       )).orderBy(desc(reservations.arrivalDate));
 
     const reservationIds = stayRows.map((s: any) => s.reservation.id);
