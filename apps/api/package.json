@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:release-smoke": "RELEASE_SMOKE=1 vitest run src/release-smoke.integration.spec.ts",
+    "reset:demo-property": "node dist/scripts/reset-demo-property.js",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "clean": "rm -rf dist"
