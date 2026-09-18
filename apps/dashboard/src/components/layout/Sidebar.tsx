@@ -79,6 +79,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/revenue', icon: TrendingUp, labelKey: 'nav.revenueManagement', permission: 'revenue.manage' },
       { to: '/night-audit', icon: Moon, labelKey: 'nav.nightAudit', permission: 'nightaudit.run' },
       { to: '/reports', icon: BarChart3, labelKey: 'nav.reports', permission: 'reports.view' },
+      { to: '/reports/management', icon: TrendingUp, labelKey: 'nav.managementReport', permission: 'reports.view' },
       { to: '/channels', icon: Radio, labelKey: 'nav.channels', permission: 'channels.manage' },
       { to: '/integrations', icon: Plug, labelKey: 'nav.integrations', permission: 'settings.manage' },
       { to: '/communications', icon: Mail, labelKey: 'nav.communications', permission: 'communications.manage' },
@@ -181,7 +182,7 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                 <NavLink
                   key={to}
                   to={to}
-                  end={to === '/'}
+                  end={to === '/' || to === '/reports'}
                   onClick={onClose}
                   className={({ isActive }) =>
                     `flex items-center gap-3 px-6 py-2.5 text-sm font-medium transition-colors ${

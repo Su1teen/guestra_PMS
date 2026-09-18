@@ -7,6 +7,7 @@ import { formatMoney } from '../../lib/money';
 import Modal from '../ui/Modal';
 import StatusBadge from '../ui/StatusBadge';
 import type { Guest } from '../../types/guest';
+import CashbackWallet from './CashbackWallet';
 
 type Guest360 = {
   guest: Guest;
@@ -31,7 +32,7 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<'overview' | 'stays' | 'services' | 'preferences' | 'history'>('overview');
+  const [tab, setTab] = useState<'overview' | 'stays' | 'services' | 'preferences' | 'history' | 'loyalty'>('overview');
   const [compare, setCompare] = useState<Guest | null>(null);
   const { guest, summary } = data;
   const { data: duplicates = [] } = useQuery<Guest[]>({
@@ -54,6 +55,7 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
     ['services', ru ? 'Услуги и расходы' : 'Services & spend'],
     ['preferences', ru ? 'Предпочтения' : 'Preferences'],
     ['history', ru ? 'История' : 'History'],
+    ['loyalty', ru ? 'Кэшбек' : 'Cashback'],
   ] as const;
 
   return (
@@ -115,6 +117,8 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
           {tab === 'services' && <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-xs text-telivity-mid-grey border-b"><th className="py-2">{ru ? 'Дата' : 'Date'}</th><th>{ru ? 'Услуга' : 'Service'}</th><th>{ru ? 'Объект' : 'Property'}</th><th className="text-right">{ru ? 'Сумма' : 'Amount'}</th></tr></thead><tbody>{data.services.map((s) => <tr key={s.id} className="border-b border-gray-50"><td className="py-3">{new Date(s.date).toLocaleDateString()}</td><td><p className="font-medium text-telivity-navy">{s.description}</p><p className="text-xs text-telivity-mid-grey">{s.type}</p></td><td>{s.propertyName ?? '—'}</td><td className="text-right font-semibold">{formatMoney(s.amount, s.currencyCode)}</td></tr>)}</tbody></table>{data.services.length === 0 && <Empty text={ru ? 'Дополнительных услуг пока нет' : 'No ancillary services yet'} />}</div>}
 
           {tab === 'preferences' && <div className="grid md:grid-cols-2 gap-3">{Object.entries(guest.preferences ?? {}).map(([key, value]) => <Info key={key} label={key.replace(/_/g, ' ')} value={String(value)} />)}{Object.keys(guest.preferences ?? {}).length === 0 && <Empty text={ru ? 'Предпочтения не указаны' : 'No preferences recorded'} />}</div>}
+
+          {tab === 'loyalty' && <CashbackWallet guestId={guest.id} guestName={`${guest.firstName} ${guest.lastName}`} eligibleSpend={summary.totalRevenue} lastStayDate={summary.lastStay} />}
 
           {tab === 'history' && <div className="space-y-3">{data.timeline.map((item) => <div key={item.id} className="flex gap-3"><Clock3 size={15} className="mt-0.5 text-telivity-teal"/><div><p className="text-sm text-telivity-navy">{item.description ?? `${item.action} · ${item.entityType}`}</p><p className="text-xs text-telivity-mid-grey">{new Date(item.occurredAt).toLocaleString()} · {item.userEmail ?? (ru ? 'Система' : 'System')}</p></div></div>)}{data.timeline.length === 0 && <Empty text={ru ? 'История пока пуста' : 'No history yet'} />}</div>}
         </div>

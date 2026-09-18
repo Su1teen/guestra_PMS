@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BarChart3, Percent, DollarSign, TrendingUp, Building2, Download, Star } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -7,6 +7,7 @@ import { format, subDays } from 'date-fns';
 import { api } from '../lib/api';
 import { formatOccupancyPercent } from '../lib/api-helpers';
 import { useProperty } from '../context/PropertyContext';
+import { useAuth } from '../context/AuthContext';
 import KpiCard from '../components/ui/KpiCard';
 import { formatMoney } from '../lib/money';
 import { useTranslation } from 'react-i18next';
@@ -27,6 +28,7 @@ const DEMO_FAVORITES_KEY = 'haip.reportFavorites';
 
 export default function Reports() {
   const { t, i18n } = useTranslation();
+  const { hasPermission } = useAuth();
   const { propertyId, isPortfolioMode, properties, currencyCode } = useProperty();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
@@ -208,6 +210,18 @@ export default function Reports() {
         </h1>
       </div>
 
+      <nav aria-label="Разделы отчётности" className="grid grid-cols-2 xl:grid-cols-4 gap-2 mb-5">
+        {[
+          { to: '/reports/management', permission: 'reports.view', label: i18n.language.startsWith('ru') ? 'Финансовая картина' : 'Management', note: i18n.language.startsWith('ru') ? 'Доходы и расходы сети' : 'Revenue and expenses' },
+          { to: '/reports', permission: 'reports.view', label: i18n.language.startsWith('ru') ? 'Операционные отчёты' : 'Operations', note: i18n.language.startsWith('ru') ? 'Ежедневные показатели' : 'Daily performance', active: true },
+          { to: '/revenue', permission: 'revenue.manage', label: i18n.language.startsWith('ru') ? 'Прогноз спроса' : 'Demand forecast', note: i18n.language.startsWith('ru') ? 'Pickup и бронирования' : 'Pickup and bookings' },
+          { to: '/accounting', permission: 'accounting.view', label: i18n.language.startsWith('ru') ? 'Бухгалтерия' : 'Accounting', note: i18n.language.startsWith('ru') ? 'Обороты и сверка' : 'Ledgers and reconciliation' },
+        ].filter((area) => hasPermission(area.permission)).map((area) => <Link key={area.to} to={area.to} aria-current={area.active ? 'page' : undefined}
+          className={`rounded-xl border px-4 py-3 transition-colors ${area.active ? 'border-telivity-teal bg-teal-50 text-telivity-navy shadow-sm' : 'border-gray-200 bg-white text-telivity-slate hover:border-telivity-teal'}`}>
+          <strong className="block text-sm">{area.label}</strong><span className="text-xs opacity-65">{area.note}</span>
+        </Link>)}
+      </nav>
+
       {favorites.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3">
           {favorites.map((f) => {
@@ -237,9 +251,15 @@ export default function Reports() {
           <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('reports.report')}</label>
           <div className="flex items-center gap-2">
             <select value={report} onChange={(e) => setReport(e.target.value as ReportType)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal">
-              {orderedOptions.map((o) => (
-                <option key={o.value} value={o.value}>{t(`reports.${o.labelKey}`)}</option>
-              ))}
+              <optgroup label={i18n.language.startsWith('ru') ? 'Ежедневные операции' : 'Daily operations'}>
+                {orderedOptions.filter((o) => ['financial-summary', 'occupancy', 'daily-revenue', 'occupancy-trend'].includes(o.value)).map((o) => <option key={o.value} value={o.value}>{t(`reports.${o.labelKey}`)}</option>)}
+              </optgroup>
+              <optgroup label={i18n.language.startsWith('ru') ? 'Прогноз спроса' : 'Demand forecast'}>
+                {orderedOptions.filter((o) => ['pickup', 'booking-pace'].includes(o.value)).map((o) => <option key={o.value} value={o.value}>{t(`reports.${o.labelKey}`)}</option>)}
+              </optgroup>
+              <optgroup label={i18n.language.startsWith('ru') ? 'Бухгалтерия' : 'Accounting'}>
+                {orderedOptions.filter((o) => o.value === 'trial-balance').map((o) => <option key={o.value} value={o.value}>{t(`reports.${o.labelKey}`)}</option>)}
+              </optgroup>
             </select>
             <button
               type="button"

@@ -18,6 +18,7 @@ const DynamicPricing = lazy(() => import('./pages/DynamicPricing'));
 const Revenue = lazy(() => import('./pages/Revenue'));
 const NightAudit = lazy(() => import('./pages/NightAudit'));
 const Reports = lazy(() => import('./pages/Reports'));
+const ManagementReport = lazy(() => import('./pages/ManagementReport'));
 const Channels = lazy(() => import('./pages/Channels'));
 const Communications = lazy(() => import('./pages/Communications'));
 const Reviews = lazy(() => import('./pages/Reviews'));
@@ -63,6 +64,7 @@ export default function App() {
             <Route path="/revenue/*" element={<Revenue />} />
             <Route path="/night-audit" element={<NightAudit />} />
             <Route path="/reports/*" element={<Reports />} />
+            <Route path="/reports/management" element={<ManagementReport />} />
             <Route path="/channels/*" element={<Channels />} />
             <Route path="/integrations" element={<Integrations />} />
             <Route path="/communications" element={<Communications />} />
