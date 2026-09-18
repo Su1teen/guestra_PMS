@@ -120,8 +120,9 @@ export const bookingEngineConfig = pgTable('booking_engine_config', {
     .$type<DepositPolicy>()
     .notNull()
     .default({ type: 'first_night', refundable: true }),
-  // Auto-confirm a paid booking instead of leaving it 'pending'. Conservative
-  // default false (operations decision, not a KB rule).
+  // Auto-confirm an instant booking once no deposit is due or the required
+  // deposit has been authorized and recorded. Conservative default false
+  // (operations decision, not a KB rule).
   autoConfirm: boolean('auto_confirm').notNull().default(false),
   // Stripe PUBLISHABLE key (safe to expose to the widget). Secret key stays server-side.
   stripePublishableKey: varchar('stripe_publishable_key', { length: 255 }),

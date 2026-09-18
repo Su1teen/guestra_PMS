@@ -510,9 +510,14 @@ export class BookingEngineService {
       depositInfo = { paymentId: payment.id, amount: depositDue.toFixed(2), status: 'held' };
     }
 
-    // 7. Auto-confirm only if configured (otherwise leave 'pending').
+    // 7. Auto-confirm when configured and no deposit is due, or after the
+    // required deposit has been authorized and recorded. Otherwise stay pending.
     let status = reservation.status;
-    if (config.isEnabled && depositInfo && (await this.shouldAutoConfirm(propertyId))) {
+    if (
+      config.isEnabled
+      && (depositDue.isZero() || depositInfo !== null)
+      && (await this.shouldAutoConfirm(propertyId))
+    ) {
       const confirmed = await this.reservationService.confirm(reservation.id, propertyId);
       status = confirmed.status;
     }

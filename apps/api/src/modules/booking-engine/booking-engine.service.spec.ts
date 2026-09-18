@@ -263,11 +263,59 @@ describe('BookingEngineService.book', () => {
   });
 
   it('auto-confirms a paid booking when configured', async () => {
-    const { svc, config, reservation } = makeService();
+    const { svc, config, reservation, payment, deposit } = makeService();
     config.getConfig.mockResolvedValue({ autoConfirm: true });
     const res = await svc.book(PROP, bookDto as any);
+    expect(payment.authorizePayment).toHaveBeenCalledOnce();
+    expect(deposit.recordDeposit).toHaveBeenCalledOnce();
     expect(reservation.confirm).toHaveBeenCalledOnce();
+    expect(payment.authorizePayment.mock.invocationCallOrder[0]).toBeLessThan(deposit.recordDeposit.mock.invocationCallOrder[0]!);
+    expect(deposit.recordDeposit.mock.invocationCallOrder[0]).toBeLessThan(reservation.confirm.mock.invocationCallOrder[0]!);
+    expect(res.deposit).toMatchObject({ paymentId: 'pay-1', amount: '110.00', status: 'held' });
     expect(res.status).toBe('confirmed');
+  });
+
+  it('auto-confirms an instant booking with no deposit due without requiring a payment token', async () => {
+    const { svc, config, reservation, payment, deposit } = makeService();
+    config.getPublicConfig.mockResolvedValue({
+      ...await config.getPublicConfig(PROP),
+      depositPolicy: { type: 'none', refundable: true },
+    });
+    config.getConfig.mockResolvedValue({ autoConfirm: true });
+    const { paymentToken, ...noToken } = bookDto;
+
+    const res = await svc.book(PROP, noToken as any);
+
+    expect(payment.authorizePayment).not.toHaveBeenCalled();
+    expect(deposit.recordDeposit).not.toHaveBeenCalled();
+    expect(reservation.confirm).toHaveBeenCalledOnce();
+    expect(reservation.confirm).toHaveBeenCalledWith('res-1', PROP);
+    expect(res.deposit).toBeNull();
+    expect(res.status).toBe('confirmed');
+  });
+
+  it('leaves a zero-deposit booking pending when autoConfirm is off', async () => {
+    const { svc, config, reservation, payment } = makeService();
+    config.getPublicConfig.mockResolvedValue({
+      ...await config.getPublicConfig(PROP),
+      depositPolicy: { type: 'none', refundable: true },
+    });
+    const { paymentToken, ...noToken } = bookDto;
+
+    const res = await svc.book(PROP, noToken as any);
+
+    expect(payment.authorizePayment).not.toHaveBeenCalled();
+    expect(reservation.confirm).not.toHaveBeenCalled();
+    expect(res.status).toBe('pending');
+  });
+
+  it('does not confirm a paid booking if deposit recording fails', async () => {
+    const { svc, config, reservation, deposit } = makeService();
+    config.getConfig.mockResolvedValue({ autoConfirm: true });
+    deposit.recordDeposit.mockRejectedValueOnce(new Error('Deposit recording failed'));
+
+    await expect(svc.book(PROP, bookDto as any)).rejects.toThrow('Deposit recording failed');
+    expect(reservation.confirm).not.toHaveBeenCalled();
   });
 
   it('rejects a room type that is not publicly sellable', async () => {
