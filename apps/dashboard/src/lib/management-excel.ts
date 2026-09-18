@@ -1,5 +1,5 @@
 import ExcelJS from 'exceljs';
-import { DEMO_AS_OF, buildManagementReport, type Metrics, type ReportRow } from './management-demo';
+import { DEMO_AS_OF, type buildManagementReport, type Metrics, type ReportRow } from './management-demo';
 
 export type ManagementModel = ReturnType<typeof buildManagementReport>;
 type CellValue = string | number;
@@ -8,29 +8,37 @@ type Column = { label: string; width: number; currency?: boolean; percent?: bool
 const navy = '173B3B';
 const teal = '0D766E';
 const pale = 'E8F3EF';
+const hotelFill = 'EAF3EE';
+const totalFill = 'F5F1E3';
 const moneyFormat = '#,##0 "₸";[Red]-#,##0 "₸"';
+const percentFormat = '0.0"%"';
 
-function sheet(workbook: ExcelJS.Workbook, name: string, title: string, note: string, columns: Column[], rows: CellValue[][]) {
-  const ws = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 4 }] });
-  ws.mergeCells(1, 1, 1, columns.length);
-  ws.getCell(1, 1).value = title;
-  ws.getCell(1, 1).font = { bold: true, size: 16, color: { argb: 'FFFFFF' } };
-  ws.getCell(1, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: navy } };
-  ws.getCell(1, 1).alignment = { vertical: 'middle', indent: 1 };
-  ws.getRow(1).height = 34;
-  ws.mergeCells(2, 1, 2, columns.length);
-  ws.getCell(2, 1).value = note;
-  ws.getCell(2, 1).font = { italic: true, color: { argb: '526865' }, size: 10 };
-  ws.getRow(2).height = 28;
+function sheetHeader(ws: ExcelJS.Workbook, name: string, title: string, note: string, columns: Column[], freeze: { xSplit?: number; ySplit?: number }) {
+  const worksheet = ws.addWorksheet(name, { views: [{ state: 'frozen', ...freeze }] });
+  worksheet.mergeCells(1, 1, 1, columns.length);
+  worksheet.getCell(1, 1).value = title;
+  worksheet.getCell(1, 1).font = { bold: true, size: 16, color: { argb: 'FFFFFF' } };
+  worksheet.getCell(1, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: navy } };
+  worksheet.getCell(1, 1).alignment = { vertical: 'middle', indent: 1 };
+  worksheet.getRow(1).height = 34;
+  worksheet.mergeCells(2, 1, 2, columns.length);
+  worksheet.getCell(2, 1).value = note;
+  worksheet.getCell(2, 1).font = { italic: true, color: { argb: '526865' }, size: 10 };
+  worksheet.getRow(2).height = 28;
   columns.forEach((column, index) => {
-    ws.getColumn(index + 1).width = column.width;
-    const cell = ws.getCell(4, index + 1);
+    worksheet.getColumn(index + 1).width = column.width;
+    const cell = worksheet.getCell(4, index + 1);
     cell.value = column.label;
     cell.font = { bold: true, color: { argb: 'FFFFFF' } };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: teal } };
     cell.alignment = { vertical: 'middle', wrapText: true };
   });
-  ws.getRow(4).height = 31;
+  worksheet.getRow(4).height = 31;
+  return worksheet;
+}
+
+function sheet(workbook: ExcelJS.Workbook, name: string, title: string, note: string, columns: Column[], rows: CellValue[][]) {
+  const ws = sheetHeader(workbook, name, title, note, columns, { ySplit: 4 });
   rows.forEach((values, index) => {
     const row = ws.getRow(index + 5);
     values.forEach((value, columnIndex) => {
@@ -39,7 +47,7 @@ function sheet(workbook: ExcelJS.Workbook, name: string, title: string, note: st
       const definition = columns[columnIndex];
       if (typeof value === 'number') {
         if (definition?.currency) cell.numFmt = moneyFormat;
-        if (definition?.percent) cell.numFmt = '0.0"%"';
+        if (definition?.percent) cell.numFmt = percentFormat;
       }
       if (index % 2) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: pale } };
     });
@@ -54,22 +62,93 @@ const percent = (label: string, width = 15): Column => ({ label, width, percent:
 const ratio = (top: number, bottom: number) => bottom ? top / bottom * 100 : 0;
 const delta = (actual: number, prior: number) => prior ? (actual / prior - 1) * 100 : 0;
 
-function hierarchy(rows: ReportRow[]): CellValue[][] {
-  const result: CellValue[][] = [];
+type DetailLevel = 0 | 1 | 2 | 'network';
+interface DetailRow {
+  property: string;
+  group: string;
+  article: string;
+  account: string;
+  level: DetailLevel;
+  metrics: Metrics;
+}
+
+/**
+ * Плоский список строк «отель → направление → статья» с повторёнными
+ * значениями Объект/Направление: так лист читается как таблица с экрана
+ * (жирные строки отеля, вложенные направления и статьи) и одновременно
+ * корректно работает автофильтр по любому столбцу.
+ */
+function detailRows(rows: ReportRow[], networkTotal: Metrics): DetailRow[] {
+  const result: DetailRow[] = [];
+  if (rows.length > 1) {
+    result.push({ property: 'Вся сеть', group: 'ИТОГО ПО СЕТИ', article: 'ИТОГО ПО СЕТИ', account: '', level: 'network', metrics: networkTotal });
+  }
   const visit = (row: ReportRow, property: string, group: string) => {
     const currentProperty = row.depth === 0 ? row.label : property;
     const currentGroup = row.depth === 1 ? row.label : group;
-    const m = row.metrics;
-    result.push([
-      currentProperty, row.depth === 0 ? 'Отель' : row.depth === 1 ? 'Направление' : 'Статья',
-      row.depth === 0 ? 'Итого' : currentGroup, row.label, row.account ?? '',
-      m.ly, m.lytd, m.plan, m.planToDate, m.actual, ratio(m.actual, m.plan),
-      delta(m.actual, m.lytd), m.remaining, m.requiredPerDay, m.forecast,
-    ]);
+    if (row.depth === 0) {
+      result.push({ property: row.label, group: 'Итого по объекту', article: 'Итого по объекту', account: '', level: 0, metrics: row.metrics });
+    } else if (row.depth === 1) {
+      result.push({ property: currentProperty, group: row.label, article: 'Итого по направлению', account: row.account ?? '', level: 1, metrics: row.metrics });
+    } else {
+      result.push({ property: currentProperty, group: currentGroup, article: row.label, account: row.account ?? '', level: 2, metrics: row.metrics });
+    }
     row.children?.forEach((child) => visit(child, currentProperty, currentGroup));
   };
   rows.forEach((row) => visit(row, '', ''));
   return result;
+}
+
+function metricValues(m: Metrics): CellValue[] {
+  return [m.ly, m.lytd, m.plan, m.planToDate, m.actual, ratio(m.actual, m.plan), delta(m.actual, m.lytd), m.remaining, m.forecast];
+}
+
+/**
+ * Лист «Доходы»/«Расходы»: иерархическая таблица как на экране.
+ * Уровни выделены заливкой и жирным, статьи сворачиваются штатной
+ * группировкой Excel (outline), первые четыре столбца и шапка закреплены.
+ */
+function hierarchySheet(workbook: ExcelJS.Workbook, name: string, title: string, note: string, rows: ReportRow[], networkTotal: Metrics) {
+  const columns: Column[] = [
+    { label: 'Объект', width: 20 }, { label: 'Направление', width: 26 }, { label: 'Статья', width: 36 }, { label: 'Счёт 1С*', width: 12 },
+    money('LY факт'), money('LY к дате'), money('План'), money('План к дате'), money('Факт'),
+    percent('Выполнение плана, %'), percent('Δ LYTD, %'), money('Остаток'), money('Прогноз'),
+  ];
+  const ws = sheetHeader(workbook, name, title, note, columns, { xSplit: 4, ySplit: 4 });
+  // Уровень листа выше максимального уровня строк: иначе ExcelJS помечает
+  // сгруппированные строки атрибутом collapsed и они открываются «свёрнутыми».
+  ws.properties.outlineLevelRow = 3;
+  const data = detailRows(rows, networkTotal);
+  data.forEach((detail, index) => {
+    const excelRow = ws.getRow(index + 5);
+    excelRow.outlineLevel = typeof detail.level === 'number' ? detail.level : 0;
+    const values: CellValue[] = [detail.property, detail.group, detail.article, detail.account, ...metricValues(detail.metrics)];
+    values.forEach((value, columnIndex) => {
+      const cell = excelRow.getCell(columnIndex + 1);
+      cell.value = typeof value === 'string' && /^[=+\-@]/.test(value) ? `'${value}` : value;
+      const definition = columns[columnIndex];
+      if (typeof value === 'number') {
+        if (definition?.currency) cell.numFmt = moneyFormat;
+        if (definition?.percent) cell.numFmt = percentFormat;
+      }
+      if (columnIndex >= 4) cell.alignment = { horizontal: 'right' };
+      if (detail.level === 'network') {
+        cell.font = { bold: true };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: totalFill } };
+        cell.border = { top: { style: 'medium', color: { argb: 'C9C2A4' } } };
+      } else if (detail.level === 0) {
+        cell.font = { bold: true };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hotelFill } };
+      } else if (detail.level === 1) {
+        cell.font = { bold: true };
+      } else if (columnIndex === 2) {
+        cell.alignment = { horizontal: 'right', indent: 1 };
+      }
+    });
+  });
+  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: data.length + 4, column: columns.length } };
+  ws.pageSetup = { fitToPage: true, fitToWidth: 1, fitToHeight: 0, orientation: 'landscape' };
+  return ws;
 }
 
 function metricRow(name: string, metric: Metrics): CellValue[] {
@@ -82,8 +161,8 @@ export function buildManagementWorkbook(model: ManagementModel): ExcelJS.Workboo
   workbook.creator = 'Guestra Management Demo';
   workbook.created = DEMO_AS_OF;
   const period = filters.month ? `${String(filters.month).padStart(2, '0')}.${filters.year}` : String(filters.year);
-  const selected = filters.propertyId === 'all' ? 'Вся сеть' : model.revenueRows[0]?.label ?? 'Отель';
-  const note = `${selected} · ${period}${filters.day ? ` · срез на ${filters.day} число` : ''} · ДЕМО: моделируемые суммы, KZT`;
+  const selected = filters.propertyId === 'all' ? 'Вся сеть (3 отеля)' : model.revenueRows[0]?.label ?? 'Отель';
+  const note = `Период: ${period}${filters.day ? `, срез на ${filters.day} число` : ''} · Объект: ${selected} · Суммы в тенге (KZT) · ДЕМО: моделируемые суммы`;
 
   sheet(workbook, 'Сводка', 'Управленческая картина', note, [
     { label: 'Показатель', width: 30 }, money('LY факт'), money('LY к дате'), money('План'), money('План к дате'), money('Факт'), percent('План, %'), money('Остаток'), money('Прогноз'),
@@ -95,16 +174,8 @@ export function buildManagementWorkbook(model: ManagementModel): ExcelJS.Workboo
       Math.max(0, revenue.plan - expense.plan - (revenue.actual - expense.actual)), revenue.forecast - expense.forecast],
   ]);
 
-  const detailColumns: Column[] = [
-    { label: 'Объект', width: 23 }, { label: 'Уровень', width: 16 }, { label: 'Направление', width: 25 },
-    { label: 'Статья', width: 37 }, { label: 'Счёт 1С*', width: 13 }, money('LY факт'), money('LY к дате'),
-    money('План'), money('План к дате'), money('Факт'), percent('План, %'), percent('Δ LYTD, %'),
-    money('Остаток'), money('Нужно в день'), money('Прогноз'),
-  ];
-  sheet(workbook, 'Доходы', 'Доходы по отелям и направлениям', note, detailColumns, hierarchy(model.revenueRows));
-  sheet(workbook, 'Расходы', 'Расходы по отелям и статьям', note,
-    detailColumns.map((column) => column.label === 'Нужно в день' ? { ...column, label: 'Лимит в день' } : column),
-    hierarchy(model.expenseRows));
+  hierarchySheet(workbook, 'Доходы', 'Доходы по отелям и направлениям', note, model.revenueRows, revenue);
+  hierarchySheet(workbook, 'Расходы', 'Расходы по отелям и статьям', note, model.expenseRows, expense);
 
   const expenseById = new Map(model.expenseRows.map((row) => [row.id, row]));
   sheet(workbook, 'Объекты', 'Сравнение отелей', note, [

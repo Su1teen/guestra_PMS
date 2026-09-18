@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight, Download, Info, Landmark, Wallet } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Info, Landmark, Wallet } from 'lucide-react';
 import {
   buildManagementReport, DEMO_PROPERTIES, EXPENSE_GROUPS, formatCompactKzt,
   formatKzt, formatPct, REVENUE_GROUPS,
@@ -13,14 +13,15 @@ const dateLabel = (date: Date) => new Intl.DateTimeFormat('ru-RU', { day: 'numer
 const pct = (numerator: number, denominator: number) => denominator ? numerator / denominator * 100 : 0;
 const signedPct = (actual: number, base: number) => base ? (actual / base - 1) * 100 : 0;
 
-function Delta({ value, inverse = false }: { value: number; inverse?: boolean }) {
-  const favorable = inverse ? value <= 0 : value >= 0;
-  const Icon = value >= 0 ? ArrowUpRight : ArrowDownRight;
-  return <span className={`mrr-delta ${favorable ? 'good' : 'bad'}`}><Icon size={14} />{value > 0 ? '+' : ''}{formatPct(value)}</span>;
-}
-
 function MetricCard({ label, value, sub, emphasis }: { label: string; value: string; sub: string; emphasis?: boolean }) {
   return <div className={`mrr-metric ${emphasis ? 'mrr-metric--emphasis' : ''}`}><span>{label}</span><strong>{value}</strong><small>{sub}</small></div>;
+}
+
+function sumMetrics(rows: ReportRow[]): ReportRow['metrics'] {
+  const keys: (keyof ReportRow['metrics'])[] = ['plan', 'planToDate', 'actual', 'ly', 'lytd', 'forecast', 'remaining', 'requiredPerDay'];
+  const total = { plan: 0, planToDate: 0, actual: 0, ly: 0, lytd: 0, forecast: 0, remaining: 0, requiredPerDay: 0 };
+  for (const row of rows) for (const key of keys) total[key] += row.metrics[key];
+  return total;
 }
 
 function HierarchyTable({ rows, kind }: { rows: ReportRow[]; kind: 'revenue' | 'expense' }) {
@@ -30,34 +31,85 @@ function HierarchyTable({ rows, kind }: { rows: ReportRow[]; kind: 'revenue' | '
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
-  const render = (row: ReportRow): React.ReactNode => {
-    const hasChildren = !!row.children?.length;
-    const expanded = open.has(row.id);
-    const m = row.metrics;
-    const progress = Math.min(100, pct(m.actual, m.plan));
-    return <tbody key={row.id}>
-      <tr className={`mrr-table-row mrr-row-${row.depth}`}>
-        <th scope="row" className="mrr-name">
-          {hasChildren ? <button type="button" onClick={() => toggle(row.id)} aria-expanded={expanded} aria-label={`${expanded ? 'Свернуть' : 'Развернуть'} ${row.label}`}>
-            {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-            <span>{row.label}</span>
-          </button> : <span className="mrr-leaf">{row.label}</span>}
-          {row.account && <small>{row.account}</small>}
-        </th>
-        <td>{formatCompactKzt(m.ly)}<small>к дате {formatCompactKzt(m.lytd)}</small></td>
-        <td><strong>{formatCompactKzt(m.plan)}</strong><small>к дате {formatCompactKzt(m.planToDate)}</small></td>
-        <td><strong>{formatCompactKzt(m.actual)}</strong></td>
-        <td><div className="mrr-percent"><span>{formatPct(pct(m.actual, m.plan))}</span><i><b style={{ width: `${progress}%` }} /></i></div></td>
-        <td><Delta value={signedPct(m.actual, m.lytd)} inverse={kind === 'expense'} /></td>
-        <td>{formatCompactKzt(m.remaining)}</td>
-        <td><strong>{formatCompactKzt(m.forecast)}</strong></td>
-      </tr>
-      {hasChildren && expanded && row.children!.map(render)}
-    </tbody>;
+
+  // Плоский список видимых строк: родитель всегда выше детей, дети — только
+  // когда раскрыты. Раньше рекурсивный рендер оборачивал каждую строку в свой
+  // <tbody> (вложенные tbody) и браузер ломал структуру таблицы — строки
+  // «съезжали» от заголовков. Теперь все строки лежат в одном <tbody>.
+  const visible: ReportRow[] = [];
+  const walk = (row: ReportRow) => {
+    visible.push(row);
+    if (row.children?.length && open.has(row.id)) row.children.forEach(walk);
   };
-  return <div className="mrr-table-scroll"><table className="mrr-table"><thead><tr>
-    <th>Объект / направление</th><th>LY факт</th><th>План</th><th>Факт</th><th>План, %</th><th>Δ LYTD</th><th>Остаток</th><th>Прогноз</th>
-  </tr></thead>{rows.map(render)}</table></div>;
+  rows.forEach(walk);
+  const total = sumMetrics(rows);
+
+  return <div className="mrr-table-scroll">
+    <table className="mrr-table">
+      <thead>
+        <tr>
+          <th scope="col" className="mrr-col-name">Объект / направление / статья</th>
+          <th scope="col">LY факт</th>
+          <th scope="col">LY к дате</th>
+          <th scope="col">План</th>
+          <th scope="col">План к дате</th>
+          <th scope="col">Факт</th>
+          <th scope="col">Выполнение плана</th>
+          <th scope="col">Остаток</th>
+          <th scope="col">Прогноз</th>
+        </tr>
+      </thead>
+      <tbody>
+        {visible.map((row) => {
+          const hasChildren = !!row.children?.length;
+          const expanded = open.has(row.id);
+          const m = row.metrics;
+          const progress = Math.min(100, pct(m.actual, m.plan));
+          const lytdDelta = signedPct(m.actual, m.lytd);
+          const lytdFavorable = kind === 'expense' ? lytdDelta <= 0 : lytdDelta >= 0;
+          return <tr className={`mrr-table-row mrr-row-${row.depth}`} key={row.id}>
+            <th scope="row" className="mrr-name">
+              <span className="mrr-name-inner">
+                {hasChildren ? <button type="button" className="mrr-toggle" onClick={() => toggle(row.id)} aria-expanded={expanded} aria-label={`${expanded ? 'Свернуть' : 'Развернуть'} ${row.label}`}>
+                  {expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+                </button> : <span className="mrr-toggle-spacer" aria-hidden />}
+                <span className="mrr-label">{row.label}</span>
+                {row.account && <small className="mrr-account">{row.account}</small>}
+              </span>
+            </th>
+            <td className="mrr-num">{formatCompactKzt(m.ly)}</td>
+            <td className="mrr-num mrr-dim">{formatCompactKzt(m.lytd)}</td>
+            <td className="mrr-num"><strong>{formatCompactKzt(m.plan)}</strong></td>
+            <td className="mrr-num mrr-dim">{formatCompactKzt(m.planToDate)}</td>
+            <td className="mrr-num">
+              <strong>{formatCompactKzt(m.actual)}</strong>
+              <small className={lytdFavorable ? 'mrr-sub good' : 'mrr-sub bad'}>
+                {lytdDelta > 0 ? '+' : ''}{formatPct(lytdDelta)} к LYTD
+              </small>
+            </td>
+            <td>
+              <div className="mrr-percent"><span>{formatPct(pct(m.actual, m.plan))}</span><i><b style={{ width: `${progress}%` }} /></i></div>
+            </td>
+            <td className="mrr-num">{formatCompactKzt(m.remaining)}</td>
+            <td className="mrr-num"><strong>{formatCompactKzt(m.forecast)}</strong></td>
+          </tr>;
+        })}
+      </tbody>
+      <tfoot>
+        <tr className="mrr-table-row mrr-row-total">
+          <th scope="row" className="mrr-name">Итого · {rows.length === 1 ? rows[0].label : `сеть, ${rows.length} объекта`}</th>
+          <td className="mrr-num">{formatCompactKzt(total.ly)}</td>
+          <td className="mrr-num">{formatCompactKzt(total.lytd)}</td>
+          <td className="mrr-num"><strong>{formatCompactKzt(total.plan)}</strong></td>
+          <td className="mrr-num">{formatCompactKzt(total.planToDate)}</td>
+          <td className="mrr-num"><strong>{formatCompactKzt(total.actual)}</strong></td>
+          <td><div className="mrr-percent"><span>{formatPct(pct(total.actual, total.plan))}</span><i><b style={{ width: `${Math.min(100, pct(total.actual, total.plan))}%` }} /></i></div></td>
+          <td className="mrr-num">{formatCompactKzt(total.remaining)}</td>
+          <td className="mrr-num"><strong>{formatCompactKzt(total.forecast)}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>;
 }
 
 export default function ManagementReport({ initialPropertyId = 'all' }: { initialPropertyId?: DemoPropertyId | 'all' }) {
@@ -144,7 +196,7 @@ export default function ManagementReport({ initialPropertyId = 'all' }: { initia
           <section className="mrr-card"><div className="mrr-card-head"><div><h3>Динамика выручки</h3><p>Помесячно · план и факт выбранных объектов</p></div><span className="mrr-chart-legend"><i /> План <i /> Факт</span></div><div className="mrr-chart">{model.monthly.map((month) => <div className="mrr-chart-month" key={month.month}><div className="mrr-chart-bars"><span className="plan" style={{ height: `${Math.max(3, pct(month.plan, trendMax))}%` }} title={`План: ${formatKzt(month.plan)}`} /><span className="actual" style={{ height: `${month.available ? Math.max(3, pct(month.actual, trendMax)) : 0}%` }} title={`Факт: ${formatKzt(month.actual)}`} /></div><small>{SHORT_MONTHS[month.month - 1]}</small></div>)}</div></section>
         </div>
 
-        <section className="mrr-card mrr-detail"><div className="mrr-card-head"><div><h3>{view === 'revenue' ? 'Доходы по объектам и направлениям' : 'Расходы по объектам и статьям'}</h3><p>Раскройте отель и направление для деталей. LYTD — аналогичный прошедший период прошлого года.</p></div><span className="mrr-count">{selectedRows.length} {selectedRows.length === 1 ? 'объект' : 'объекта'}</span></div><HierarchyTable rows={selectedRows} kind={view} /></section>
+        <section className="mrr-card mrr-detail"><div className="mrr-card-head"><div><h3>{view === 'revenue' ? 'Доходы по объектам и направлениям' : 'Расходы по объектам и статьям'}</h3><p>Раскройте отель и направление для деталей. «LY к дате» — аналогичный прошедший период прошлого года, «к LYTD» под фактом — отклонение от него.</p></div><span className="mrr-count">{selectedRows.length} {selectedRows.length === 1 ? 'объект' : 'объекта'}</span></div><HierarchyTable rows={selectedRows} kind={view} /><p className="mrr-table-hint">Таблица прокручивается по горизонтали, первый столбец закреплён.</p></section>
         {view === 'expense' && <p className="mrr-footnote">* Счета 7010, 7110, 7210, 7310 показаны как пример укрупнённого соответствия 1С Казахстана. Использованные бонусы требуют отдельной сверки с учётной политикой. Данные полностью демонстрационные.</p>}
         {view === 'revenue' && <p className="mrr-footnote">Cashback не включён в доходы. Начисленные бонусы относятся к обязательствам программы лояльности; использованные показаны в расходной модели отдельно.</p>}
       </main>
