@@ -144,6 +144,64 @@ describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
     });
   });
 
+  it('enforces booking keys per property and backfills only missing demo guestInfo', async () => {
+    await withEphemeralDatabase(async (databaseUrl) => {
+      await pushSchema(databaseUrl);
+      const sql = postgres(databaseUrl, postgresOptionsFromEnv());
+      try {
+        const demoId = 'a0000001-0000-4000-a000-000000000001';
+        const otherId = 'f3600001-0000-4000-a000-000000000001';
+        await sql`
+          INSERT INTO properties (id, name, code, country_code, timezone, currency_code, total_rooms, settings)
+          VALUES
+            (${demoId}, 'Demo', 'LES', 'KZ', 'Asia/Almaty', 'KZT', 10, ${JSON.stringify({ taxRate: 0.13 })}::jsonb),
+            (${otherId}, 'Other', 'OTHER', 'KZ', 'Asia/Almaty', 'KZT', 10, ${JSON.stringify({ taxRate: 0.2 })}::jsonb)
+        `;
+        await runAllMigrations(databaseUrl, { migrationsDir: MIGRATIONS_DIR });
+
+        const [demo] = await sql<{ settings: { taxRate: number; guestInfo: { pets: string; wifi: string } } }[]>`
+          SELECT settings FROM properties WHERE id = ${demoId}
+        `;
+        const [other] = await sql<{ settings: { taxRate: number; guestInfo?: unknown } }[]>`
+          SELECT settings FROM properties WHERE id = ${otherId}
+        `;
+        expect(demo?.settings.taxRate).toBe(0.13);
+        expect(demo?.settings.guestInfo.pets).toContain('питомц');
+        expect(demo?.settings.guestInfo.wifi).toContain('Wi-Fi');
+        expect(other?.settings).toEqual({ taxRate: 0.2 });
+
+        const [guest] = await sql<{ id: string }[]>`
+          INSERT INTO guests (first_name, last_name) VALUES ('Demo', 'Guest') RETURNING id
+        `;
+        const insertBooking = (propertyId: string, confirmationNumber: string, idempotencyKey: string | null) => sql`
+          INSERT INTO bookings (property_id, guest_id, confirmation_number, source, idempotency_key)
+          VALUES (${propertyId}, ${guest!.id}, ${confirmationNumber}, 'direct', ${idempotencyKey})
+        `;
+        await insertBooking(demoId, 'DEMO-1', 'message-1');
+        await expect(insertBooking(demoId, 'DEMO-2', 'message-1'))
+          .rejects.toMatchObject({ code: '23505' });
+        await insertBooking(otherId, 'OTHER-1', 'message-1');
+        await insertBooking(demoId, 'DEMO-3', null);
+        await insertBooking(demoId, 'DEMO-4', null);
+
+        await sql`
+          INSERT INTO booking_engine_idempotency (property_id, idempotency_key, response)
+          VALUES (${demoId}, 'message-1', '{"reservationId":"demo"}'::jsonb)
+        `;
+        await expect(sql`
+          INSERT INTO booking_engine_idempotency (property_id, idempotency_key)
+          VALUES (${demoId}, 'message-1')
+        `).rejects.toMatchObject({ code: '23505' });
+        await sql`
+          INSERT INTO booking_engine_idempotency (property_id, idempotency_key)
+          VALUES (${otherId}, 'message-1')
+        `;
+      } finally {
+        await sql.end();
+      }
+    });
+  });
+
   it('upgrades an existing pre-0022 database (push-schema baseline only)', async () => {
     await withEphemeralDatabase(async (databaseUrl) => {
       await pushSchema(databaseUrl);

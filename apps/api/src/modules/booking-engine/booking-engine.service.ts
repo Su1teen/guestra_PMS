@@ -1,7 +1,7 @@
-import { Injectable, BadRequestException, ForbiddenException, Inject } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, ForbiddenException, Inject } from '@nestjs/common';
 import { eq, and } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { bookings, reservations } from '@telivityhaip/database';
+import { bookingEngineIdempotency, bookings, reservations } from '@telivityhaip/database';
 import type { DepositPolicy } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { ConnectSearchService } from '../connect/connect-search.service';
@@ -395,6 +395,50 @@ export class BookingEngineService {
   // --- Book (the heart) ---
 
   async book(propertyId: string, dto: BeCreateBookingDto) {
+    const idempotencyKey = dto.idempotencyKey;
+    if (idempotencyKey == null) return this.bookOnce(propertyId, dto);
+
+    return this.db.transaction(async (tx: any) => {
+      // The composite primary key makes concurrent retries wait for the first
+      // transaction to commit; only its owner may run the booking side effects.
+      const [claimed] = await tx.insert(bookingEngineIdempotency)
+        .values({ propertyId, idempotencyKey })
+        .onConflictDoNothing({ target: [bookingEngineIdempotency.propertyId, bookingEngineIdempotency.idempotencyKey] })
+        .returning({ idempotencyKey: bookingEngineIdempotency.idempotencyKey });
+
+      if (!claimed) {
+        const [existing] = await tx.select({ response: bookingEngineIdempotency.response })
+          .from(bookingEngineIdempotency)
+          .where(and(
+            eq(bookingEngineIdempotency.propertyId, propertyId),
+            eq(bookingEngineIdempotency.idempotencyKey, idempotencyKey),
+          ));
+        if (!existing?.response) throw new ConflictException('Booking is still being processed; retry shortly');
+        return existing.response as Awaited<ReturnType<BookingEngineService['bookOnce']>>;
+      }
+
+      // ReservationService uses its own transaction. If a downstream step
+      // fails after the booking insert, its unique key still prevents a second
+      // booking, even if this response transaction rolls back.
+      const [partialBooking] = await tx.select({ id: bookings.id })
+        .from(bookings)
+        .where(and(eq(bookings.propertyId, propertyId), eq(bookings.idempotencyKey, idempotencyKey)));
+      if (partialBooking) {
+        throw new ConflictException('Booking already exists but needs reconciliation before retry');
+      }
+
+      const result = await this.bookOnce(propertyId, dto);
+      await tx.update(bookingEngineIdempotency)
+        .set({ response: result })
+        .where(and(
+          eq(bookingEngineIdempotency.propertyId, propertyId),
+          eq(bookingEngineIdempotency.idempotencyKey, idempotencyKey),
+        ));
+      return result;
+    });
+  }
+
+  private async bookOnce(propertyId: string, dto: BeCreateBookingDto) {
     const config = await this.configService.getPublicConfig(propertyId);
     if (!config.isEnabled) {
       throw new ForbiddenException('Direct booking is not enabled for this property');
@@ -454,7 +498,7 @@ export class BookingEngineService {
         source: 'direct',
         channelCode: 'booking_engine',
       } as any,
-      { confirmationNumber },
+      { confirmationNumber, ...(dto.idempotencyKey != null ? { idempotencyKey: dto.idempotencyKey } : {}) },
     );
 
     // 4. Folio.

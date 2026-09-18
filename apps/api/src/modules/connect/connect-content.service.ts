@@ -63,6 +63,7 @@ export class ConnectContentService {
       })),
       checkInTime: property.checkInTime,
       checkOutTime: property.checkOutTime,
+      guestInfo: settings['guestInfo'] ?? null,
       policies: {
         cancellationDefault: 'Varies by rate plan',
         depositRequired: !!(settings['depositPercentage'] && (settings['depositPercentage'] as number) > 0),

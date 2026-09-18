@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, boolean, timestamp, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, boolean, timestamp, jsonb, primaryKey } from 'drizzle-orm/pg-core';
 import { properties } from './property.js';
 
 export type BookingMode = 'instant' | 'request';
@@ -129,3 +129,13 @@ export const bookingEngineConfig = pgTable('booking_engine_config', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Stores the completed response; the primary key serializes same-property retries. */
+export const bookingEngineIdempotency = pgTable('booking_engine_idempotency', {
+  propertyId: uuid('property_id').notNull().references(() => properties.id),
+  idempotencyKey: varchar('idempotency_key', { length: 200 }).notNull(),
+  response: jsonb('response').$type<Record<string, unknown>>(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.propertyId, t.idempotencyKey], name: 'booking_engine_idempotency_pkey' }),
+}));

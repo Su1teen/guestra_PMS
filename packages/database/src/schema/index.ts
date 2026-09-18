@@ -242,6 +242,7 @@ export {
 export {
   bookingEngineCredentials,
   bookingEngineConfig,
+  bookingEngineIdempotency,
 } from './booking-engine.js';
 export type { DepositPolicy } from './booking-engine.js';
 export type {

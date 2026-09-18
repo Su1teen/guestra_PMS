@@ -8,6 +8,7 @@ import {
   IsString,
   IsUUID,
   Min,
+  MinLength,
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -72,6 +73,13 @@ export class BeCreateBookingDto {
   @IsString()
   @MaxLength(2000)
   specialRequests?: string;
+
+  @ApiPropertyOptional({ description: 'Client-generated retry key, unique within this property.' })
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(200)
+  idempotencyKey?: string;
 
   // --- Payment (tokenized; NEVER raw card data) ---
   @ApiPropertyOptional({

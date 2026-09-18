@@ -93,6 +93,7 @@ export const bookings = pgTable('bookings', {
 
   confirmationNumber: varchar('confirmation_number', { length: 50 }).notNull().unique(),
   externalConfirmation: varchar('external_confirmation', { length: 100 }), // OTA/GDS confirmation
+  idempotencyKey: varchar('idempotency_key', { length: 200 }), // Direct-booking retries only
 
   source: bookingSourceEnum('source').notNull(),
   channelCode: varchar('channel_code', { length: 50 }), // "booking_com", "expedia", "amadeus"
@@ -105,7 +106,10 @@ export const bookings = pgTable('bookings', {
 
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => ({
+  propertyIdempotencyKeyUnique: uniqueIndex('bookings_property_idempotency_key_unique')
+    .on(t.propertyId, t.idempotencyKey),
+}));
 
 /**
  * Reservations — specific booking for one unit for a date range.

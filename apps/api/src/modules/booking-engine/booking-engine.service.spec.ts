@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { bookingEngineIdempotency, bookings } from '@telivityhaip/database';
+import { validate } from 'class-validator';
 import { BookingEngineService } from './booking-engine.service';
+import { BeCreateBookingDto } from './dto/be-create-booking.dto';
 
 const PROP = 'aaaaaaaa-0000-4000-a000-000000000001';
 const RT = 'rt000000-0000-4000-a000-000000000001';
 const RP = 'rp000000-0000-4000-a000-000000000001';
 
 function makeService(overrides: Partial<Record<string, any>> = {}) {
+  const db = overrides.db ?? {};
   const config = {
     getPublicConfig: vi.fn().mockResolvedValue({
       propertyId: PROP,
@@ -60,7 +64,7 @@ function makeService(overrides: Partial<Record<string, any>> = {}) {
   };
 
   const svc = new BookingEngineService(
-    {} as any,
+    db as any,
     search as any,
     bookingSvc as any,
     reservation as any,
@@ -75,7 +79,67 @@ function makeService(overrides: Partial<Record<string, any>> = {}) {
     ancillary as any,
     policy as any,
   );
-  return { svc, config, availability, ratePlan, tax, guest, reservation, folio, payment, deposit, ancillary, policy };
+  return { svc, db, config, availability, ratePlan, tax, guest, reservation, folio, payment, deposit, ancillary, policy };
+}
+
+// Models the DB's unique (property_id, idempotency_key) claim: another
+// transaction waits for the owner before it can observe the committed result.
+function makeIdempotencyDb() {
+  const saved = new Map<string, Record<string, unknown>>();
+  const held = new Map<string, Promise<void>>();
+  const partialBookings = new Set<string>();
+  const db = {
+    transaction: vi.fn(async (work: (tx: any) => Promise<unknown>) => {
+      let claimed: string | undefined;
+      let currentScope: string | undefined;
+      let release: (() => void) | undefined;
+      let result: Record<string, unknown> | undefined;
+      const tx = {
+        insert: (table: unknown) => {
+          expect(table).toBe(bookingEngineIdempotency);
+          return {
+            values: (row: { propertyId: string; idempotencyKey: string }) => ({
+              onConflictDoNothing: () => ({
+                returning: async () => {
+                  const scope = `${row.propertyId}:${row.idempotencyKey}`;
+                  currentScope = scope;
+                  if (held.has(scope)) await held.get(scope);
+                  if (saved.has(scope)) return [];
+                  claimed = scope;
+                  held.set(scope, new Promise<void>((resolve) => { release = resolve; }));
+                  return [{ idempotencyKey: row.idempotencyKey }];
+                },
+              }),
+            }),
+          };
+        },
+        select: () => ({
+          from: (table: unknown) => ({
+            where: async () => table === bookings
+              ? (claimed && partialBookings.has(claimed) ? [{ id: 'existing-booking' }] : [])
+              : [{ response: currentScope ? saved.get(currentScope) ?? null : null }],
+          }),
+        }),
+        update: (table: unknown) => {
+          expect(table).toBe(bookingEngineIdempotency);
+          return { set: (values: { response: Record<string, unknown> }) => ({
+            where: async () => { result = values.response; },
+          }) };
+        },
+      };
+      try {
+        const response = await work(tx);
+        if (claimed && result) saved.set(claimed, result);
+        return response;
+      } finally {
+        if (claimed) {
+          held.delete(claimed);
+          release?.();
+        }
+      }
+    }),
+  };
+  return { db, saved, partialBookings };
 }
 
 const bookDto = {
@@ -224,6 +288,81 @@ describe('BookingEngineService.quote', () => {
 });
 
 describe('BookingEngineService.book', () => {
+  it('creates independently when the idempotency key is absent or null', async () => {
+    const { db } = makeIdempotencyDb();
+    const { svc, guest, reservation, folio } = makeService({ db });
+    const first = await svc.book(PROP, bookDto as any);
+    const second = await svc.book(PROP, { ...bookDto, idempotencyKey: null } as any);
+    expect(first.reservationId).toBe('res-1');
+    expect(second.reservationId).toBe('res-1');
+    expect(guest.create).toHaveBeenCalledTimes(2);
+    expect(reservation.create).toHaveBeenCalledTimes(2);
+    expect(folio.createAutoFolio).toHaveBeenCalledTimes(2);
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('replays a successful result with the same IDs and no second side effects', async () => {
+    const { db, saved } = makeIdempotencyDb();
+    const { svc, guest, reservation, folio, payment, deposit } = makeService({ db });
+    const dto = { ...bookDto, idempotencyKey: 'telegram-message-1' };
+    const first = await svc.book(PROP, dto as any);
+    const second = await svc.book(PROP, dto as any);
+    expect(second).toEqual(first);
+    expect(second.confirmationNumber).toBe(first.confirmationNumber);
+    expect(second.reservationId).toBe(first.reservationId);
+    expect(saved).toHaveProperty('size', 1);
+    expect(reservation.create.mock.calls[0][1].idempotencyKey).toBe(dto.idempotencyKey);
+    for (const service of [guest.create, reservation.create, folio.createAutoFolio, payment.authorizePayment, deposit.recordDeposit]) {
+      expect(service).toHaveBeenCalledOnce();
+    }
+  });
+
+  it('allows the same key independently at two properties', async () => {
+    const { db, saved } = makeIdempotencyDb();
+    const { svc, guest, reservation } = makeService({ db });
+    const other = 'bbbbbbbb-0000-4000-a000-000000000002';
+    const dto = { ...bookDto, idempotencyKey: 'same-external-id' };
+    await svc.book(PROP, dto as any);
+    await svc.book(other, dto as any);
+    expect(saved.size).toBe(2);
+    expect(guest.create).toHaveBeenCalledTimes(2);
+    expect(reservation.create.mock.calls.map(([value]: any) => value.propertyId)).toEqual([PROP, other]);
+  });
+
+  it('serializes concurrent requests with the same key', async () => {
+    const { db, saved } = makeIdempotencyDb();
+    const { svc, guest, reservation, folio } = makeService({ db });
+    const dto = { ...bookDto, idempotencyKey: 'simultaneous' };
+    const [first, second] = await Promise.all([svc.book(PROP, dto as any), svc.book(PROP, dto as any)]);
+    expect(second).toEqual(first);
+    expect(saved.size).toBe(1);
+    expect(guest.create).toHaveBeenCalledOnce();
+    expect(reservation.create).toHaveBeenCalledOnce();
+    expect(folio.createAutoFolio).toHaveBeenCalledOnce();
+  });
+
+  it('does not create another guest if a booking was persisted before a downstream failure', async () => {
+    const { db, partialBookings } = makeIdempotencyDb();
+    partialBookings.add(`${PROP}:partial`);
+    const { svc, guest } = makeService({ db });
+    await expect(svc.book(PROP, { ...bookDto, idempotencyKey: 'partial' } as any))
+      .rejects.toThrow(/reconciliation/);
+    expect(guest.create).not.toHaveBeenCalled();
+  });
+
+  it('does not persist an idempotency claim or create a guest in request mode', async () => {
+    const { db, saved } = makeIdempotencyDb();
+    const { svc, config, guest } = makeService({ db });
+    config.getPublicConfig.mockResolvedValue({
+      ...await config.getPublicConfig(PROP),
+      bookingMode: 'request',
+    });
+    await expect(svc.book(PROP, { ...bookDto, idempotencyKey: 'request-1' } as any))
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(saved.size).toBe(0);
+    expect(guest.create).not.toHaveBeenCalled();
+  });
+
   it('classifies the payment as a held deposit', async () => {
     const { svc, deposit, payment } = makeService();
     const res = await svc.book(PROP, bookDto as any);
@@ -372,6 +511,24 @@ describe('BookingEngineService.book', () => {
     const { svc, ratePlan } = makeService();
     ratePlan.findById.mockResolvedValue({ id: RP, roomTypeId: 'rt000000-0000-4000-a000-0000000000ff', currencyCode: 'USD' });
     await expect(svc.book(PROP, bookDto as any)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('BeCreateBookingDto.idempotencyKey', () => {
+  it('allows omission and null, but rejects an empty or oversized key', async () => {
+    const dto = Object.assign(new BeCreateBookingDto(), bookDto, {
+      roomTypeId: '11111111-1111-4111-8111-111111111111',
+      ratePlanId: '22222222-2222-4222-8222-222222222222',
+    });
+    expect(await validate(dto)).toEqual([]);
+    dto.idempotencyKey = null as any;
+    expect(await validate(dto)).toEqual([]);
+    dto.idempotencyKey = '';
+    expect(await validate(dto)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ property: 'idempotencyKey' }),
+    ]));
+    dto.idempotencyKey = 'x'.repeat(201);
+    expect((await validate(dto)).some((error) => error.property === 'idempotencyKey')).toBe(true);
   });
 });
 

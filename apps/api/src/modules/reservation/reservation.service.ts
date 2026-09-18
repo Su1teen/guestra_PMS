@@ -84,6 +84,7 @@ export class ReservationService {
     opts?: {
       confirmationNumber?: string;
       acceptedPricingSnapshot?: AcceptedPricingSnapshot;
+      idempotencyKey?: string;
     },
     tx?: any,
   ) {
@@ -185,6 +186,7 @@ export class ReservationService {
           propertyId: dto.propertyId,
           guestId: dto.guestId,
           confirmationNumber,
+          ...(opts?.idempotencyKey != null ? { idempotencyKey: opts.idempotencyKey } : {}),
           externalConfirmation: dto.externalConfirmation,
           source: dto.source,
           channelCode: dto.channelCode,

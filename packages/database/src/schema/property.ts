@@ -70,6 +70,18 @@ export const properties = pgTable('properties', {
     noShowFeeAmount?: number;
     noShowCutoffHour?: number;
     auditAutoLock?: boolean;
+    guestInfo?: {
+      pets?: string;
+      children?: string;
+      parking?: string;
+      breakfast?: string;
+      restaurant?: string;
+      spa?: string;
+      bath?: string;
+      transfer?: string;
+      smoking?: string;
+      wifi?: string;
+    };
     fiscal?: {
       providerKey?: string | null;
       config?: Record<string, unknown>;
