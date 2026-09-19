@@ -26,6 +26,11 @@ export class BeCreateBookingDto {
   @IsUUID()
   ratePlanId!: string;
 
+  @ApiPropertyOptional({ description: 'Explicit physical room selection. Omit to book only the room type.' })
+  @IsOptional()
+  @IsUUID()
+  roomId?: string;
+
   @ApiProperty({ example: '2026-07-01' })
   @IsDateString()
   checkIn!: string;

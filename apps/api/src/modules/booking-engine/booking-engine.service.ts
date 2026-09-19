@@ -1,7 +1,7 @@
-import { Injectable, BadRequestException, ConflictException, ForbiddenException, Inject } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
+import { Injectable, BadRequestException, ConflictException, ForbiddenException, Inject, NotFoundException } from '@nestjs/common';
+import { eq, and, gt, lt, notInArray } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { bookingEngineIdempotency, bookings, reservations } from '@telivityhaip/database';
+import { bookingEngineIdempotency, bookings, reservations, rooms } from '@telivityhaip/database';
 import type { DepositPolicy } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { ConnectSearchService } from '../connect/connect-search.service';
@@ -13,6 +13,7 @@ import {
   AvailabilityService,
 } from '../reservation/availability.service';
 import { RatePlanService } from '../rate-plan/rate-plan.service';
+import { calculateCanonicalRoomPricing } from '../rate-plan/canonical-room-pricing';
 import { TaxService } from '../tax/tax.service';
 import { GuestService } from '../guest/guest.service';
 import { FolioService } from '../folio/folio.service';
@@ -24,6 +25,7 @@ import { BookingEngineConfigService } from './booking-engine-config.service';
 import type { BeSearchDto } from './dto/be-search.dto';
 import type { BeQuoteDto } from './dto/be-quote.dto';
 import type { BeCreateBookingDto } from './dto/be-create-booking.dto';
+import type { BeCheckRoomDto } from './dto/be-check-room.dto';
 import type { PreRegisterDto } from '../reservation/dto/pre-register.dto';
 
 /**
@@ -184,52 +186,22 @@ export class BookingEngineService {
       dto.checkOut,
     );
 
-    // Authoritative nightly rate via the rate-plan engine (handles derived rates).
-    const rateContext = {
-      nights,
+    const roomPricing = await calculateCanonicalRoomPricing({
+      propertyId,
+      ratePlanId: dto.ratePlanId,
       checkIn: dto.checkIn,
       checkOut: dto.checkOut,
-      stayDate: dto.checkIn,
-    };
-    const { effectiveRate, currency } = options?.lockForUpdate
-      ? await this.ratePlanService.calculateDerivedRate(
-          dto.ratePlanId,
-          propertyId,
-          rateContext,
-          db,
-          true,
-        )
-      : await this.ratePlanService.calculateDerivedRate(
-          dto.ratePlanId,
-          propertyId,
-          rateContext,
-          db,
-        );
-
-    // Per-night tax via the real tax engine (not a flat property rate).
-    const nightlyRate = new Decimal(effectiveRate);
-    const lineItems: Array<{ date: string; rate: string; tax: string }> = [];
-    let roomTotal = new Decimal(0);
-    let taxTotal = new Decimal(0);
+      nights,
+      isTaxInclusive: ratePlanRow.isTaxInclusive,
+      ratePlanService: this.ratePlanService,
+      taxService: this.taxService,
+      db,
+      lockForUpdate: options?.lockForUpdate,
+    });
+    const lineItems = roomPricing.lineItems;
+    const roomTotal = new Decimal(roomPricing.roomTotal);
+    const taxTotal = new Decimal(roomPricing.taxTotal);
     const arrival = new Date(dto.checkIn);
-
-    for (let i = 0; i < nights; i++) {
-      const d = new Date(arrival);
-      d.setUTCDate(d.getUTCDate() + i);
-      const serviceDate = d.toISOString().slice(0, 10);
-      const taxes = await this.taxService.calculateTaxes(
-        nightlyRate.toFixed(2),
-        'room',
-        propertyId,
-        serviceDate,
-        { numberOfNights: nights, nightNumber: i + 1 },
-        db,
-      );
-      const nightTax = taxes.reduce((acc, t) => acc.plus(new Decimal(t.amount)), new Decimal(0));
-      roomTotal = roomTotal.plus(nightlyRate);
-      taxTotal = taxTotal.plus(nightTax);
-      lineItems.push({ date: serviceDate, rate: nightlyRate.toFixed(2), tax: nightTax.toFixed(2) });
-    }
 
     // Optional ancillary extras selected at booking time.
     const services: Array<{
@@ -374,7 +346,7 @@ export class BookingEngineService {
       checkIn: dto.checkIn,
       checkOut: dto.checkOut,
       nights,
-      currencyCode: currency,
+      currencyCode: roomPricing.currency,
       lineItems,
       roomTotal: roomTotal.toFixed(2),
       taxTotal: taxTotal.toFixed(2),
@@ -394,9 +366,33 @@ export class BookingEngineService {
 
   // --- Book (the heart) ---
 
+  async checkSpecificRoom(propertyId: string, dto: BeCheckRoomDto) {
+    const config = await this.configService.getPublicConfig(propertyId);
+    if (!config.isEnabled) {
+      throw new ForbiddenException('Direct booking is not enabled for this property');
+    }
+    this.nightsBetween(dto.checkIn, dto.checkOut);
+    const availability = await this.inspectSpecificRoom(
+      propertyId,
+      { roomNumber: dto.roomNumber, roomTypeId: dto.roomTypeId, checkIn: dto.checkIn, checkOut: dto.checkOut },
+      this.db,
+      false,
+    );
+    if (!availability.room) {
+      throw new NotFoundException('Room not found in this property');
+    }
+    return {
+      roomId: availability.room.id,
+      roomNumber: availability.room.number,
+      roomTypeId: availability.room.roomTypeId,
+      available: availability.available,
+      ...(availability.reason ? { reason: availability.reason } : {}),
+    };
+  }
+
   async book(propertyId: string, dto: BeCreateBookingDto) {
     const idempotencyKey = dto.idempotencyKey;
-    if (idempotencyKey == null) return this.bookOnce(propertyId, dto);
+    if (idempotencyKey == null) return this.bookWithOptionalSpecificRoom(propertyId, dto);
 
     return this.db.transaction(async (tx: any) => {
       // The composite primary key makes concurrent retries wait for the first
@@ -427,7 +423,7 @@ export class BookingEngineService {
         throw new ConflictException('Booking already exists but needs reconciliation before retry');
       }
 
-      const result = await this.bookOnce(propertyId, dto);
+      const result = await this.bookWithOptionalSpecificRoom(propertyId, dto, tx);
       await tx.update(bookingEngineIdempotency)
         .set({ response: result })
         .where(and(
@@ -436,6 +432,48 @@ export class BookingEngineService {
         ));
       return result;
     });
+  }
+
+  private async bookWithOptionalSpecificRoom(propertyId: string, dto: BeCreateBookingDto, transaction?: any) {
+    if (!dto.roomId) return this.bookOnce(propertyId, dto);
+
+    this.nightsBetween(dto.checkIn, dto.checkOut);
+    const createWithLockedRoom = async (tx: any) => {
+      const availability = await this.inspectSpecificRoom(
+        propertyId,
+        { roomId: dto.roomId!, roomTypeId: dto.roomTypeId, checkIn: dto.checkIn, checkOut: dto.checkOut },
+        tx,
+        true,
+      );
+      if (!availability.room) {
+        throw new NotFoundException('Room not found in this property');
+      }
+      if (!availability.available) {
+        throw new ConflictException(availability.reason ?? 'Room is unavailable for these dates');
+      }
+
+      // The physical-room row remains locked until this update commits. A
+      // competing specific-room booking must then re-read overlaps and fail
+      // before it creates a guest or any booking records.
+      const result = await this.bookOnce(propertyId, dto);
+      const assignedStatus = result.status === 'confirmed' ? 'assigned' : result.status;
+      const [updated] = await tx
+        .update(reservations)
+        .set({ roomId: availability.room.id, status: assignedStatus, updatedAt: new Date() })
+        .where(and(
+          eq(reservations.id, result.reservationId),
+          eq(reservations.propertyId, propertyId),
+          eq(reservations.status, result.status),
+        ))
+        .returning({ roomId: reservations.roomId, status: reservations.status });
+      if (!updated) {
+        throw new ConflictException('Reservation changed while assigning the requested room');
+      }
+      return { ...result, roomId: updated.roomId, status: updated.status };
+    };
+    return transaction
+      ? createWithLockedRoom(transaction)
+      : this.db.transaction(createWithLockedRoom);
   }
 
   private async bookOnce(propertyId: string, dto: BeCreateBookingDto) {
@@ -571,6 +609,7 @@ export class BookingEngineService {
       confirmationNumber,
       reservationId: reservation.id,
       status,
+      roomId: null,
       currencyCode: quote.currencyCode,
       grandTotal: quote.grandTotal,
       deposit: depositInfo,
@@ -581,6 +620,52 @@ export class BookingEngineService {
       cancellationPolicy: quote.cancellationPolicy?.description
         ?? 'See rate plan cancellation policy.',
     };
+  }
+
+  private async inspectSpecificRoom(
+    propertyId: string,
+    request: {
+      roomId?: string;
+      roomNumber?: string;
+      roomTypeId: string;
+      checkIn: string;
+      checkOut: string;
+    },
+    db: any,
+    lockForUpdate: boolean,
+  ) {
+    const identity = request.roomId
+      ? eq(rooms.id, request.roomId)
+      : eq(rooms.number, request.roomNumber!);
+    const query = db
+      .select()
+      .from(rooms)
+      .where(and(eq(rooms.propertyId, propertyId), identity));
+    const [room] = lockForUpdate ? await query.for('update') : await query;
+    if (!room) return { room: null, available: false, reason: 'Room not found' };
+    if (!room.isActive) return { room, available: false, reason: 'Room is inactive' };
+    if (room.roomTypeId !== request.roomTypeId) {
+      return { room, available: false, reason: 'Room does not match the requested room type' };
+    }
+    if (room.status === 'out_of_order' || room.status === 'out_of_service') {
+      return { room, available: false, reason: `Room is ${room.status}` };
+    }
+
+    const conflicts = await db
+      .select({ id: reservations.id })
+      .from(reservations)
+      .where(and(
+        eq(reservations.propertyId, propertyId),
+        eq(reservations.roomId, room.id),
+        notInArray(reservations.status, ['cancelled', 'no_show', 'checked_out'] as any),
+        lt(reservations.arrivalDate, request.checkOut),
+        gt(reservations.departureDate, request.checkIn),
+      ))
+      .limit(1);
+    if (conflicts.length > 0) {
+      return { room, available: false, reason: 'Room is already reserved for these dates' };
+    }
+    return { room, available: true };
   }
 
   // --- Retrieve / cancel (ownership already enforced by BookingEngineScopeGuard) ---

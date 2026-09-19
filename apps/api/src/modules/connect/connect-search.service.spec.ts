@@ -5,6 +5,8 @@ describe('ConnectSearchService', () => {
   let service: ConnectSearchService;
   let mockDb: any;
   let mockAvailabilityService: any;
+  let mockRatePlanService: any;
+  let mockTaxService: any;
 
   const mockProperty = {
     id: 'prop-1',
@@ -84,6 +86,15 @@ describe('ConnectSearchService', () => {
       ]),
     };
 
+    mockRatePlanService = {
+      calculateDerivedRate: vi.fn().mockResolvedValue({ effectiveRate: 199.99, currency: 'USD' }),
+    };
+    mockTaxService = {
+      calculateTaxes: vi.fn().mockImplementation((amount: string) => Promise.resolve([{
+        amount: (Number(amount) * 0.1475).toFixed(2),
+      }])),
+    };
+
     service = new ConnectSearchService(mockDb, mockAvailabilityService, {
       getPolicySummary: vi.fn().mockResolvedValue({
         type: 'tiered',
@@ -93,7 +104,7 @@ describe('ConnectSearchService', () => {
         policyId: null,
         policyCode: null,
       }),
-    } as any);
+    } as any, mockRatePlanService, mockTaxService);
   });
 
   describe('search', () => {
@@ -177,6 +188,73 @@ describe('ConnectSearchService', () => {
       expect(rate.nightlyBreakdown[0]!.baseRate).toBe(199.99);
       expect(rate.nightlyBreakdown[0]!.taxAmount).toBeCloseTo(29.5, 0);
       expect(rate.totalAmount).toBeGreaterThan(0);
+    });
+
+    it('uses the canonical tax engine for an 85,000 KZT room instead of settings.taxRate', async () => {
+      let callCount = 0;
+      const lesId = 'aaaaaaaa-0000-4000-a000-000000000001';
+      const roomTypeId = 'rt000000-0000-4000-a000-000000000001';
+      const ratePlanId = 'rp000000-0000-4000-a000-000000000001';
+      const les = { ...mockProperty, id: lesId, currencyCode: 'KZT', settings: { taxRate: 0.13 } };
+      const sky = { ...mockRoomType, id: roomTypeId, propertyId: lesId, name: 'Sky House' };
+      const bar = {
+        ...mockRatePlan,
+        id: ratePlanId,
+        propertyId: lesId,
+        roomTypeId,
+        baseAmount: '85000.00',
+        currencyCode: 'KZT',
+      };
+      mockDb.select.mockImplementation(() => ({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockImplementation(() => {
+            callCount++;
+            if (callCount === 1) return Promise.resolve([les]);
+            if (callCount === 2) return Promise.resolve([sky]);
+            if (callCount === 3) return Promise.resolve([bar]);
+            return Promise.resolve([]);
+          }),
+        }),
+      }));
+      mockAvailabilityService.searchAvailability.mockResolvedValue([
+        { roomTypeId, date: '2026-07-01', totalRooms: 10, available: 10 },
+      ]);
+      mockRatePlanService.calculateDerivedRate.mockResolvedValue({ effectiveRate: 85000, currency: 'KZT' });
+      mockTaxService.calculateTaxes.mockResolvedValue([{ amount: '11050.00' }]);
+
+      const result = await service.search({ propertyId: lesId, checkIn: '2026-07-01', checkOut: '2026-07-02' });
+      const rate = result.results[0]!.roomTypes[0]!.rates[0]!;
+      expect(rate.totalAmount).toBe(96050);
+      expect(rate.nightlyBreakdown).toEqual([
+        { date: '2026-07-01', baseRate: 85000, taxAmount: 11050, totalRate: 96050 },
+      ]);
+      expect(mockTaxService.calculateTaxes).toHaveBeenCalledWith(
+        '85000.00', 'room', lesId, '2026-07-01',
+        { numberOfNights: 1, nightNumber: 1 }, undefined,
+      );
+    });
+
+    it('returns 85,000 KZT when the canonical tax engine finds no active profile', async () => {
+      let callCount = 0;
+      mockDb.select.mockImplementation(() => ({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockImplementation(() => {
+            callCount++;
+            if (callCount === 1) return Promise.resolve([{ ...mockProperty, settings: { taxRate: 0.13 } }]);
+            if (callCount === 2) return Promise.resolve([mockRoomType]);
+            if (callCount === 3) return Promise.resolve([{ ...mockRatePlan, baseAmount: '85000.00', currencyCode: 'KZT' }]);
+            return Promise.resolve([]);
+          }),
+        }),
+      }));
+      mockAvailabilityService.searchAvailability.mockResolvedValue([
+        { roomTypeId: 'rt-1', date: '2024-06-01', totalRooms: 10, available: 10 },
+      ]);
+      mockRatePlanService.calculateDerivedRate.mockResolvedValue({ effectiveRate: 85000, currency: 'KZT' });
+      mockTaxService.calculateTaxes.mockResolvedValue([]);
+
+      const result = await service.search({ propertyId: 'prop-1', checkIn: '2024-06-01', checkOut: '2024-06-02' });
+      expect(result.results[0]!.roomTypes[0]!.rates[0]!.totalAmount).toBe(85000);
     });
 
     it('should calculate content completeness score', async () => {

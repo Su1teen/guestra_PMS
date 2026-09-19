@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { bookingEngineIdempotency, bookings } from '@telivityhaip/database';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { bookingEngineIdempotency, bookings, reservations, rooms } from '@telivityhaip/database';
 import { validate } from 'class-validator';
 import { BookingEngineService } from './booking-engine.service';
 import { BeCreateBookingDto } from './dto/be-create-booking.dto';
@@ -142,6 +142,150 @@ function makeIdempotencyDb() {
   return { db, saved, partialBookings };
 }
 
+const physicalRoom = {
+  id: '33333333-3333-4333-8333-333333333333',
+  propertyId: PROP,
+  roomTypeId: RT,
+  number: 'SKY-01',
+  status: 'vacant_clean',
+  isActive: true,
+};
+
+function makeSpecificRoomDb(options: {
+  room?: typeof physicalRoom | null;
+  conflictingStatus?: string | null;
+} = {}) {
+  const room = options.room === undefined ? physicalRoom : options.room;
+  const blocks = options.conflictingStatus != null
+    && !['cancelled', 'no_show', 'checked_out'].includes(options.conflictingStatus);
+  const tx = {
+    select: vi.fn((shape?: unknown) => ({
+      from: vi.fn((table: unknown) => ({
+        where: vi.fn(() => {
+          if (table === rooms && shape == null) {
+            const rows = room ? [room] : [];
+            return {
+              then: (resolve: (value: unknown[]) => void) => resolve(rows),
+              for: vi.fn().mockResolvedValue(rows),
+            };
+          }
+          return { limit: vi.fn().mockResolvedValue(blocks ? [{ id: 'overlap' }] : []) };
+        }),
+      })),
+    })),
+    update: vi.fn((table: unknown) => {
+      expect(table).toBe(reservations);
+      return {
+        set: vi.fn((values: { roomId: string; status: string }) => ({
+          where: vi.fn(() => ({
+            returning: vi.fn().mockResolvedValue([{ roomId: values.roomId, status: values.status }]),
+          })),
+        })),
+      };
+    }),
+  };
+  const db = {
+    select: tx.select,
+    transaction: vi.fn((work: (inner: typeof tx) => unknown) => work(tx)),
+  };
+  return { db, tx };
+}
+
+function makeConcurrentSpecificRoomDb() {
+  let reserved = false;
+  let tail = Promise.resolve();
+  const db = {
+    transaction: vi.fn(async (work: (tx: any) => Promise<unknown>) => {
+      let release: (() => void) | undefined;
+      const previous = tail;
+      tail = new Promise<void>((resolve) => { release = resolve; });
+      const tx = {
+        select: vi.fn((shape?: unknown) => ({
+          from: vi.fn((table: unknown) => ({
+            where: vi.fn(() => table === rooms && shape == null
+              ? { for: vi.fn(async () => { await previous; return [physicalRoom]; }) }
+              : { limit: vi.fn(async () => reserved ? [{ id: 'winner' }] : []) }),
+          })),
+        })),
+        update: vi.fn(() => ({
+          set: vi.fn((values: { roomId: string; status: string }) => ({
+            where: vi.fn(() => ({
+              returning: vi.fn(async () => {
+                reserved = true;
+                return [{ roomId: values.roomId, status: values.status }];
+              }),
+            })),
+          })),
+        })),
+      };
+      try {
+        return await work(tx);
+      } finally {
+        release?.();
+      }
+    }),
+  };
+  return db;
+}
+
+function makeSpecificRoomIdempotencyDb() {
+  const saved = new Map<string, Record<string, unknown>>();
+  const db = {
+    transaction: vi.fn(async (work: (tx: any) => Promise<unknown>) => {
+      let scope: string | undefined;
+      let claimed = false;
+      let response: Record<string, unknown> | undefined;
+      const tx = {
+        insert: vi.fn((table: unknown) => {
+          expect(table).toBe(bookingEngineIdempotency);
+          return {
+            values: (row: { propertyId: string; idempotencyKey: string }) => ({
+              onConflictDoNothing: () => ({
+                returning: async () => {
+                  scope = `${row.propertyId}:${row.idempotencyKey}`;
+                  if (saved.has(scope)) return [];
+                  claimed = true;
+                  return [{ idempotencyKey: row.idempotencyKey }];
+                },
+              }),
+            }),
+          };
+        }),
+        select: vi.fn((shape?: unknown) => ({
+          from: vi.fn((table: unknown) => ({
+            where: vi.fn(() => {
+              if (table === bookingEngineIdempotency) {
+                return Promise.resolve([{ response: scope ? saved.get(scope) ?? null : null }]);
+              }
+              if (table === bookings) return Promise.resolve([]);
+              if (table === rooms && shape == null) {
+                return { for: vi.fn().mockResolvedValue([physicalRoom]) };
+              }
+              return { limit: vi.fn().mockResolvedValue([]) };
+            }),
+          })),
+        })),
+        update: vi.fn((table: unknown) => ({
+          set: vi.fn((values: Record<string, unknown>) => ({
+            where: vi.fn(() => table === bookingEngineIdempotency
+              ? Promise.resolve().then(() => { response = values.response as Record<string, unknown>; })
+              : {
+                returning: vi.fn().mockResolvedValue([{
+                  roomId: values.roomId,
+                  status: values.status,
+                }]),
+              }),
+          })),
+        })),
+      };
+      const result = await work(tx);
+      if (claimed && scope && response) saved.set(scope, response);
+      return result;
+    }),
+  };
+  return { db, saved };
+}
+
 const bookDto = {
   roomTypeId: RT,
   ratePlanId: RP,
@@ -154,7 +298,71 @@ const bookDto = {
   paymentToken: 'tok_visa',
 };
 
+describe('BookingEngineService.checkSpecificRoom', () => {
+  it('returns an occupied room as available when future dates have no overlap', async () => {
+    const { db } = makeSpecificRoomDb({ room: { ...physicalRoom, status: 'occupied' } });
+    const { svc } = makeService({ db });
+    await expect(svc.checkSpecificRoom(PROP, {
+      roomTypeId: RT,
+      roomNumber: physicalRoom.number,
+      checkIn: '2026-07-01',
+      checkOut: '2026-07-03',
+    })).resolves.toEqual({
+      roomId: physicalRoom.id,
+      roomNumber: physicalRoom.number,
+      roomTypeId: RT,
+      available: true,
+    });
+  });
+
+  it('returns only a safe unavailable reason when the room overlaps', async () => {
+    const { db } = makeSpecificRoomDb({ conflictingStatus: 'confirmed' });
+    const { svc } = makeService({ db });
+    const result = await svc.checkSpecificRoom(PROP, {
+      roomTypeId: RT,
+      roomNumber: physicalRoom.number,
+      checkIn: '2026-07-01',
+      checkOut: '2026-07-03',
+    });
+    expect(result).toEqual({
+      roomId: physicalRoom.id,
+      roomNumber: physicalRoom.number,
+      roomTypeId: RT,
+      available: false,
+      reason: 'Room is already reserved for these dates',
+    });
+    expect(result).not.toHaveProperty('reservationId');
+    expect(result).not.toHaveProperty('guestId');
+  });
+});
+
 describe('BookingEngineService.quote', () => {
+  it('returns 96,050 KZT for Sky House 85,000 plus the active 13% tax profile', async () => {
+    const { svc, availability, ratePlan, tax } = makeService();
+    availability.searchAvailability.mockResolvedValue([
+      { roomTypeId: RT, date: '2026-07-01', available: 5 },
+    ]);
+    ratePlan.calculateDerivedRate.mockResolvedValue({ effectiveRate: 85000, currency: 'KZT' });
+    tax.calculateTaxes.mockResolvedValue([{ amount: '11050.00' }]);
+    const quote = await svc.quote(PROP, {
+      roomTypeId: RT, ratePlanId: RP, checkIn: '2026-07-01', checkOut: '2026-07-02', adults: 2,
+    });
+    expect(quote.grandTotal).toBe('96050.00');
+  });
+
+  it('returns 85,000 KZT when no active tax profile exists', async () => {
+    const { svc, availability, ratePlan, tax } = makeService();
+    availability.searchAvailability.mockResolvedValue([
+      { roomTypeId: RT, date: '2026-07-01', available: 5 },
+    ]);
+    ratePlan.calculateDerivedRate.mockResolvedValue({ effectiveRate: 85000, currency: 'KZT' });
+    tax.calculateTaxes.mockResolvedValue([]);
+    const quote = await svc.quote(PROP, {
+      roomTypeId: RT, ratePlanId: RP, checkIn: '2026-07-01', checkOut: '2026-07-02', adults: 2,
+    });
+    expect(quote.grandTotal).toBe('85000.00');
+  });
+
   it('prices server-side with the real tax engine and computes the deposit', async () => {
     const { svc } = makeService();
     const q = await svc.quote(PROP, { roomTypeId: RT, ratePlanId: RP, checkIn: '2026-07-01', checkOut: '2026-07-03', adults: 2 });
@@ -431,6 +639,114 @@ describe('BookingEngineService.book', () => {
     expect(reservation.confirm).toHaveBeenCalledWith('res-1', PROP);
     expect(res.deposit).toBeNull();
     expect(res.status).toBe('confirmed');
+    expect(res.roomId).toBeNull();
+    expect(reservation.create.mock.calls[0][0]).not.toHaveProperty('roomId');
+  });
+
+  it('locks and assigns an explicitly requested free physical room', async () => {
+    const { db, tx } = makeSpecificRoomDb();
+    const { svc, config, reservation } = makeService({ db });
+    config.getPublicConfig.mockResolvedValue({
+      ...await config.getPublicConfig(PROP),
+      depositPolicy: { type: 'none', refundable: true },
+    });
+    config.getConfig.mockResolvedValue({ autoConfirm: true });
+    const { paymentToken, ...withoutPayment } = bookDto;
+
+    const result = await svc.book(PROP, { ...withoutPayment, roomId: physicalRoom.id } as any);
+
+    expect(reservation.confirm).toHaveBeenCalledWith('res-1', PROP);
+    expect(result).toMatchObject({ roomId: physicalRoom.id, status: 'assigned' });
+    expect(tx.update).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a requested room from another room type before creating a guest', async () => {
+    const { db } = makeSpecificRoomDb({ room: { ...physicalRoom, roomTypeId: 'other-type' } });
+    const { svc, guest, reservation, folio } = makeService({ db });
+    await expect(svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any))
+      .rejects.toThrow(/room type/i);
+    expect(guest.create).not.toHaveBeenCalled();
+    expect(reservation.create).not.toHaveBeenCalled();
+    expect(folio.createAutoFolio).not.toHaveBeenCalled();
+  });
+
+  it('rejects a requested room from another property without exposing it', async () => {
+    const { db } = makeSpecificRoomDb({ room: null });
+    const { svc, guest } = makeService({ db });
+    await expect(svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any))
+      .rejects.toBeInstanceOf(NotFoundException);
+    expect(guest.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an overlapping physical-room reservation before creating partial records', async () => {
+    const { db } = makeSpecificRoomDb({ conflictingStatus: 'confirmed' });
+    const { svc, guest, reservation, folio } = makeService({ db });
+    await expect(svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any))
+      .rejects.toThrow(/already reserved/i);
+    expect(guest.create).not.toHaveBeenCalled();
+    expect(reservation.create).not.toHaveBeenCalled();
+    expect(folio.createAutoFolio).not.toHaveBeenCalled();
+  });
+
+  it.each(['cancelled', 'no_show', 'checked_out'])('does not let a %s reservation block the room', async (status) => {
+    const { db } = makeSpecificRoomDb({ conflictingStatus: status });
+    const { svc } = makeService({ db });
+    const result = await svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any);
+    expect(result.roomId).toBe(physicalRoom.id);
+  });
+
+  it('allows a currently occupied room when it is free for the requested future dates', async () => {
+    const { db } = makeSpecificRoomDb({ room: { ...physicalRoom, status: 'occupied' } });
+    const { svc } = makeService({ db });
+    const result = await svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any);
+    expect(result.roomId).toBe(physicalRoom.id);
+  });
+
+  it.each(['out_of_order', 'out_of_service'])('rejects a room currently marked %s', async (status) => {
+    const { db } = makeSpecificRoomDb({ room: { ...physicalRoom, status } });
+    const { svc, guest } = makeService({ db });
+    await expect(svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any))
+      .rejects.toThrow(new RegExp(status));
+    expect(guest.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an inactive physical room', async () => {
+    const { db } = makeSpecificRoomDb({ room: { ...physicalRoom, isActive: false } });
+    const { svc, guest } = makeService({ db });
+    await expect(svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any))
+      .rejects.toThrow(/inactive/i);
+    expect(guest.create).not.toHaveBeenCalled();
+  });
+
+  it('allows only one concurrent booking to claim the same physical room and dates', async () => {
+    const db = makeConcurrentSpecificRoomDb();
+    const { svc, guest, reservation, folio } = makeService({ db });
+    const settled = await Promise.allSettled([
+      svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any),
+      svc.book(PROP, { ...bookDto, roomId: physicalRoom.id } as any),
+    ]);
+    expect(settled.filter((item) => item.status === 'fulfilled')).toHaveLength(1);
+    expect(settled.filter((item) => item.status === 'rejected')).toHaveLength(1);
+    expect(guest.create).toHaveBeenCalledOnce();
+    expect(reservation.create).toHaveBeenCalledOnce();
+    expect(folio.createAutoFolio).toHaveBeenCalledOnce();
+  });
+
+  it('replays an idempotent specific-room booking without creating a second booking', async () => {
+    const { db, saved } = makeSpecificRoomIdempotencyDb();
+    const { svc, guest, reservation, folio } = makeService({ db });
+    const dto = { ...bookDto, roomId: physicalRoom.id, idempotencyKey: 'telegram-room-1' };
+
+    const first = await svc.book(PROP, dto as any);
+    const second = await svc.book(PROP, dto as any);
+
+    expect(second).toEqual(first);
+    expect(second.roomId).toBe(physicalRoom.id);
+    expect(second.reservationId).toBe(first.reservationId);
+    expect(saved.size).toBe(1);
+    expect(guest.create).toHaveBeenCalledOnce();
+    expect(reservation.create).toHaveBeenCalledOnce();
+    expect(folio.createAutoFolio).toHaveBeenCalledOnce();
   });
 
   it('leaves a zero-deposit booking pending when autoConfirm is off', async () => {

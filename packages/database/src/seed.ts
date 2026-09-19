@@ -875,7 +875,8 @@ async function main() {
   });
 
   // -----------------------------------------------------------------------
-  // 11. Tax Profile — Miami Beach (13% total)
+  // 11. Foreign reference tax profiles. These examples are intentionally
+  // inactive: LES is a Kazakhstan demo property and must not apply them.
   // -----------------------------------------------------------------------
   const taxProfileId = sid('a5000001', 1);
   const today = dateStr(0);
@@ -885,7 +886,7 @@ async function main() {
     propertyId,
     name: 'Miami Beach Tax Profile',
     jurisdictionCode: 'US-FL-MIAMI-BEACH',
-    isActive: true,
+    isActive: false,
     effectiveFrom: '2024-01-01',
   });
 
@@ -936,7 +937,7 @@ async function main() {
     propertyId,
     name: 'Barcelona Tax Profile',
     jurisdictionCode: 'ES-CT-BARCELONA',
-    isActive: true,
+    isActive: false,
     effectiveFrom: '2024-01-01',
   });
 
@@ -1422,7 +1423,7 @@ async function main() {
   console.log('  Night Audit:   1 completed run');
   console.log('  Channels:      2 connections');
   console.log('  Webhooks:      1 subscription');
-  console.log('  Tax Profiles:  4 (Miami Beach 13%, Barcelona IVA+tourist, Amsterdam BTW+tourist, Berlin split-component)');
+  console.log('  Tax Profiles:  4 inactive foreign reference profiles (LES has no active demo tax)');
   console.log('  AI Agents:     12 enabled (suggest mode, incl. Revenue Manager orchestrator)');
   console.log('  Agent Log:     10 decisions (RManager strategy, pricing, forecast, overbooking, ...)');
   console.log('  Reviews:       5 (2 with AI-drafted responses)');

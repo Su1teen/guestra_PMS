@@ -5,6 +5,9 @@ import { properties, roomTypes, ratePlans, rateRestrictions } from '@telivityhai
 import { DRIZZLE } from '../../database/database.module';
 import { AvailabilityService } from '../reservation/availability.service';
 import { PolicyService } from '../policy/policy.service';
+import { RatePlanService } from '../rate-plan/rate-plan.service';
+import { TaxService } from '../tax/tax.service';
+import { calculateCanonicalRoomPricing } from '../rate-plan/canonical-room-pricing';
 import type { AgentSearchDto } from './dto/agent-search.dto';
 import { randomUUID } from 'crypto';
 
@@ -14,6 +17,8 @@ export class ConnectSearchService {
     @Inject(DRIZZLE) private readonly db: any,
     private readonly availabilityService: AvailabilityService,
     private readonly policyService: PolicyService,
+    private readonly ratePlanService: RatePlanService,
+    private readonly taxService: TaxService,
   ) {}
 
   /**
@@ -165,9 +170,6 @@ export class ConnectSearchService {
   }
 
   private async buildPropertyResult(property: any, dto: AgentSearchDto) {
-    const settings = (property.settings ?? {}) as Record<string, unknown>;
-    const taxRate = (settings['taxRate'] as number) ?? 0;
-
     // Get room types
     let types = await this.db
       .select()
@@ -230,7 +232,6 @@ export class ConnectSearchService {
           property,
           dto.checkIn,
           dto.checkOut,
-          taxRate,
         );
         if (rateResult) rates.push(rateResult);
       }
@@ -277,10 +278,7 @@ export class ConnectSearchService {
     property: any,
     checkIn: string,
     checkOut: string,
-    taxRate: number,
   ) {
-    const baseAmount = new Decimal(plan.baseAmount).toNumber();
-
     // Get restrictions for the date range
     const restrictions = await this.db
       .select()
@@ -316,36 +314,23 @@ export class ConnectSearchService {
     if (minLos && nights < minLos) return null;
     if (maxLos && maxLos !== Infinity && nights > maxLos) return null;
 
-    // Build nightly breakdown — Decimal for all per-night money math
-    const nightlyBreakdown = [];
-    let totalAmountDec = new Decimal(0);
-    const taxRateDec = new Decimal(taxRate).div(100);
-    for (let i = 0; i < nights; i++) {
-      const date = new Date(arrival);
-      date.setDate(date.getDate() + i);
-      const dateStr = date.toISOString().split('T')[0]!;
-
-      // Check for day-of-week overrides
-      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' }).toLowerCase();
-      let nightRateDec = new Decimal(baseAmount);
-
-      for (const restriction of restrictions) {
-        const overrides = (restriction.dayOfWeekOverrides ?? {}) as Record<string, number>;
-        if (overrides[dayName]) {
-          nightRateDec = new Decimal(baseAmount).plus(overrides[dayName]!);
-        }
-      }
-
-      const taxAmountDec = nightRateDec.times(taxRateDec);
-      nightlyBreakdown.push({
-        date: dateStr,
-        baseRate: Number(nightRateDec.toFixed(2)),
-        taxAmount: Number(taxAmountDec.toFixed(2)),
-        totalRate: Number(nightRateDec.plus(taxAmountDec).toFixed(2)),
-      });
-      totalAmountDec = totalAmountDec.plus(nightRateDec).plus(taxAmountDec);
-    }
-    const totalAmount = Number(totalAmountDec.toFixed(2));
+    const pricing = await calculateCanonicalRoomPricing({
+      propertyId: property.id,
+      ratePlanId: plan.id,
+      checkIn,
+      checkOut,
+      nights,
+      isTaxInclusive: plan.isTaxInclusive,
+      ratePlanService: this.ratePlanService,
+      taxService: this.taxService,
+    });
+    const nightlyBreakdown = pricing.lineItems.map((line) => ({
+      date: line.date,
+      baseRate: Number(line.rate),
+      taxAmount: Number(line.tax),
+      totalRate: Number(new Decimal(line.rate).plus(line.tax).toFixed(2)),
+    }));
+    const totalAmount = Number(pricing.totalAmount);
 
     // Build cancellation policy from linked rate-plan policy (or default)
     const cancellationPolicy = await this.policyService.getPolicySummary(
@@ -359,7 +344,7 @@ export class ConnectSearchService {
       ratePlanCode: plan.code,
       rateType: plan.type,
       totalAmount,
-      currencyCode: plan.currencyCode,
+      currencyCode: pricing.currency,
       nightlyBreakdown,
       cancellationPolicy: {
         type: cancellationPolicy.type,

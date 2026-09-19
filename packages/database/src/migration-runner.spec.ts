@@ -157,6 +157,12 @@ describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
             (${demoId}, 'Demo', 'LES', 'KZ', 'Asia/Almaty', 'KZT', 10, ${JSON.stringify({ taxRate: 0.13 })}::jsonb),
             (${otherId}, 'Other', 'OTHER', 'KZ', 'Asia/Almaty', 'KZT', 10, ${JSON.stringify({ taxRate: 0.2 })}::jsonb)
         `;
+        await sql`
+          INSERT INTO tax_profiles (id, property_id, name, jurisdiction_code, is_active, effective_from)
+          VALUES
+            ('a5000001-0000-4000-a000-000000000001', ${demoId}, 'Stale demo profile', 'US-FL-MIAMI-BEACH', true, '2024-01-01'),
+            ('f3600002-0000-4000-a000-000000000002', ${otherId}, 'Production profile', 'KZ', true, '2024-01-01')
+        `;
         await runAllMigrations(databaseUrl, { migrationsDir: MIGRATIONS_DIR });
 
         const [demo] = await sql<{ settings: { taxRate: number; guestInfo: { pets: string; wifi: string } } }[]>`
@@ -169,6 +175,14 @@ describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
         expect(demo?.settings.guestInfo.pets).toContain('питомц');
         expect(demo?.settings.guestInfo.wifi).toContain('Wi-Fi');
         expect(other?.settings).toEqual({ taxRate: 0.2 });
+        const profiles = await sql<{ propertyId: string; isActive: boolean }[]>`
+          SELECT property_id AS "propertyId", is_active AS "isActive"
+          FROM tax_profiles
+          WHERE property_id IN (${demoId}, ${otherId})
+          ORDER BY property_id
+        `;
+        expect(profiles.find((profile) => profile.propertyId === demoId)?.isActive).toBe(false);
+        expect(profiles.find((profile) => profile.propertyId === otherId)?.isActive).toBe(true);
 
         const [guest] = await sql<{ id: string }[]>`
           INSERT INTO guests (first_name, last_name) VALUES ('Demo', 'Guest') RETURNING id

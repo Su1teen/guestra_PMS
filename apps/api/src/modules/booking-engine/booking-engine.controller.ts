@@ -18,6 +18,7 @@ import { BookingEngineConfigService } from './booking-engine-config.service';
 import { BeSearchDto } from './dto/be-search.dto';
 import { BeQuoteDto } from './dto/be-quote.dto';
 import { BeCreateBookingDto } from './dto/be-create-booking.dto';
+import { BeCheckRoomDto } from './dto/be-check-room.dto';
 import { BeCancelDto } from './dto/be-cancel.dto';
 import { PreRegisterDto } from '../reservation/dto/pre-register.dto';
 
@@ -69,6 +70,14 @@ export class BookingEngineController {
   @ApiOperation({ summary: 'Firm price quote (with taxes + deposit due)' })
   async quote(@Body() dto: BeQuoteDto, @Req() req: any) {
     return this.service.quote(this.propertyId(req), dto);
+  }
+
+  @Post('rooms/check')
+  @ApiOperation({ summary: 'Check a requested physical room for a future stay' })
+  @ApiResponse({ status: 200, description: 'Physical room availability without guest or reservation details' })
+  @ApiResponse({ status: 404, description: 'Room not found in the booking-key property' })
+  async checkRoom(@Body() dto: BeCheckRoomDto, @Req() req: any) {
+    return this.service.checkSpecificRoom(this.propertyId(req), dto);
   }
 
   @Post('book')
