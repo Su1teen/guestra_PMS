@@ -25,6 +25,26 @@ interface Folio {
   totalCharges?: number;
   totalPayments?: number;
   currencyCode?: string;
+  confirmationNumber?: string | null;
+  reservationTotal?: string | number | null;
+  arrivalDate?: string | null;
+  departureDate?: string | null;
+}
+
+interface FolioContext {
+  folio: Folio;
+  guest: { id: string; name: string } | null;
+  reservation: {
+    id: string;
+    confirmationNumber: string | null;
+    arrivalDate: string;
+    departureDate: string;
+    roomNumber: string | null;
+    roomTypeName: string | null;
+    totalAmount: string;
+    currencyCode: string;
+  } | null;
+  commercial: { stayTotal: string; postedCharges: string; paid: string; remainingToPayForStay: string };
 }
 
 interface RoutingRule {
@@ -74,6 +94,10 @@ interface Payment {
 
 
 const REFUNDABLE_STATUSES = new Set(['captured', 'settled', 'partially_refunded']);
+
+function Summary({ label, value, strong = false }: { label: string; value: string; strong?: boolean }) {
+  return <div><p className="text-xs text-telivity-mid-grey">{label}</p><p className={`mt-1 text-base ${strong ? 'font-bold text-telivity-navy' : 'font-semibold text-telivity-slate'}`}>{value}</p></div>;
+}
 
 // ---- Folio List ----
 function FolioList() {
@@ -127,15 +151,24 @@ function FolioList() {
             </tr>
           </thead>
           <tbody>
-            {folios.map((f, i) => (
-              <tr key={f.id} onClick={() => navigate(`/folios/${f.id}`)} className={`border-b border-gray-50 cursor-pointer hover:bg-telivity-light-grey/50 ${i % 2 === 1 ? 'bg-gray-50/50' : ''}`}>
-                <td className="px-4 py-3 text-sm font-medium text-telivity-navy">{f.folioNumber}</td>
-                <td className="px-4 py-3 text-sm text-telivity-slate">{f.guestName ?? '—'}</td>
-                <td className="px-4 py-3"><StatusBadge status={f.type === 'guest' ? 'info' : 'warning'} label={t(`folios.${f.type}`, { defaultValue: f.type })} /></td>
-                <td className="px-4 py-3"><StatusBadge status={f.status === 'open' ? 'pending' : f.status === 'settled' ? 'success' : 'completed'} label={t(`folios.${f.status}`, { defaultValue: f.status })} /></td>
-                <td className="px-4 py-3 text-sm font-medium text-right">{formatMoney(f.balance ?? 0, f.currencyCode)}</td>
-              </tr>
-            ))}
+            {folios.map((f, i) => {
+              const remaining = f.reservationTotal != null
+                ? Math.max(0, Number(f.reservationTotal) - Number(f.totalPayments ?? 0))
+                : null;
+
+              return (
+                <tr key={f.id} onClick={() => navigate(`/folios/${f.id}`)} className={`border-b border-gray-50 cursor-pointer hover:bg-telivity-light-grey/50 ${i % 2 === 1 ? 'bg-gray-50/50' : ''}`}>
+                  <td className="px-4 py-3 text-sm font-medium text-telivity-navy"><p>{f.folioNumber}</p>{f.confirmationNumber && <p className="mt-0.5 text-xs font-normal text-telivity-mid-grey">Бронь {f.confirmationNumber.slice(-6)}</p>}</td>
+                  <td className="px-4 py-3 text-sm text-telivity-slate">{f.guestName ?? 'Без гостя'}</td>
+                  <td className="px-4 py-3"><StatusBadge status={f.type === 'guest' ? 'info' : 'warning'} label={t(`folios.${f.type}`, { defaultValue: f.type })} /></td>
+                  <td className="px-4 py-3"><StatusBadge status={f.status === 'open' ? 'pending' : f.status === 'settled' ? 'success' : 'completed'} label={t(`folios.${f.status}`, { defaultValue: f.status })} /></td>
+                  <td className="px-4 py-3 text-sm font-medium text-right">
+                    <p>{formatMoney(remaining ?? f.balance ?? 0, f.currencyCode)}</p>
+                    {f.reservationTotal != null && <p className="mt-0.5 text-xs font-normal text-telivity-mid-grey">К оплате за проживание</p>}
+                  </td>
+                </tr>
+              );
+            })}
             {folios.length === 0 && (
               <tr><td colSpan={5} className="px-4 py-8 text-center text-sm text-telivity-mid-grey">{t('folios.noFoliosFound')}</td></tr>
             )}
@@ -476,6 +509,12 @@ function FolioDetail() {
     enabled: !!id,
   });
 
+  const { data: contextData } = useQuery({
+    queryKey: ['folios', id, 'context', propertyId],
+    queryFn: () => api.get(`/v1/folios/${id}/context`, { params: { propertyId } }).then((r) => r.data),
+    enabled: !!id && !!propertyId,
+  });
+
   const { data: chargesData } = useQuery({
     queryKey: ['folios', id, 'charges'],
     queryFn: () => api.get(`/v1/folios/${id}/charges`).then((r) => r.data),
@@ -498,9 +537,14 @@ function FolioDetail() {
     arLedgersData?.data ?? arLedgersData ?? [];
 
   const folio: Folio | null = folioData?.data ?? folioData ?? null;
+  const context: FolioContext | null = contextData?.data ?? contextData ?? null;
   const charges: Charge[] = chargesData?.data ?? chargesData ?? [];
   const payments: Payment[] = paymentsData?.data ?? paymentsData ?? [];
   const currencyCode = folio?.currencyCode ?? null;
+  const remainingForStay = Number(context?.commercial.remainingToPayForStay ?? 0);
+  const canSettle = folio?.status === 'open' &&
+    Number(folio.balance ?? 0) === 0 &&
+    (!context?.reservation || remainingForStay <= 0.01);
 
   const reversedIds = new Set(
     charges.filter((c) => c.isReversal && c.originalChargeId).map((c) => c.originalChargeId!),
@@ -651,13 +695,26 @@ function FolioDetail() {
       <div className="flex items-center gap-3 mb-6">
         <button onClick={() => navigate('/folios')} className="p-1.5 rounded hover:bg-telivity-light-grey"><ChevronLeft size={20} /></button>
         <Receipt size={24} className="text-telivity-teal" />
-        <h1 className="text-2xl font-semibold text-telivity-navy">{folio.folioNumber}</h1>
+        <div>
+          <p className="text-xs text-telivity-mid-grey">Фолио {folio.folioNumber}</p>
+          <h1 className="text-2xl font-semibold text-telivity-navy">{context?.guest?.name ?? 'Расчёт гостя'}</h1>
+          {context?.reservation && <p className="mt-0.5 text-sm text-telivity-slate">{context.reservation.roomTypeName ?? 'Проживание'}{context.reservation.roomNumber ? ` · № ${context.reservation.roomNumber}` : ''} · {context.reservation.arrivalDate} — {context.reservation.departureDate}</p>}
+        </div>
         <StatusBadge status={folio.status === 'open' ? 'pending' : 'success'} label={t(`folios.${folio.status}`, { defaultValue: folio.status })} />
         <div className="ml-auto text-right">
-          <p className="text-xs text-telivity-mid-grey">{t('folios.balance')}</p>
-          <p className="text-2xl font-semibold text-telivity-navy">{formatMoney(folio.balance ?? 0, folio.currencyCode)}</p>
+          <p className="text-xs text-telivity-mid-grey">{context?.reservation ? 'Осталось оплатить' : t('folios.balance')}</p>
+          <p className="text-2xl font-semibold text-telivity-navy">{formatMoney(context?.reservation ? remainingForStay : folio.balance ?? 0, folio.currencyCode)}</p>
         </div>
       </div>
+
+      {context?.reservation && (
+        <div className="mb-6 grid grid-cols-1 gap-3 rounded-xl bg-telivity-teal/5 p-4 sm:grid-cols-4">
+          <Summary label="Стоимость проживания" value={formatMoney(context.commercial.stayTotal, context.reservation.currencyCode)} />
+          <Summary label="Начислено в фолио" value={formatMoney(context.commercial.postedCharges, context.reservation.currencyCode)} />
+          <Summary label="Внесено" value={formatMoney(context.commercial.paid, context.reservation.currencyCode)} />
+          <Summary label="Осталось за проживание" value={formatMoney(context.commercial.remainingToPayForStay, context.reservation.currencyCode)} strong />
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Charges */}
@@ -696,7 +753,10 @@ function FolioDetail() {
                   </td>
                 </tr>
               ))}
-              {charges.length === 0 && (
+              {charges.length === 0 && context?.reservation && (
+                <tr><td colSpan={5} className="py-4 text-center text-sm text-telivity-slate"><p className="font-medium">Проживание: {formatMoney(context.commercial.stayTotal, context.reservation.currencyCode)}</p><p className="mt-1 text-xs text-telivity-mid-grey">Начисления по ночам появятся после ночного аудита. Оплату можно внести уже сейчас.</p></td></tr>
+              )}
+              {charges.length === 0 && !context?.reservation && (
                 <tr><td colSpan={5} className="py-4 text-center text-sm text-telivity-mid-grey">{t('folios.noCharges')}</td></tr>
               )}
             </tbody>
@@ -710,11 +770,11 @@ function FolioDetail() {
               <h2 className="text-sm font-semibold text-telivity-navy">{t('folios.payments')}</h2>
               {folio.status === 'open' && (
                 <div className="flex gap-2">
-                  <button onClick={() => setAuthorizeOpen(true)} className="flex items-center gap-1 border border-gray-200 text-telivity-slate rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-telivity-light-grey">
+                  <button onClick={() => { setAuthAmount(remainingForStay > 0 ? String(remainingForStay) : ''); setAuthorizeOpen(true); }} className="flex items-center gap-1 border border-gray-200 text-telivity-slate rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-telivity-light-grey">
                     <CreditCard size={14} /> {t('folios.authorizeCard')}
                   </button>
-                  <button onClick={() => setPaymentOpen(true)} className="flex items-center gap-1 bg-telivity-teal text-white rounded-lg px-3 py-1.5 text-xs font-semibold">
-                    <Plus size={14} /> {t('folios.record')}
+                  <button onClick={() => { setPayAmount(remainingForStay > 0 ? String(remainingForStay) : ''); setPaymentOpen(true); }} className="flex items-center gap-1 bg-telivity-teal text-white rounded-lg px-3 py-1.5 text-xs font-semibold">
+                    <Plus size={14} /> {remainingForStay > 0 ? 'Оплатить проживание' : t('folios.record')}
                   </button>
                 </div>
               )}
@@ -791,9 +851,12 @@ function FolioDetail() {
               </button>
             )}
             {folio.status === 'open' && (
-              <button onClick={() => settleMutation.mutate()} disabled={settleMutation.isPending} className="w-full bg-telivity-dark-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
+              <button onClick={() => settleMutation.mutate()} disabled={settleMutation.isPending || !canSettle} className="w-full bg-telivity-dark-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
                 {t('folios.settleFolio')}
               </button>
+            )}
+            {folio.status === 'open' && context?.reservation && remainingForStay > 0.01 && (
+              <p className="pt-1 text-xs text-telivity-mid-grey">Сначала внесите оплату за проживание.</p>
             )}
             {folio.status === 'settled' && (
               <button onClick={() => closeMutation.mutate()} disabled={closeMutation.isPending} className="w-full bg-telivity-deep-blue text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
@@ -842,6 +905,7 @@ function FolioDetail() {
       {/* Record Payment Modal */}
       <Modal open={paymentOpen} onClose={() => setPaymentOpen(false)} title={t('folios.recordPayment')}>
         <div className="space-y-4">
+          {context?.reservation && <div className="rounded-lg bg-telivity-teal/5 p-3 text-sm text-telivity-navy"><p>Проживание: <strong>{formatMoney(context.commercial.stayTotal, context.reservation.currencyCode)}</strong></p><p className="mt-1">Осталось: <strong>{formatMoney(context.commercial.remainingToPayForStay, context.reservation.currencyCode)}</strong></p><p className="mt-2 text-xs text-telivity-mid-grey">Можно изменить сумму и принять предоплату частично.</p></div>}
           <div>
             <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('folios.method')}</label>
             <select value={payMethod} onChange={(e) => setPayMethod(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal">

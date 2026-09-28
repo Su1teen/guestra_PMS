@@ -37,8 +37,8 @@ const mockCharge = {
 };
 
 function createMockDb(returnData: any[] = [mockFolio]) {
-  const selectChain = () => ({
-    from: vi.fn().mockReturnValue({
+  const selectChain = () => {
+    const fromChain: any = {
       where: vi.fn().mockReturnValue({
         limit: vi.fn().mockReturnValue({
           offset: vi.fn().mockReturnValue({
@@ -47,8 +47,10 @@ function createMockDb(returnData: any[] = [mockFolio]) {
         }),
         then: (resolve: any) => resolve(returnData),
       }),
-    }),
-  });
+    };
+    fromChain.leftJoin = vi.fn().mockReturnValue(fromChain);
+    return { from: vi.fn().mockReturnValue(fromChain) };
+  };
 
   const mutateChain = () => ({
     values: vi.fn().mockReturnValue({
@@ -155,14 +157,24 @@ describe('FolioService', () => {
 
   describe('list', () => {
     it('should return paginated results', async () => {
-      const result = await service.list({
+      const db = createMockDb([{ folio: mockFolio, reservation: null, booking: null, guest: null }]);
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          FolioService,
+          { provide: DRIZZLE, useValue: db },
+          { provide: WebhookService, useValue: mockWebhookService },
+          { provide: TaxService, useValue: mockTaxService },
+        ],
+      }).compile();
+
+      const result = await module.get<FolioService>(FolioService).list({
         propertyId: 'prop-001',
         page: 1,
         limit: 20,
       });
 
       expect(result).toEqual({
-        data: [mockFolio],
+        data: [{ ...mockFolio, guestName: null, confirmationNumber: null, reservationTotal: null, arrivalDate: null, departureDate: null }],
         total: expect.any(Number),
         page: 1,
         limit: 20,
@@ -1154,7 +1166,7 @@ describe('FolioService', () => {
   });
 
   describe('createAutoFolio', () => {
-    it('should create a guest folio for a reservation', async () => {
+    it('reuses an existing guest folio for a reservation', async () => {
       const result = await service.createAutoFolio({
         id: 'res-001',
         propertyId: 'prop-001',
@@ -1162,7 +1174,7 @@ describe('FolioService', () => {
         currencyCode: 'USD',
       });
       expect(result).toEqual(mockFolio);
-      expect(mockWebhookService.emit).toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
     });
   });
 

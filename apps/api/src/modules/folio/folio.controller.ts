@@ -82,6 +82,17 @@ export class FolioController {
     return this.folioService.list(dto);
   }
 
+  @Get(':id/context')
+  @RequirePermissions('folios.read')
+  @ApiOperation({ summary: 'Get a staff-friendly folio, guest and stay summary' })
+  @ApiQuery({ name: 'propertyId', type: String })
+  getFolioContext(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) {
+    return this.folioService.getContext(id, propertyId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get folio by ID' })
   @ApiResponse({ status: 200, description: 'Folio found' })

@@ -13,6 +13,9 @@ import {
   payments,
   reservations,
   bookings,
+  guests,
+  rooms,
+  roomTypes,
   reservationServices,
   auditRuns,
   properties,
@@ -116,8 +119,17 @@ export class FolioService {
 
     const [data, countResult] = await Promise.all([
       this.db
-        .select()
+        .select({ folio: folios, reservation: reservations, booking: bookings, guest: guests })
         .from(folios)
+        .leftJoin(reservations, and(
+          eq(reservations.id, folios.reservationId),
+          eq(reservations.propertyId, folios.propertyId),
+        ))
+        .leftJoin(bookings, and(
+          eq(bookings.id, folios.bookingId),
+          eq(bookings.propertyId, folios.propertyId),
+        ))
+        .leftJoin(guests, eq(guests.id, folios.guestId))
         .where(whereClause)
         .limit(limit)
         .offset(offset)
@@ -129,10 +141,67 @@ export class FolioService {
     ]);
 
     return {
-      data,
+      data: data.map((row: any) => ({
+        ...row.folio,
+        guestName: row.guest ? `${row.guest.firstName} ${row.guest.lastName}` : null,
+        confirmationNumber: row.booking?.confirmationNumber ?? null,
+        reservationTotal: row.reservation?.totalAmount ?? null,
+        arrivalDate: row.reservation?.arrivalDate ?? null,
+        departureDate: row.reservation?.departureDate ?? null,
+      })),
       total: Number(countResult[0]?.count ?? 0),
       page,
       limit,
+    };
+  }
+
+  /** Compact, staff-facing context that turns a ledger row into a recognisable stay. */
+  async getContext(id: string, propertyId: string) {
+    const [row] = await this.db
+      .select({
+        folio: folios,
+        reservation: reservations,
+        booking: bookings,
+        guest: guests,
+        roomNumber: rooms.number,
+        roomTypeName: roomTypes.name,
+      })
+      .from(folios)
+      .leftJoin(reservations, and(
+        eq(reservations.id, folios.reservationId),
+        eq(reservations.propertyId, folios.propertyId),
+      ))
+      .leftJoin(bookings, and(
+        eq(bookings.id, folios.bookingId),
+        eq(bookings.propertyId, folios.propertyId),
+      ))
+      .leftJoin(guests, eq(guests.id, folios.guestId))
+      .leftJoin(rooms, and(eq(rooms.id, reservations.roomId), eq(rooms.propertyId, folios.propertyId)))
+      .leftJoin(roomTypes, and(eq(roomTypes.id, reservations.roomTypeId), eq(roomTypes.propertyId, folios.propertyId)))
+      .where(and(eq(folios.id, id), eq(folios.propertyId, propertyId)));
+    if (!row) throw new NotFoundException(`Folio ${id} not found`);
+
+    const stayTotal = row.reservation ? new Decimal(row.reservation.totalAmount) : new Decimal(0);
+    const paid = new Decimal(row.folio.totalPayments ?? '0');
+    return {
+      folio: row.folio,
+      guest: row.guest ? { id: row.guest.id, name: `${row.guest.firstName} ${row.guest.lastName}` } : null,
+      reservation: row.reservation ? {
+        id: row.reservation.id,
+        confirmationNumber: row.booking?.confirmationNumber ?? null,
+        arrivalDate: row.reservation.arrivalDate,
+        departureDate: row.reservation.departureDate,
+        roomNumber: row.roomNumber ?? null,
+        roomTypeName: row.roomTypeName ?? null,
+        totalAmount: row.reservation.totalAmount,
+        currencyCode: row.reservation.currencyCode,
+      } : null,
+      commercial: {
+        stayTotal: stayTotal.toFixed(2),
+        postedCharges: row.folio.totalCharges ?? '0.00',
+        paid: paid.toFixed(2),
+        remainingToPayForStay: Decimal.max(0, stayTotal.minus(paid)).toFixed(2),
+      },
     };
   }
 
