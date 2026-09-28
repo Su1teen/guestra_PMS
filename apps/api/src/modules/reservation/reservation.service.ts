@@ -222,7 +222,18 @@ export class ReservationService {
         role: 'primary',
       });
 
-      return { ...reservation, booking };
+      // A confirmed future stay must already have a guest folio: front desk can
+      // record a deposit or full advance payment before arrival. The helper is
+      // idempotent, so check-in and booking-engine callers safely reuse it.
+      const folio = await this.folioService.createAutoFolio({
+        id: reservation.id,
+        propertyId: reservation.propertyId,
+        bookingId: booking.id,
+        guestId: reservation.guestId,
+        currencyCode: reservation.currencyCode,
+      }, transaction);
+
+      return { ...reservation, booking, folio };
     };
     const result = tx
       ? await createInTransaction(tx)

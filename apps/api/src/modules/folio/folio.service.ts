@@ -1252,6 +1252,16 @@ export class FolioService {
     guestId: string;
     currencyCode: string;
   }, tx?: any) {
+    const db = tx ?? this.db;
+    const [existing] = await db
+      .select()
+      .from(folios)
+      .where(and(
+        eq(folios.propertyId, reservation.propertyId),
+        eq(folios.reservationId, reservation.id),
+        eq(folios.type, 'guest'),
+      ));
+    if (existing) return existing;
     return this.create({
       propertyId: reservation.propertyId,
       reservationId: reservation.id,

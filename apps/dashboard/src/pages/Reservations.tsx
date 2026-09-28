@@ -553,7 +553,7 @@ function ReservationList() {
       )}
 
       {/* Table */}
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm overflow-visible">
         <table className="w-full">
           <thead>
             {table.getHeaderGroups().map((hg) => (
@@ -841,7 +841,7 @@ const UNSELLABLE_ROOM_STATUSES = ['out_of_order', 'out_of_service'];
  */
 function AvailabilityCalendar() {
   const { t, i18n } = useTranslation();
-  const { propertyId } = useProperty();
+  const { propertyId, currencyCode } = useProperty();
   const navigate = useNavigate();
   const { toast } = useToast();
   const dateLocale = getDateLocale(i18n.resolvedLanguage);
@@ -852,6 +852,7 @@ function AvailabilityCalendar() {
 
   const [drag, setDrag] = useState<{ roomId: string; anchor: string; hovered: string } | null>(null);
   const [prefill, setPrefill] = useState<CreateReservationPrefill | null>(null);
+  const [detailRes, setDetailRes] = useState<Reservation | null>(null);
 
   const { data: roomsData } = useQuery({
     queryKey: ['rooms', propertyId],
@@ -1063,6 +1064,9 @@ function AvailabilityCalendar() {
                         event.preventDefault();
                         setDrag({ roomId: room.id, anchor: dateStr, hovered: dateStr });
                       }}
+                      onClick={() => {
+                        if (res) setDetailRes(res);
+                      }}
                       onMouseEnter={() => {
                         // Locked to the originating row, forwards only.
                         if (!drag || drag.roomId !== room.id) return;
@@ -1089,9 +1093,9 @@ function AvailabilityCalendar() {
                       }`}
                     >
                       {res ? (
-                        <div className="bg-telivity-teal/20 text-telivity-navy text-[10px] font-medium rounded px-1 py-0.5 truncate">
+                        <button type="button" className="w-full bg-telivity-teal/20 text-telivity-navy text-[10px] font-medium rounded px-1 py-0.5 truncate hover:bg-telivity-teal/30" aria-label={`Открыть бронь ${res.confirmationNumber}`}>
                           {res.confirmationNumber?.slice(-4) ?? '—'}
-                        </div>
+                        </button>
                       ) : null}
                     </td>
                   );
@@ -1111,6 +1115,33 @@ function AvailabilityCalendar() {
         demandByDate={demandByDate}
         onClose={() => setPrefill(null)}
       />
+
+      {detailRes && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <button type="button" aria-label="Закрыть" className="absolute inset-0 bg-black/30" onClick={() => setDetailRes(null)} />
+          <aside className="relative h-full w-full max-w-md overflow-y-auto bg-white shadow-xl">
+            <div className="sticky top-0 flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
+              <div><p className="text-xs text-telivity-mid-grey">Бронирование</p><h2 className="font-semibold text-telivity-navy">{detailRes.confirmationNumber}</h2></div>
+              <button type="button" className="rounded p-1 hover:bg-telivity-light-grey" onClick={() => setDetailRes(null)}><X size={18} /></button>
+            </div>
+            <div className="space-y-5 p-6">
+              <StatusBadge status={detailRes.status} label={t(`reservations.statuses.${detailRes.status}`, { defaultValue: detailRes.status })} />
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <Detail label={t('reservations.guest')} value={detailRes.guestName ?? (detailRes.guest ? `${detailRes.guest.firstName} ${detailRes.guest.lastName}` : '—')} />
+                <Detail label={t('reservations.room')} value={detailRes.roomNumber ?? t('reservations.unassigned')} />
+                <Detail label={t('reservations.arrival')} value={detailRes.arrivalDate} />
+                <Detail label={t('reservations.departure')} value={detailRes.departureDate} />
+                <Detail label={t('reservations.roomType')} value={detailRes.roomTypeName ?? '—'} />
+                <Detail label={t('reservations.total')} value={detailRes.totalAmount != null ? formatMoney(detailRes.totalAmount, currencyCode) : '—'} />
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => navigate(`/reservations`)} className="flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm font-semibold text-telivity-slate hover:bg-telivity-light-grey">Открыть список</button>
+                <button type="button" onClick={() => navigate(`/folios?reservationId=${detailRes.id}`)} className="flex-1 rounded-lg bg-telivity-teal px-3 py-2 text-sm font-semibold text-white hover:bg-telivity-light-teal">Фолио и оплата</button>
+              </div>
+            </div>
+          </aside>
+        </div>
+      )}
     </div>
   );
 }

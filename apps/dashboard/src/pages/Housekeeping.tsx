@@ -290,6 +290,11 @@ function TaskBoard() {
   const [editableChecklist, setEditableChecklist] = useState<ChecklistItem[]>([]);
   const [maintenanceRequired, setMaintenanceRequired] = useState(false);
   const [maintenanceNotes, setMaintenanceNotes] = useState('');
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newRoomId, setNewRoomId] = useState('');
+  const [newTaskType, setNewTaskType] = useState('stayover');
+  const [newPriority, setNewPriority] = useState('0');
+  const [newNotes, setNewNotes] = useState('');
 
   const { data } = useQuery({
     queryKey: ['housekeeping', 'tasks', propertyId, statusFilter, dateFilter],
@@ -315,6 +320,13 @@ function TaskBoard() {
   });
 
   const hkStaff = (usersData ?? []).filter(isHousekeepingStaff);
+
+  const { data: roomsData } = useQuery({
+    queryKey: ['rooms', propertyId, 'housekeeping-create'],
+    queryFn: () => api.get('/v1/rooms', { params: { propertyId } }).then((r) => r.data),
+    enabled: !!propertyId && createOpen,
+  });
+  const rooms: { id: string; number: string }[] = roomsData?.data ?? roomsData ?? [];
 
   const openTaskDetail = (task: Task) => {
     setTaskDetail(task);
@@ -358,6 +370,24 @@ function TaskBoard() {
       });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['housekeeping'] }),
+  });
+
+  const createTaskMutation = useMutation({
+    mutationFn: () => api.post('/v1/housekeeping/tasks', {
+      propertyId,
+      roomId: newRoomId,
+      type: newTaskType,
+      priority: Number(newPriority),
+      serviceDate: dateFilter,
+      ...(newNotes.trim() ? { notes: newNotes.trim() } : {}),
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['housekeeping'] });
+      setCreateOpen(false);
+      setNewRoomId('');
+      setNewNotes('');
+      setNewPriority('0');
+    },
   });
 
   const saveChecklist = () => {
@@ -421,6 +451,12 @@ function TaskBoard() {
         </select>
         {canManage && (
           <div className="ml-auto flex gap-2">
+            <button
+              onClick={() => setCreateOpen(true)}
+              className="flex items-center gap-1 bg-telivity-teal text-white rounded-lg px-3 py-1.5 text-sm font-medium hover:bg-telivity-light-teal"
+            >
+              <Plus size={14} /> Новая задача
+            </button>
             <button
               onClick={() => generateMutation.mutate()}
               disabled={generateMutation.isPending}
@@ -759,6 +795,36 @@ function TaskBoard() {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Новая задача уборки">
+        <div className="space-y-3">
+          <label className="block text-sm text-telivity-slate">Номер
+            <select value={newRoomId} onChange={(e) => setNewRoomId(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+              <option value="">Выберите номер</option>
+              {rooms.map((room) => <option key={room.id} value={room.id}>{room.number}</option>)}
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="block text-sm text-telivity-slate">Тип
+              <select value={newTaskType} onChange={(e) => setNewTaskType(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                {['checkout', 'stayover', 'deep_clean', 'inspection', 'turndown', 'maintenance'].map((type) => <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>)}
+              </select>
+            </label>
+            <label className="block text-sm text-telivity-slate">Приоритет
+              <select value={newPriority} onChange={(e) => setNewPriority(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
+                {[0, 1, 3, 5].map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+              </select>
+            </label>
+          </div>
+          <label className="block text-sm text-telivity-slate">Комментарий
+            <textarea value={newNotes} onChange={(e) => setNewNotes(e.target.value)} rows={3} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm" />
+          </label>
+          <div className="flex justify-end gap-2">
+            <button type="button" onClick={() => setCreateOpen(false)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm">Отмена</button>
+            <button type="button" disabled={!newRoomId || createTaskMutation.isPending} onClick={() => createTaskMutation.mutate()} className="rounded-lg bg-telivity-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">Создать</button>
+          </div>
+        </div>
       </Modal>
     </div>
   );
