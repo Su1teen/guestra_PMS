@@ -1129,7 +1129,7 @@ function AvailabilityCalendar() {
           <button type="button" aria-label="Закрыть" className="absolute inset-0 bg-black/30" onClick={() => setDetailRes(null)} />
           <aside className="relative h-full w-full max-w-md overflow-y-auto bg-white shadow-xl">
             <div className="sticky top-0 flex items-center justify-between border-b border-gray-100 bg-white px-6 py-4">
-              <div><p className="text-xs text-telivity-mid-grey">Бронирование</p><h2 className="font-semibold text-telivity-navy">{guestName(detailRes)}</h2><p className="mt-0.5 text-xs text-telivity-mid-grey">Бронь #{detailRes.confirmationNumber?.slice(-6) ?? '—'}</p></div>
+              <div><p className="text-xs text-telivity-mid-grey">Бронирование</p><h2 className="font-semibold text-telivity-navy">{detailRes.guestName ?? (detailRes.guest ? `${detailRes.guest.firstName} ${detailRes.guest.lastName}` : 'Гость не указан')}</h2><p className="mt-0.5 text-xs text-telivity-mid-grey">Бронь #{detailRes.confirmationNumber?.slice(-6) ?? '—'}</p></div>
               <button type="button" className="rounded p-1 hover:bg-telivity-light-grey" onClick={() => setDetailRes(null)}><X size={18} /></button>
             </div>
             <div className="space-y-5 p-6">
