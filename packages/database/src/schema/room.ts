@@ -49,6 +49,9 @@ export const roomTypes = pgTable('room_types', {
   // Capacity
   maxOccupancy: integer('max_occupancy').notNull(),
   defaultOccupancy: integer('default_occupancy').notNull(),
+  /** Optional category rules. Null preserves the generic-hotel behaviour. */
+  maxAdults: integer('max_adults'),
+  maxChildren: integer('max_children'),
 
   // Physical
   bedType: varchar('bed_type', { length: 50 }), // "king", "queen", "double", "twin", "sofa"

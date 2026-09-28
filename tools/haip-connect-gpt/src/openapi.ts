@@ -180,7 +180,7 @@ export function buildOpenApiSpec(publicBaseUrl: string): Record<string, unknown>
           operationId: 'createReservation',
           summary: 'Create (book) a reservation',
           description:
-            'Book a specific room type and rate plan returned by searchHotels. Returns a confirmationNumber used to look up, modify, or cancel the booking. Always confirm the cancellation policy and total selling price with the guest before booking.',
+            'Book a room category and rate plan returned by searchHotels; PMS assigns the physical room internally. Returns a confirmationNumber used to look up, modify, or cancel the booking. Always confirm the cancellation policy and total selling price with the guest before booking.',
           requestBody: {
             required: true,
             content: {
@@ -196,6 +196,7 @@ export function buildOpenApiSpec(publicBaseUrl: string): Record<string, unknown>
                     'guestFirstName',
                     'guestLastName',
                     'adults',
+                    'idempotencyKey',
                   ],
                   properties: {
                     propertyId: { type: 'string', format: 'uuid' },
@@ -211,6 +212,7 @@ export function buildOpenApiSpec(publicBaseUrl: string): Record<string, unknown>
                     adults: { type: 'integer', minimum: 1 },
                     children: { type: 'integer', minimum: 0, default: 0 },
                     specialRequests: { type: 'string' },
+                    idempotencyKey: { type: 'string', description: 'Stable caller operation key; reuse it exactly when retrying this booking.' },
                     paymentMethod: {
                       type: 'string',
                       enum: ['pay_at_property', 'prepaid', 'virtual_card'],

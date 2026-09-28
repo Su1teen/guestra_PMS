@@ -6,7 +6,7 @@ import {
   ConflictException,
 } from '@nestjs/common';
 import { eq, and, desc, or, isNull } from 'drizzle-orm';
-import { serviceRequests, rooms, reservations, reservationGuests, users } from '@telivityhaip/database';
+import { serviceRequests, rooms, reservations, reservationGuests, users, guestPropertyLinks } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { HousekeepingService } from '../housekeeping/housekeeping.service';
 import { WebhookService } from '../webhook/webhook.service';
@@ -64,7 +64,10 @@ export class ServiceRequestsService {
         or(eq(reservations.guestId, guestId), eq(reservationGuests.guestId, guestId)),
       ))
       .limit(1);
-    if (!row) throw new BadRequestException(`guest ${guestId} not found in this property`);
+    if (row) return;
+    const [serviceOnlyLink] = await this.db.select({ id: guestPropertyLinks.id }).from(guestPropertyLinks)
+      .where(and(eq(guestPropertyLinks.guestId, guestId), eq(guestPropertyLinks.propertyId, propertyId)));
+    if (!serviceOnlyLink) throw new BadRequestException(`guest ${guestId} not found in this property`);
   }
 
   private async verifyAssignee(assigneeId: string, propertyId: string) {
@@ -114,6 +117,34 @@ export class ServiceRequestsService {
       { requestId: request.id, reservationId: request.reservationId, guestId: request.guestId },
       dto.propertyId,
     );
+    return request;
+  }
+
+  /** Agent-facing, retry-safe creation. It remains an operational request, never a CRM lead. */
+  async createFromAgent(dto: CreateServiceRequestDto & { idempotencyKey: string; integrationContext?: Record<string, unknown> }) {
+    const fingerprint = JSON.stringify({ ...dto, idempotencyKey: undefined });
+    const [existing] = await this.db.select().from(serviceRequests).where(and(
+      eq(serviceRequests.propertyId, dto.propertyId), eq(serviceRequests.idempotencyKey, dto.idempotencyKey),
+    ));
+    if (existing) {
+      if ((existing.integrationContext as any)?.idempotencyFingerprint !== fingerprint) {
+        throw new ConflictException('IDEMPOTENCY_CONFLICT');
+      }
+      return { ...existing, idempotentReplay: true };
+    }
+    if (dto.roomId) await this.verifyRoomOwnership(dto.roomId, dto.propertyId);
+    if (dto.reservationId) await this.verifyReservationOwnership(dto.reservationId, dto.propertyId);
+    if (dto.guestId) await this.verifyGuestOwnership(dto.guestId, dto.propertyId);
+    const [request] = await this.db.insert(serviceRequests).values({
+      propertyId: dto.propertyId, roomId: dto.roomId, reservationId: dto.reservationId, guestId: dto.guestId,
+      type: dto.type as any, category: dto.category, department: dto.department, priority: dto.priority ?? 0,
+      status: 'open', title: dto.title, description: dto.description, sourceChannel: 'ai_guest_agent',
+      idempotencyKey: dto.idempotencyKey, integrationContext: { ...(dto.integrationContext ?? {}), idempotencyFingerprint: fingerprint },
+    }).returning();
+    await this.webhookService.emit('service_request.created', 'service_request', request.id, {
+      serviceRequestId: request.id, guestId: request.guestId, reservationId: request.reservationId,
+      status: request.status, integrationContext: dto.integrationContext ?? {},
+    }, dto.propertyId);
     return request;
   }
 

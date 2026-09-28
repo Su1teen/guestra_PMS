@@ -1,6 +1,6 @@
 # Catch HAIP webhooks in n8n
 
-Use this when HAIP should push `entity.action` events (for example `reservation.checked_in`, `folio.settled`) into an n8n workflow.
+Use this when HAIP should push `entity.action` events (for example `reservation.checked_in`, `service_booking.created`, `folio.settled`) into an n8n workflow. In the unified Guestra flow, PMS commits first, emits a signed domain event, and n8n mirrors/reconciles CRM afterwards. n8n is not a PMS or CRM database and must not write either PostgreSQL database directly.
 
 ## 1. Create a subscription in HAIP
 
@@ -55,3 +55,5 @@ Payloads are lean — fetch full records from the REST API using `entityId` and 
 Return any **2xx** within **5 seconds**. Use a **Respond to Webhook** node (or let the Webhook node auto-respond) before slow work, or queue follow-up nodes asynchronously.
 
 Deduplicate on `X-HAIP-Event-Id`; deliveries are at-least-once. For missed events, poll `GET /api/v1/connect/events` as described in **[Webhooks & events](../webhooks.md#reconciliation--polling-fallback)**.
+
+For Guestra-originated writes, event data includes the supplied `integrationContext` (for example CRM customer, request, offer, conversation and operation IDs). Use those durable references—not guest names or fuzzy contact matching—to update CRM mirrors. Relevant patterns include `reservation.*`, `service_booking.*`, `service_request.*`, `folio.*`, and `payment.*`.

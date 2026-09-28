@@ -42,7 +42,7 @@ export {
 } from './room.js';
 
 // Guests
-export { vipLevelEnum, guests } from './guest.js';
+export { vipLevelEnum, guests, guestPropertyLinks } from './guest.js';
 
 // Reservations & Bookings
 export {
@@ -264,7 +264,14 @@ export {
   services,
   ratePlanComponents,
   reservationServices,
+  serviceAgentBookingModeEnum,
+  serviceBookingStatusEnum,
+  serviceBookings,
+  serviceResources,
+  serviceResourceAllocations,
 } from './ancillary.js';
+
+export { integrationLinks } from './integration.js';
 
 // Door-lock credentials (devices / access control)
 export {

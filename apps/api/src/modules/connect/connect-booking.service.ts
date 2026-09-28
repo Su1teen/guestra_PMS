@@ -1,5 +1,5 @@
-import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, ne, notInArray, lt, gt } from 'drizzle-orm';
+import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { eq, and, ne, notInArray, lt, gt, asc } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import {
   bookings,
@@ -10,6 +10,8 @@ import {
   roomTypes,
   folios,
   rooms,
+  guestPropertyLinks,
+  integrationLinks,
 } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import {
@@ -48,6 +50,11 @@ export class ConnectBookingService {
     }
 
     const guestCount = dto.adults + (dto.children ?? 0);
+    const fingerprint = this.bookingFingerprint(dto);
+    if (dto.idempotencyKey) {
+      const replay = await this.findIdempotentBooking(dto.propertyId, dto.idempotencyKey, fingerprint);
+      if (replay) return replay;
+    }
     const confirmationNumber = `HAIP-${generateConfirmationToken()}`;
 
     const committed = await this.db.transaction(async (tx: any) => {
@@ -56,23 +63,27 @@ export class ConnectBookingService {
       // calls cannot both pass the overlap check for the same room.
       await this.reservationService.lockInventory(dto.propertyId, dto.roomTypeId, tx);
 
-      const lockedRooms = await tx
+      const roomsQuery = tx
         .select()
         .from(rooms)
         .where(
           and(
-            eq(rooms.id, dto.roomId),
             eq(rooms.propertyId, dto.propertyId),
+            eq(rooms.isActive, true),
+            ...(dto.roomId ? [eq(rooms.id, dto.roomId)] : [eq(rooms.roomTypeId, dto.roomTypeId)]),
           ),
-        )
-        .for('update');
-      const room = lockedRooms[0];
-      if (!room || !room.isActive) {
+        );
+      const sortedRoomsQuery = typeof roomsQuery.orderBy === 'function'
+        ? roomsQuery.orderBy(asc(rooms.number), asc(rooms.id))
+        : roomsQuery;
+      const lockedRooms = await sortedRoomsQuery.for('update');
+      const requestedRoom = lockedRooms[0];
+      if (dto.roomId && !requestedRoom) {
         throw new NotFoundException(`Room ${dto.roomId} not found or inactive in this property`);
       }
-      if (room.roomTypeId !== dto.roomTypeId) {
+      if (dto.roomId && requestedRoom!.roomTypeId !== dto.roomTypeId) {
         throw new BadRequestException(
-          `Room ${dto.roomId} belongs to room type ${room.roomTypeId}, not ${dto.roomTypeId}`,
+          `Room ${dto.roomId} belongs to room type ${requestedRoom!.roomTypeId}, not ${dto.roomTypeId}`,
         );
       }
 
@@ -93,6 +104,12 @@ export class ConnectBookingService {
         throw new BadRequestException(
           `Room type ${dto.roomTypeId} allows ${roomType.maxOccupancy} guests, but ${guestCount} were requested`,
         );
+      }
+      if (roomType.maxAdults != null && dto.adults > roomType.maxAdults) {
+        throw new BadRequestException(`Room type ${dto.roomTypeId} does not allow ${dto.adults} adults`);
+      }
+      if (roomType.maxChildren != null && (dto.children ?? 0) > roomType.maxChildren) {
+        throw new BadRequestException(`Room type ${dto.roomTypeId} does not allow ${dto.children ?? 0} children`);
       }
 
       const [ratePlan] = await tx
@@ -136,24 +153,25 @@ export class ConnectBookingService {
         dto.checkOut,
       );
 
-      const conflicts = await tx
-        .select({ id: reservations.id })
-        .from(reservations)
-        .where(
-          and(
+      // Inventory and all category room rows are locked above. Re-check each
+      // candidate while holding those mutexes, then choose deterministically.
+      let room: any | undefined;
+      for (const candidate of lockedRooms) {
+        if (['out_of_order', 'out_of_service'].includes(candidate.status)) continue;
+        const conflicts = await tx
+          .select({ id: reservations.id })
+          .from(reservations)
+          .where(and(
             eq(reservations.propertyId, dto.propertyId),
-            eq(reservations.roomId, dto.roomId),
+            eq(reservations.roomId, candidate.id),
             notInArray(reservations.status, ['cancelled', 'no_show', 'checked_out'] as any),
             lt(reservations.arrivalDate, dto.checkOut),
             gt(reservations.departureDate, dto.checkIn),
-          ),
-        )
-        .limit(1);
-      if (conflicts.length > 0) {
-        throw new BadRequestException(
-          `Room ${room.number} is already reserved for the requested dates`,
-        );
+          ))
+          .limit(1);
+        if (conflicts.length === 0) { room = candidate; break; }
       }
+      if (!room) throw new BadRequestException('NO_AVAILABILITY: no assignable physical room remains');
 
       const guest = await this.findOrCreateGuest(dto, tx);
       const baseAmountDec = new Decimal(ratePlan.baseAmount);
@@ -166,6 +184,8 @@ export class ConnectBookingService {
           guestId: guest.id,
           confirmationNumber,
           externalConfirmation: dto.externalReference,
+          idempotencyKey: dto.idempotencyKey,
+          integrationContext: { ...(dto.integrationContext ?? {}), idempotencyFingerprint: fingerprint },
           source: 'agent',
           channelCode: dto.agentId ?? 'otaip',
         })
@@ -181,7 +201,7 @@ export class ConnectBookingService {
           departureDate: dto.checkOut,
           nights,
           roomTypeId: dto.roomTypeId,
-          roomId: dto.roomId,
+          roomId: room.id,
           ratePlanId: dto.ratePlanId,
           totalAmount: totalAmountDec.toFixed(2),
           currencyCode: ratePlan.currencyCode,
@@ -199,16 +219,20 @@ export class ConnectBookingService {
         role: 'primary',
       });
 
+      await this.persistIntegrationLinks(tx, dto.propertyId, guest.id, booking.id, reservation.id, dto.integrationContext);
+
       return {
         reservation,
         room,
+        roomType,
+        booking,
         ratePlan,
         baseAmount: baseAmountDec.toNumber(),
         totalAmount: totalAmountDec.toNumber(),
       };
     });
 
-    const { reservation, room, ratePlan, baseAmount, totalAmount } = committed;
+    const { reservation, room, roomType, booking, ratePlan, baseAmount, totalAmount } = committed;
 
     const settings = await this.getPropertySettings(dto.propertyId);
     const taxRate = (settings['taxRate'] as number) ?? 0;
@@ -231,6 +255,7 @@ export class ConnectBookingService {
         confirmationNumber,
         agentId: dto.agentId,
         externalReference: dto.externalReference,
+        integrationContext: dto.integrationContext,
         totalAmount,
       },
       dto.propertyId,
@@ -239,11 +264,19 @@ export class ConnectBookingService {
     return {
       success: true,
       confirmationNumber,
+      bookingId: booking.id,
       externalReference: dto.externalReference,
       reservationId: reservation.id,
       status: 'assigned',
+      roomTypeId: roomType.id,
+      roomTypeCode: roomType.code,
+      roomTypeName: roomType.name,
+      checkIn: dto.checkIn,
+      checkOut: dto.checkOut,
+      adults: dto.adults,
+      children: dto.children ?? 0,
       roomId: room.id,
-      roomNumber: room.number,
+      roomAssigned: true,
       confirmationCodes: {
         pms: confirmationNumber,
         external: dto.externalReference,
@@ -257,6 +290,7 @@ export class ConnectBookingService {
       paymentStatus,
       depositAmount,
       bookedAt: new Date().toISOString(),
+      integrationContext: dto.integrationContext,
     };
   }
 
@@ -575,6 +609,25 @@ export class ConnectBookingService {
   }
 
   private async findOrCreateGuest(dto: AgentBookDto, db: any = this.db) {
+    const sourceSystem = dto.integrationContext?.sourceSystem;
+    const externalCustomerId = dto.integrationContext?.customerId;
+    if (sourceSystem && externalCustomerId) {
+      const [link] = await db.select().from(integrationLinks).where(and(
+        eq(integrationLinks.propertyId, dto.propertyId),
+        eq(integrationLinks.sourceSystem, sourceSystem),
+        eq(integrationLinks.externalEntityType, 'customer'),
+        eq(integrationLinks.externalEntityId, externalCustomerId),
+      ));
+      if (link?.localEntityType !== 'guest') {
+        throw new ConflictException('IDENTITY_CONFLICT: external customer is not linked to a guest');
+      }
+      if (link) {
+        const [guest] = await db.select().from(guests).where(eq(guests.id, link.localEntityId));
+        if (!guest) throw new ConflictException('IDENTITY_CONFLICT: guest link is stale');
+        await this.ensureGuestPropertyLink(db, guest.id, dto.propertyId, sourceSystem);
+        return guest;
+      }
+    }
     // Try to find by email — but ONLY reuse a guest that is already linked to
     // THIS property via an existing reservation. The `guests` row is cross-property
     // by design, yet a bare email match would let one tenant attach to (and later,
@@ -596,6 +649,10 @@ export class ConnectBookingService {
             ),
           );
         if (links.length > 0) return candidate;
+        const propertyLinks = await db.select({ id: guestPropertyLinks.id })
+          .from(guestPropertyLinks)
+          .where(and(eq(guestPropertyLinks.guestId, candidate.id), eq(guestPropertyLinks.propertyId, dto.propertyId)));
+        if (propertyLinks.length > 0) return candidate;
       }
     }
 
@@ -611,7 +668,86 @@ export class ConnectBookingService {
       })
       .returning();
 
+    await this.ensureGuestPropertyLink(db, guest.id, dto.propertyId, sourceSystem ?? 'connect');
     return guest;
+  }
+
+  private async ensureGuestPropertyLink(db: any, guestId: string, propertyId: string, source: string) {
+    const [existing] = await db.select({ id: guestPropertyLinks.id }).from(guestPropertyLinks)
+      .where(and(eq(guestPropertyLinks.guestId, guestId), eq(guestPropertyLinks.propertyId, propertyId)));
+    if (existing) {
+      await db.update(guestPropertyLinks).set({ lastSeenAt: new Date(), updatedAt: new Date() })
+        .where(eq(guestPropertyLinks.id, existing.id));
+      return;
+    }
+    await db.insert(guestPropertyLinks).values({ guestId, propertyId, source });
+  }
+
+  private async persistIntegrationLinks(
+    db: any,
+    propertyId: string,
+    guestId: string,
+    bookingId: string,
+    reservationId: string,
+    context?: AgentBookDto['integrationContext'],
+  ) {
+    if (!context?.sourceSystem) return;
+    const links: Array<[string, string | undefined, string, string]> = [
+      ['customer', context.customerId, 'guest', guestId],
+      ['request', context.requestId, 'booking', bookingId],
+      ['offer', context.offerId, 'booking', bookingId],
+      ['reservation', context.reservationId, 'reservation', reservationId],
+    ];
+    for (const [externalEntityType, externalEntityId, localEntityType, localEntityId] of links) {
+      if (!externalEntityId) continue;
+      const [existing] = await db.select().from(integrationLinks).where(and(
+        eq(integrationLinks.propertyId, propertyId),
+        eq(integrationLinks.sourceSystem, context.sourceSystem),
+        eq(integrationLinks.externalEntityType, externalEntityType),
+        eq(integrationLinks.externalEntityId, externalEntityId),
+      ));
+      if (existing && (existing.localEntityType !== localEntityType || existing.localEntityId !== localEntityId)) {
+        throw new ConflictException(`IDENTITY_CONFLICT: ${externalEntityType} is linked to another PMS entity`);
+      }
+      if (!existing) await db.insert(integrationLinks).values({
+        propertyId, sourceSystem: context.sourceSystem, externalEntityType, externalEntityId,
+        localEntityType, localEntityId, metadata: { conversationId: context.conversationId, operationId: context.operationId },
+      });
+    }
+  }
+
+  private bookingFingerprint(dto: AgentBookDto): string {
+    const { idempotencyKey: _key, ...payload } = dto as any;
+    const canonical = (value: any): any => Array.isArray(value)
+      ? value.map(canonical)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]))
+        : value;
+    return JSON.stringify(canonical(payload));
+  }
+
+  private async findIdempotentBooking(propertyId: string, key: string, fingerprint: string): Promise<any | undefined> {
+    const [booking] = await this.db.select().from(bookings).where(and(
+      eq(bookings.propertyId, propertyId), eq(bookings.idempotencyKey, key),
+    ));
+    if (!booking) return undefined;
+    if ((booking.integrationContext as any)?.idempotencyFingerprint !== fingerprint) {
+      throw new ConflictException('IDEMPOTENCY_CONFLICT: key was used with a different payload');
+    }
+    const [reservation] = await this.db.select().from(reservations).where(and(
+      eq(reservations.bookingId, booking.id), eq(reservations.propertyId, propertyId),
+    ));
+    if (!reservation) throw new ConflictException('IDEMPOTENCY_CONFLICT: booking replay is incomplete');
+    const [roomType] = await this.db.select().from(roomTypes).where(and(eq(roomTypes.id, reservation.roomTypeId), eq(roomTypes.propertyId, propertyId)));
+    return {
+      success: true, idempotentReplay: true, bookingId: booking.id, reservationId: reservation.id,
+      confirmationNumber: booking.confirmationNumber, status: reservation.status,
+      roomTypeId: reservation.roomTypeId, roomTypeCode: roomType?.code, roomTypeName: roomType?.name,
+      checkIn: reservation.arrivalDate, checkOut: reservation.departureDate,
+      adults: reservation.adults, children: reservation.children,
+      totalAmount: Number(reservation.totalAmount), currencyCode: reservation.currencyCode,
+      roomAssigned: Boolean(reservation.roomId), integrationContext: booking.integrationContext,
+    };
   }
 
   private async getPropertySettings(propertyId: string): Promise<Record<string, unknown>> {

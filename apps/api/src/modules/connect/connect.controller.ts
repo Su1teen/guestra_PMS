@@ -26,6 +26,10 @@ import { AgentBookDto } from './dto/agent-book.dto';
 import { AgentModifyDto, AgentCancelDto } from './dto/agent-modify.dto';
 import { CreateSubscriptionDto } from './dto/agent-event-subscription.dto';
 import { ListPropertiesDto } from './dto/list-properties.dto';
+import { ConnectServiceBookingService } from './connect-service-booking.service';
+import { AgentServiceAvailabilityDto, AgentServiceBookDto } from './dto/agent-service.dto';
+import { AgentServiceRequestDto } from './dto/agent-service-request.dto';
+import { ServiceRequestsService } from '../service-requests/service-requests.service';
 
 @ApiTags('Connect — OTAIP Agent API')
 @ApiSecurity('api-key')
@@ -47,6 +51,8 @@ export class ConnectController {
     private readonly bookingService: ConnectBookingService,
     private readonly eventsService: ConnectEventsService,
     private readonly insightsService: ConnectInsightsService,
+    private readonly serviceBookingService: ConnectServiceBookingService,
+    private readonly serviceRequestsService: ServiceRequestsService,
   ) {}
 
   // --- Search & Content (Agent 4.1, 4.2, 4.3) ---
@@ -123,6 +129,44 @@ export class ConnectController {
     @Body() dto: AgentCancelDto,
   ) {
     return this.bookingService.cancel(confirmationNumber, dto.reason);
+  }
+
+  // --- Operational services ---
+
+  @Get('services')
+  @ApiOperation({ summary: 'List agent-visible service options and booking policy' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  async serviceOptions(@Query('propertyId', ParseUUIDPipe) propertyId: string) {
+    return this.serviceBookingService.options(propertyId);
+  }
+
+  @Post('services/availability')
+  @ApiOperation({ summary: 'Check live service capacity without exposing resources' })
+  async serviceAvailability(@Body() dto: AgentServiceAvailabilityDto) {
+    return this.serviceBookingService.availability(dto);
+  }
+
+  @Post('services/book')
+  @ApiOperation({ summary: 'Create a retry-safe operational service booking' })
+  async bookService(@Body() dto: AgentServiceBookDto) {
+    return this.serviceBookingService.book(dto);
+  }
+
+  @Post('guest-requests')
+  @ApiOperation({ summary: 'Create a retry-safe operational guest request' })
+  async createGuestRequest(@Body() dto: AgentServiceRequestDto) {
+    return this.serviceRequestsService.createFromAgent(dto as any);
+  }
+
+  @Get('capabilities')
+  @ApiOperation({ summary: 'Describe the supported PMS Agent API features' })
+  capabilities() {
+    return {
+      contractVersion: 'v1', integrationContextSupported: true, idempotencySupported: true,
+      supportedBookingModes: ['live_booking', 'request_only', 'info_only', 'disabled'],
+      supportedTools: ['search_accommodation', 'book_accommodation', 'get_booking', 'modify_booking', 'cancel_booking', 'get_service_options', 'check_service_availability', 'book_service'],
+      webhookEventTypes: ['reservation.created', 'reservation.checked_in', 'reservation.checked_out', 'service_booking.created', 'service_request.created'],
+    };
   }
 
   // --- Event Subscriptions ---

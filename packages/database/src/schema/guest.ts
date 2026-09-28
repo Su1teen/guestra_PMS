@@ -1,4 +1,5 @@
-import { pgTable, uuid, varchar, text, boolean, timestamp, jsonb, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, boolean, timestamp, jsonb, pgEnum, uniqueIndex, index } from 'drizzle-orm/pg-core';
+import { properties } from './property.js';
 
 /**
  * Guest VIP levels — used for room assignment priority and service levels.
@@ -75,3 +76,19 @@ export const guests = pgTable('guests', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** A guest may be known to a property through a service without a stay. */
+export const guestPropertyLinks = pgTable('guest_property_links', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  guestId: uuid('guest_id').notNull().references(() => guests.id),
+  propertyId: uuid('property_id').notNull().references(() => properties.id),
+  relationship: varchar('relationship', { length: 40 }).notNull().default('guest'),
+  source: varchar('source', { length: 40 }).notNull().default('pms'),
+  firstSeenAt: timestamp('first_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  uniqueIndex('guest_property_links_guest_property_unique').on(t.guestId, t.propertyId),
+  index('guest_property_links_property_idx').on(t.propertyId),
+]);

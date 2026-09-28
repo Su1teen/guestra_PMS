@@ -7,8 +7,10 @@ import {
   IsEmail,
   IsEnum,
   Min,
+  IsObject,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IntegrationContextDto } from './integration-context.dto';
 
 export class AgentBookDto {
   @ApiProperty()
@@ -23,9 +25,10 @@ export class AgentBookDto {
   @IsUUID()
   ratePlanId!: string;
 
-  @ApiProperty({ description: 'Physical room to assign to the reservation' })
+  @ApiPropertyOptional({ description: 'Optional staff-selected room. Guest-agent bookings are assigned by room category.' })
+  @IsOptional()
   @IsUUID()
-  roomId!: string;
+  roomId?: string;
 
   @ApiProperty({ example: '2024-06-01' })
   @IsDateString()
@@ -101,4 +104,14 @@ export class AgentBookDto {
   @IsOptional()
   @IsString()
   externalReference?: string;
+
+  @ApiPropertyOptional({ description: 'Required for retry-safe agent mutations; unique within the property.' })
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+
+  @ApiPropertyOptional({ type: IntegrationContextDto })
+  @IsOptional()
+  @IsObject()
+  integrationContext?: IntegrationContextDto;
 }

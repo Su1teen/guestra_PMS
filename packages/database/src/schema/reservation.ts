@@ -94,6 +94,7 @@ export const bookings = pgTable('bookings', {
   confirmationNumber: varchar('confirmation_number', { length: 50 }).notNull().unique(),
   externalConfirmation: varchar('external_confirmation', { length: 100 }), // OTA/GDS confirmation
   idempotencyKey: varchar('idempotency_key', { length: 200 }), // Direct-booking retries only
+  integrationContext: jsonb('integration_context').$type<Record<string, unknown>>(),
 
   source: bookingSourceEnum('source').notNull(),
   channelCode: varchar('channel_code', { length: 50 }), // "booking_com", "expedia", "amadeus"

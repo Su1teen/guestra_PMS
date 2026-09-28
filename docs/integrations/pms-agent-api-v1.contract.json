@@ -1,0 +1,20 @@
+{
+  "contractVersion": "v1",
+  "basePath": "/api/v1/connect",
+  "authentication": "x-api-key",
+  "integrationContextSupported": true,
+  "idempotency": { "requiredFor": ["book_accommodation", "book_service", "create_guest_request"], "conflictCode": "IDEMPOTENCY_CONFLICT" },
+  "tools": [
+    { "toolName": "search_accommodation", "method": "POST", "path": "/search", "write": false },
+    { "toolName": "get_property", "method": "GET", "path": "/properties/:id", "write": false },
+    { "toolName": "book_accommodation", "method": "POST", "path": "/book", "write": true, "confirmationExpected": true, "outputs": ["bookingId", "reservationId", "confirmationNumber"] },
+    { "toolName": "get_booking", "method": "GET", "path": "/bookings/:confirmationNumber/verify", "write": false },
+    { "toolName": "modify_booking", "method": "PATCH", "path": "/bookings/:confirmationNumber", "write": true },
+    { "toolName": "cancel_booking", "method": "DELETE", "path": "/bookings/:confirmationNumber", "write": true },
+    { "toolName": "get_service_options", "method": "GET", "path": "/services", "write": false },
+    { "toolName": "check_service_availability", "method": "POST", "path": "/services/availability", "write": false },
+    { "toolName": "book_service", "method": "POST", "path": "/services/book", "write": true, "confirmationExpected": true, "outputs": ["serviceBookingId", "folioId"] },
+    { "toolName": "create_guest_request", "method": "POST", "path": "/guest-requests", "write": true, "outputs": ["serviceRequestId"] },
+    { "toolName": "capabilities", "method": "GET", "path": "/capabilities", "write": false }
+  ]
+}

@@ -13,9 +13,12 @@ import { AuthModule } from '../auth/auth.module';
 import { RatePlanModule } from '../rate-plan/rate-plan.module';
 import { PolicyModule } from '../policy/policy.module';
 import { TaxModule } from '../tax/tax.module';
+import { FolioModule } from '../folio/folio.module';
+import { ServiceRequestsModule } from '../service-requests/service-requests.module';
+import { ConnectServiceBookingService } from './connect-service-booking.service';
 
 @Module({
-  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule],
+  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule],
   controllers: [ConnectController, ConnectCredentialsController],
   providers: [
     ConnectSearchService,
@@ -24,6 +27,7 @@ import { TaxModule } from '../tax/tax.module';
     ConnectEventsService,
     ConnectInsightsService,
     ConnectCredentialsService,
+    ConnectServiceBookingService,
   ],
   exports: [ConnectSearchService, ConnectBookingService],
 })

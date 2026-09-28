@@ -186,6 +186,13 @@ export const WEBHOOK_EVENTS = {
   'reservation.service_attached': 'reservation.service_attached',
   'reservation.service_cancelled': 'reservation.service_cancelled',
   'reservation.service_posted': 'reservation.service_posted',
+  'service_booking.created': 'service_booking.created',
+  'service_booking.rescheduled': 'service_booking.rescheduled',
+  'service_booking.cancelled': 'service_booking.cancelled',
+  'service_booking.completed': 'service_booking.completed',
+  'service_request.created': 'service_request.created',
+  'service_request.updated': 'service_request.updated',
+  'service_request.completed': 'service_request.completed',
 
   // Cancellation policies
   'cancellation_policy.created': 'cancellation_policy.created',

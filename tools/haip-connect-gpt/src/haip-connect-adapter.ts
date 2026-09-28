@@ -64,6 +64,10 @@ export interface BookInput {
   specialRequests?: string;
   paymentMethod?: 'pay_at_property' | 'prepaid' | 'virtual_card';
   paymentToken?: string;
+  /** Caller-generated operation key; retries return the original booking. */
+  idempotencyKey: string;
+  /** Category bookings intentionally omit roomId; PMS assigns a physical unit. */
+  roomId?: string;
 }
 
 export interface ModifyInput {

@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, pgEnum, integer, jsonb, boolean, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, pgEnum, integer, jsonb, boolean, index, uniqueIndex } from 'drizzle-orm/pg-core';
 import { properties } from './property.js';
 import { rooms } from './room.js';
 import { reservations } from './reservation.js';
@@ -108,9 +108,12 @@ export const serviceRequests = pgTable('service_requests', {
   }>>().notNull().default([]),
   createdBy: uuid('created_by').references(() => users.id),
   completedBy: uuid('completed_by').references(() => users.id),
+  sourceChannel: varchar('source_channel', { length: 40 }).notNull().default('front_desk'),
+  idempotencyKey: varchar('idempotency_key', { length: 200 }),
+  integrationContext: jsonb('integration_context').$type<Record<string, unknown>>(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (t) => [uniqueIndex('service_requests_property_idempotency_unique').on(t.propertyId, t.idempotencyKey)]);
 
 export const maintenanceCategoryEnum = pgEnum('maintenance_category', [
   'hvac',
