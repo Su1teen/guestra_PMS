@@ -216,7 +216,7 @@ function RatePlanList() {
             <div>
               <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('ratePlans.type')}</label>
               <select value={type} onChange={(e) => setType(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal">
-                <option value="bar">BAR</option><option value="derived">Derived</option><option value="negotiated">Negotiated</option><option value="package">Package</option>
+                <option value="bar">BAR</option><option value="derived">{t('legacy.derived')}</option><option value="negotiated">{t('legacy.negotiated')}</option><option value="package">{t('legacy.package')}</option>
               </select>
             </div>
             <div><label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('ratePlans.baseAmount')}</label><input type="number" step="0.01" value={baseAmount} onChange={(e) => setBaseAmount(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal" /></div>

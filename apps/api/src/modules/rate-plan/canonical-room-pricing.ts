@@ -9,6 +9,7 @@ type CanonicalRoomPricingInput = {
   checkOut: string;
   nights: number;
   isTaxInclusive: boolean;
+  guestId?: string;
   ratePlanService: RatePlanService;
   taxService: TaxService;
   db?: any;
@@ -17,12 +18,6 @@ type CanonicalRoomPricingInput = {
 
 /** Canonical room-only pricing shared by Booking Engine Search and Quote. */
 export async function calculateCanonicalRoomPricing(input: CanonicalRoomPricingInput) {
-  // TODO(pricing): tax-inclusive rate plans need a canonical gross-to-net
-  // decomposition using TaxService.backCalculateFromInclusive. Until that is
-  // designed for every rule type, preserve the existing tax-exclusive behavior
-  // identically in Search and Quote instead of changing booked totals here.
-  void input.isTaxInclusive;
-
   let currency: string | undefined;
   const lineItems: Array<{ date: string; rate: string; tax: string }> = [];
   let roomTotal = new Decimal(0);
@@ -57,15 +52,20 @@ export async function calculateCanonicalRoomPricing(input: CanonicalRoomPricingI
 
     if (currency && currency !== nightCurrency) throw new Error('Currency changed within stay pricing');
     currency = nightCurrency;
-    const nightlyRate = new Decimal(effectiveRate);
-    const taxes = await input.taxService.calculateTaxes(
+    let nightlyRate = new Decimal(new Decimal(effectiveRate).toFixed(2));
+    const taxOptions = { numberOfNights: input.nights, nightNumber: i + 1, ...(input.guestId ? { guestId: input.guestId } : {}) };
+    const inclusive = input.isTaxInclusive ? await input.taxService.backCalculateFromInclusive(
+      nightlyRate.toFixed(2), 'room', input.propertyId, serviceDate, taxOptions, input.db,
+    ) : null;
+    const taxes = inclusive?.taxes ?? await input.taxService.calculateTaxes(
       nightlyRate.toFixed(2),
       'room',
       input.propertyId,
       serviceDate,
-      { numberOfNights: input.nights, nightNumber: i + 1 },
+      taxOptions,
       input.db,
     );
+    if (inclusive) nightlyRate = new Decimal(inclusive.baseAmount);
     const nightTax = taxes.reduce(
       (sum, tax) => sum.plus(new Decimal(tax.amount)),
       new Decimal(0),

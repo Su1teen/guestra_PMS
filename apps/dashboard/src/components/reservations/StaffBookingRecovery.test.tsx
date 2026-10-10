@@ -1,0 +1,43 @@
+import { beforeEach, expect, it, vi } from 'vitest';
+import { screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { renderWithProviders } from '../../test/helpers';
+import { api } from '../../lib/api';
+import { staffRecoveryKey, saveStaffRequest, readStaffRequest } from '../../lib/staff-booking-recovery';
+import StaffBookingRecovery from './StaffBookingRecovery';
+vi.mock('../../context/AuthContext', () => ({ useAuth: () => ({ user: { sub: 'staff-a' }, hasPermission: () => true }) }));
+vi.mock('../../context/PropertyContext', () => ({ useProperty: () => ({ propertyId: 'hotel-a' }) }));
+vi.mock('../../lib/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }));
+const token = 'a0000001-0000-4000-a000-000000000001';
+const key = staffRecoveryKey('staff-a', 'hotel-a');
+beforeEach(() => { sessionStorage.clear(); vi.clearAllMocks(); });
+it('recovers a committed result after remount without creating a second booking', async () => {
+  saveStaffRequest(key, token);
+  vi.mocked(api.get).mockResolvedValue({ data: { state: 'committed', reservationId: 'stay-a' } });
+  const first = renderWithProviders(<StaffBookingRecovery/>);
+  await screen.findByRole('link', { name: 'Open saved booking' });
+  first.unmount();
+  renderWithProviders(<StaffBookingRecovery/>);
+  const link = await screen.findByRole('link', { name: 'Open saved booking' });
+  expect(link).toHaveAttribute('href', '/reservations/stay-a?propertyId=hotel-a');
+  expect(api.post).not.toHaveBeenCalled();
+  await userEvent.click(link);
+  expect(readStaffRequest(key)).toBeNull();
+});
+it('keeps an unconfirmed token and checks again without resubmitting a payload', async () => {
+  saveStaffRequest(key, token);
+  vi.mocked(api.get).mockResolvedValue({ data: { state: 'unconfirmed' } });
+  renderWithProviders(<StaffBookingRecovery/>);
+  await screen.findByText(/No saved booking was found/);
+  await userEvent.click(screen.getByRole('button', { name: 'Check result' }));
+  expect(readStaffRequest(key)).toBe(token);
+  expect(api.post).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem(key)).toBe(token);
+});
+it('isolates recovery by user and property and ignores malformed data', () => {
+  saveStaffRequest(key, token);
+  expect(readStaffRequest(staffRecoveryKey('staff-b', 'hotel-a'))).toBeNull();
+  expect(readStaffRequest(staffRecoveryKey('staff-a', 'hotel-b'))).toBeNull();
+  sessionStorage.setItem(key, '{"guestId":"guest-a"}');
+  expect(readStaffRequest(key)).toBeNull();
+});

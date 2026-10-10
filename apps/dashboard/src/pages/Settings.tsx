@@ -178,7 +178,7 @@ function PropertySettings({ propertyId, queryClient }: { propertyId: string; que
         </div>
         <div className="grid grid-cols-3 gap-3">
           <div>
-            <label className="block text-xs font-medium text-telivity-mid-grey mb-1">País / Country (ISO)</label>
+            <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('legacy.paSCountryIso')}</label>
             <input
               type="text"
               maxLength={2}

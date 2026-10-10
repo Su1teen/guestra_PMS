@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Inject, Injectable } from '@nes
 import { and, eq, sql, or, inArray, isNull } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import Decimal from 'decimal.js';
-import { bookings, reservations, roomTypes, guests, guestPropertyLinks, reservationGuests } from '@telivityhaip/database';
+import { bookings, reservations, roomTypes, guests, guestPropertyLinks, reservationGuests, serviceBookings } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { ReservationService } from './reservation.service';
 import { RatePlanService } from '../rate-plan/rate-plan.service';
@@ -22,6 +22,18 @@ export function staffRequestFingerprint(dto: StaffCreateReservationDto) {
 export class StaffReservationService {
   constructor(@Inject(DRIZZLE) private readonly db: any, private readonly reservationsService: ReservationService,
     private readonly rates: RatePlanService, private readonly taxes: TaxService, private readonly outbox: DomainEventOutboxService) {}
+  /** Recover a committed staff request without repricing or creating another stay. */
+  async result(propertyId: string, requestId: string) {
+    return this.db.transaction(async (tx: any) => {
+      const key = 'staff:' + requestId;
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${propertyId + ':' + key}, 0))`);
+      const [row] = await tx.select({ id: reservations.id, status: reservations.status }).from(bookings)
+        .innerJoin(reservations, and(eq(reservations.bookingId, bookings.id), eq(reservations.propertyId, propertyId)))
+        .where(and(eq(bookings.propertyId, propertyId), eq(bookings.idempotencyKey, key)));
+      return row ? { state: 'committed' as const, reservationId: row.id, status: row.status }
+        : { state: 'unconfirmed' as const };
+    });
+  }
   async create(dto: StaffCreateReservationDto) {
     const dates = stayDates(dto.checkIn, dto.checkOut);
     if (dates.length > 366) throw new BadRequestException('Stay must not exceed 366 nights');
@@ -41,17 +53,17 @@ export class StaffReservationService {
       const [guest] = await tx.select({ id: guests.id }).from(guests).where(and(eq(guests.id, dto.guestId), eq(guests.isDeleted, false), isNull(guests.mergedIntoGuestId),
         or(inArray(guests.id, tx.select({ guestId: reservations.guestId }).from(reservations).where(eq(reservations.propertyId, dto.propertyId))),
           inArray(guests.id, tx.select({ guestId: reservationGuests.guestId }).from(reservationGuests).where(eq(reservationGuests.propertyId, dto.propertyId))),
+          inArray(guests.id, tx.select({ guestId: serviceBookings.guestId }).from(serviceBookings).where(eq(serviceBookings.propertyId, dto.propertyId))),
           inArray(guests.id, tx.select({ guestId: guestPropertyLinks.guestId }).from(guestPropertyLinks).where(eq(guestPropertyLinks.propertyId, dto.propertyId))))));
       if (!guest) throw new BadRequestException('Guest not found in this property');
       const plan = await this.rates.findById(dto.ratePlanId, dto.propertyId, tx, true);
-      if (plan.isTaxInclusive) throw new BadRequestException({ code: 'TAX_INCLUSIVE_UNSUPPORTED', message: 'Tax-inclusive staff pricing requires a verified tax decomposition' });
       if (plan.roomTypeId !== dto.roomTypeId) throw new BadRequestException('Rate plan does not apply to the selected room type');
       await this.rates.assertSellable(dto.propertyId, dto.ratePlanId, dto.checkIn, dto.checkOut, tx);
       const [type] = await tx.select().from(roomTypes).where(and(eq(roomTypes.id, dto.roomTypeId), eq(roomTypes.propertyId, dto.propertyId)));
       if (!type?.isActive || (dto.adults ?? 1) + (dto.children ?? 0) > type.maxOccupancy) throw new BadRequestException('Selected room type cannot accommodate this party');
       const quote = await calculateCanonicalRoomPricing({ propertyId: dto.propertyId, ratePlanId: dto.ratePlanId,
         checkIn: dto.checkIn, checkOut: dto.checkOut, nights: dates.length, isTaxInclusive: plan.isTaxInclusive,
-        ratePlanService: this.rates, taxService: this.taxes, db: tx, lockForUpdate: true });
+        ratePlanService: this.rates, taxService: this.taxes, db: tx, lockForUpdate: true, guestId: dto.guestId });
       if (quote.currency !== dto.currencyCode || !new Decimal(quote.totalAmount).equals(dto.expectedTotal)) throw new ConflictException({ code: 'QUOTE_CHANGED', message: 'Reservation price changed. Refresh the quote before accepting.' });
       const created = await this.reservationsService.create({ propertyId: dto.propertyId, guestId: dto.guestId,
         arrivalDate: dto.checkIn, departureDate: dto.checkOut, roomTypeId: dto.roomTypeId, ratePlanId: dto.ratePlanId,

@@ -214,7 +214,7 @@ export default function Reports() {
         {[
           { to: '/reports/management', permission: 'reports.view', label: i18n.language.startsWith('ru') ? 'Финансовая картина' : 'Management', note: i18n.language.startsWith('ru') ? 'Доходы и расходы сети' : 'Revenue and expenses' },
           { to: '/reports', permission: 'reports.view', label: i18n.language.startsWith('ru') ? 'Операционные отчёты' : 'Operations', note: i18n.language.startsWith('ru') ? 'Ежедневные показатели' : 'Daily performance', active: true },
-          { to: '/revenue', permission: 'revenue.manage', label: i18n.language.startsWith('ru') ? 'Прогноз спроса' : 'Demand forecast', note: i18n.language.startsWith('ru') ? 'Pickup и бронирования' : 'Pickup and bookings' },
+          { to: '/revenue', permission: 'revenue.manage', label: i18n.language.startsWith('ru') ? 'Прогноз спроса' : 'Demand forecast', note: i18n.language.startsWith('ru') ? 'Прирост и темп бронирования' : 'Pickup and bookings' },
           { to: '/accounting', permission: 'accounting.view', label: i18n.language.startsWith('ru') ? 'Бухгалтерия' : 'Accounting', note: i18n.language.startsWith('ru') ? 'Обороты и сверка' : 'Ledgers and reconciliation' },
         ].filter((area) => hasPermission(area.permission)).map((area) => <Link key={area.to} to={area.to} aria-current={area.active ? 'page' : undefined}
           className={`rounded-xl border px-4 py-3 transition-colors ${area.active ? 'border-telivity-teal bg-teal-50 text-telivity-navy shadow-sm' : 'border-gray-200 bg-white text-telivity-slate hover:border-telivity-teal'}`}>
@@ -329,7 +329,7 @@ export default function Reports() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <KpiCard title="ADR" value={kpis.adr != null ? formatMoney(kpis.adr, currencyCode) : '—'} icon={DollarSign} />
             <KpiCard title="RevPAR" value={kpis.revpar != null ? formatMoney(kpis.revpar, currencyCode) : '—'} icon={TrendingUp} />
-            <KpiCard title="Occupancy" value={formatOccupancyPercent(kpis.occupancyRate)} icon={Percent} />
+            <KpiCard title={t('reports.occupancy')} value={formatOccupancyPercent(kpis.occupancyRate)} icon={Percent} />
           </div>
           {isPortfolioMode && Array.isArray(reportData.byProperty) && (
             <div className="bg-white rounded-xl shadow-sm p-5">
@@ -386,22 +386,22 @@ export default function Reports() {
               <KpiCard title="OOO" value={reportData.outOfOrder ?? 0} icon={Percent} />
             )}
             {isPortfolioMode && (
-              <KpiCard title="Arrivals" value={reportData.arrivals ?? 0} icon={Percent} />
+              <KpiCard title={t('reports.arrivals')} value={reportData.arrivals ?? 0} icon={Percent} />
             )}
-            <KpiCard title="Occupancy %" value={formatOccupancyPercent(reportData.occupancyRate)} icon={Percent} />
+            <KpiCard title={t('reports.occupancy')} value={formatOccupancyPercent(reportData.occupancyRate)} icon={Percent} />
           </div>
           {isPortfolioMode && Array.isArray(reportData.byProperty) && (
             <div className="bg-white rounded-xl shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-telivity-navy mb-3">By Property</h3>
+              <h3 className="text-sm font-semibold text-telivity-navy mb-3">{t('reports.byProperty')}</h3>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-left text-telivity-mid-grey border-b border-gray-100">
-                      <th className="pb-2 font-medium">Property</th>
-                      <th className="pb-2 font-medium">Occupied</th>
-                      <th className="pb-2 font-medium">Available</th>
-                      <th className="pb-2 font-medium">Occupancy</th>
-                      <th className="pb-2 font-medium">Arrivals</th>
+                      <th className="pb-2 font-medium">{t('reports.property')}</th>
+                      <th className="pb-2 font-medium">{t('reports.occupied')}</th>
+                      <th className="pb-2 font-medium">{t('reports.available')}</th>
+                      <th className="pb-2 font-medium">{t('reports.occupancy')}</th>
+                      <th className="pb-2 font-medium">{t('reports.arrivals')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -426,13 +426,13 @@ export default function Reports() {
       {report === 'daily-revenue' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <KpiCard title="Room Revenue" value={revenue.room != null ? formatMoney(revenue.room, currencyCode) : '—'} icon={DollarSign} />
-            <KpiCard title="Other Revenue" value={revenue.other != null ? formatMoney(revenue.other, currencyCode) : '—'} icon={DollarSign} />
-            <KpiCard title="Total Revenue" value={revenue.total != null ? formatMoney(revenue.total, currencyCode) : '—'} icon={DollarSign} />
+            <KpiCard title={t('reports.roomRevenue')} value={revenue.room != null ? formatMoney(revenue.room, currencyCode) : '—'} icon={DollarSign} />
+            <KpiCard title={t('reports.otherRevenue')} value={revenue.other != null ? formatMoney(revenue.other, currencyCode) : '—'} icon={DollarSign} />
+            <KpiCard title={t('reports.totalRevenue')} value={revenue.total != null ? formatMoney(revenue.total, currencyCode) : '—'} icon={DollarSign} />
           </div>
           {payments && Object.keys(payments).length > 0 && (
             <div className="bg-white rounded-xl shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-telivity-navy mb-3">Revenue by Payment Method</h3>
+              <h3 className="text-sm font-semibold text-telivity-navy mb-3">{t('reports.revenueByPaymentMethod')}</h3>
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={Object.entries(payments as Record<string, number>).filter(([k]) => k !== 'total').map(([k, v]) => ({ method: k, amount: v }))}>
                   <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="method" tick={{ fontSize: 12 }} /><YAxis tick={{ fontSize: 12 }} /><Tooltip />

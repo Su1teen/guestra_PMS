@@ -131,6 +131,28 @@ jobs:
       - name: Build packages
         run: pnpm build
 
+      - name: Migrate core database
+        run: pnpm db:migrate
+        env:
+          DATABASE_URL: postgresql://haip:haip@localhost:5432/haip_smoke
+
+      - name: Verify PMS operations against core PostgreSQL
+        run: pnpm --filter @telivityhaip/api exec vitest run src/modules/guest/guest-360.postgres.spec.ts src/modules/reservation/pms-operations.postgres.spec.ts src/pms-storage.postgres.spec.ts --maxWorkers=1 --minWorkers=1
+        env:
+          DATABASE_URL: postgresql://haip:haip@localhost:5432/haip_smoke
+          PMS_LIVE_PG: '1'
+
+      - name: Migrate optional booking request package
+        run: pnpm --filter @telivityhaip/booking-requests db:migrate:dev
+        env:
+          DATABASE_URL: postgresql://haip:haip@localhost:5432/haip_smoke
+
+      - name: Verify accepted pricing mutex on PostgreSQL
+        run: pnpm --filter @telivityhaip/api exec vitest run src/common/database/accepted-pricing-lock.postgres.spec.ts --maxWorkers=1 --minWorkers=1
+        env:
+          DATABASE_URL: postgresql://haip:haip@localhost:5432/haip_smoke
+          ACCEPTED_PRICING_LIVE_PG: '1'
+
       - name: Run release smoke test
         run: pnpm --filter @telivityhaip/api run test:release-smoke
         env:

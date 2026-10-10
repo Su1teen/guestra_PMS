@@ -67,7 +67,7 @@ export class OperationsService {
 
     return Promise.all(rows.map(async (row: any) => {
       const reservationId = row.reservation.id;
-      const [depositRows, hkRows, extraRows, taskRows] = await Promise.all([
+      const [depositRows, extraRows, taskRows] = await Promise.all([
         this.db.select({
           status: depositLedgerEntries.status,
           amount: depositLedgerEntries.amount,
@@ -77,13 +77,6 @@ export class OperationsService {
           eq(depositLedgerEntries.reservationId, reservationId),
           inArray(depositLedgerEntries.status, ['held', 'applied'] as any),
         )),
-        row.reservation.roomId
-          ? this.db.select().from(housekeepingTasks).where(and(
-              eq(housekeepingTasks.propertyId, propertyId),
-              eq(housekeepingTasks.roomId, row.reservation.roomId),
-              sql`${housekeepingTasks.serviceDate}::date <= ${row.reservation.arrivalDate}`,
-            )).orderBy(sql`${housekeepingTasks.serviceDate} desc`).limit(1)
-          : Promise.resolve([]),
         this.db.select({
           id: reservationServices.id,
           name: services.name,
@@ -105,14 +98,14 @@ export class OperationsService {
         )),
       ]);
 
-      const depositAmount = depositRows.reduce((sum: number, d: any) => sum + Number(d.amount), 0);
-      const latestHk = hkRows[0];
+      const depositAmount = depositRows.filter((d: any) => d.currencyCode === row.reservation.currencyCode)
+        .reduce((sum: number, d: any) => sum + Number(d.amount), 0);
       const guestComplete = Boolean(
         row.guest.firstName && row.guest.lastName && (row.guest.email || row.guest.phone),
       );
       const roomOperational = !['out_of_order', 'out_of_service'].includes(row.roomStatus ?? '');
-      const housekeepingReady = ['guest_ready', 'inspected', 'vacant_clean'].includes(row.roomStatus ?? '')
-        || latestHk?.status === 'inspected';
+      // Historical inspection cannot make a currently dirty/OOO room ready.
+      const housekeepingReady = roomOperational && ['guest_ready', 'vacant_clean'].includes(row.roomStatus ?? '');
 
       return {
         reservationId,

@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 /**
  * PaymentStatusBadge — displays Stripe payment status with color coding.
  */
@@ -19,6 +20,7 @@ interface PaymentStatusBadgeProps {
 }
 
 export function PaymentStatusBadge({ status, gatewayProvider }: PaymentStatusBadgeProps) {
+  const { t } = useTranslation();
   const style = STATUS_STYLES[status] ?? {
     bg: 'bg-gray-100',
     text: 'text-gray-600',
@@ -30,11 +32,11 @@ export function PaymentStatusBadge({ status, gatewayProvider }: PaymentStatusBad
       <span
         className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${style.bg} ${style.text}`}
       >
-        {style.label}
+        {t('legacy.paymentStatuses.' + status, { defaultValue: t('legacy.paymentUnknown') })}
       </span>
       {gatewayProvider && (
         <span className="text-xs text-gray-400">
-          via {gatewayProvider}
+          {t('legacy.via')} {gatewayProvider}
         </span>
       )}
     </span>

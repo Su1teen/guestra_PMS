@@ -1,4 +1,5 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { GuestModule } from '../guest/guest.module';
 import { TaxModule } from '../tax/tax.module';
 import { ReservationCalendarService } from './reservation-calendar.service';
 import { StaffReservationService } from './staff-reservation.service';
@@ -24,6 +25,7 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
 
 @Module({
   imports: [
+    GuestModule,
     forwardRef(() => FolioModule),
     RoomModule,
     PaymentModule,

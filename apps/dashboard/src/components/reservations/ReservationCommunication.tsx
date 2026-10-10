@@ -5,6 +5,7 @@ import { Pencil, Trash2, Check, X } from 'lucide-react';
 import { api } from '../../lib/api';
 import { errorMessage } from '../../lib/error-message';
 import { useAuth } from '../../context/AuthContext';
+import { QueryError } from '../ui/ErrorBoundary';
 export function ReservationMessageCompose({
   reservationId,
   propertyId,
@@ -105,20 +106,22 @@ export function ReservationMessageCompose({
 export function ReservationOpsNotes({
   reservationId,
   propertyId,
+  readOnly = false,
 }: {
   reservationId: string;
   propertyId: string;
+  readOnly?: boolean;
 }) {
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const [body, setBody] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editBody, setEditBody] = useState('');
-  const { data, refetch } = useQuery({
+  const { data, refetch, isError, isPending } = useQuery({
     queryKey: ['reservation-notes', reservationId, propertyId],
     queryFn: () =>
       api
-        .get(`/v1/reservations/${reservationId}/notes`, { params: { propertyId } })
+        .get(`/v1/reservations/${reservationId}/notes`, { params: { propertyId }, skipErrorToast: true })
         .then((r) => r.data),
     enabled: !!reservationId && !!propertyId,
   });
@@ -158,6 +161,7 @@ export function ReservationOpsNotes({
   return (
     <div className="space-y-2 border-t border-gray-100 pt-4">
       <p className="text-xs font-medium text-telivity-mid-grey">{t('reservations.opsNotes')}</p>
+      {isError ? <QueryError onRetry={() => void refetch()}/> : isPending ? <p role="status" className="text-xs">{t('common.loading')}</p> :
       <ul className="space-y-1 max-h-48 overflow-y-auto">
         {notes.map((n: { id: string; body: string; isActive?: boolean }) => (
           <li key={n.id} className={`text-sm bg-telivity-light-grey rounded-lg p-2 ${n.isActive === false ? 'opacity-60' : ''}`}>
@@ -185,7 +189,7 @@ export function ReservationOpsNotes({
             ) : (
               <div className="flex items-start justify-between gap-2">
                 <span className="min-w-0 break-words">{n.body}</span>
-                <div className="flex gap-2 shrink-0">
+                {!readOnly && hasPermission('reservations.write') && <div className="flex gap-2 shrink-0">
                   <button
                     disabled={!hasPermission('reservations.write')}
                     onClick={() => { setEditingId(n.id); setEditBody(n.body); }}
@@ -209,7 +213,7 @@ export function ReservationOpsNotes({
                   >
                     <Trash2 size={12} />
                   </button>
-                </div>
+                </div>}
               </div>
             )}
           </li>
@@ -217,7 +221,8 @@ export function ReservationOpsNotes({
         {notes.length === 0 && (
           <li className="text-xs text-telivity-mid-grey">{t('reservations.noOpsNotes')}</li>
         )}
-      </ul>
+      </ul>}
+      {!readOnly && hasPermission('reservations.write') && <>
       <textarea
         value={body}
         onChange={(e) => setBody(e.target.value)}
@@ -233,6 +238,7 @@ export function ReservationOpsNotes({
       >
         {t('reservations.saveNote')}
       </button>
+      </>}
     </div>
   );
 }

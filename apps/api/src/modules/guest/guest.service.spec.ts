@@ -234,7 +234,7 @@ describe('GuestService', () => {
       let callCount = 0;
       mockDb.select.mockImplementation(() => {
         callCount++;
-        if (callCount <= 3) {
+        if (callCount <= 4) {
           // inArray subqueries — chainable objects (never awaited)
           return {
             from: vi.fn().mockReturnValue({
@@ -242,7 +242,7 @@ describe('GuestService', () => {
             }),
           };
         }
-        if (callCount === 4) {
+        if (callCount === 5) {
           // paginated data query
           return {
             from: vi.fn().mockReturnValue({

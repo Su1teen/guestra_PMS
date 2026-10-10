@@ -1,4 +1,25 @@
 {
+  "reservationActions": {
+    "reason": "Cancellation reason",
+    "back": "Back without changes"
+  },
+  "staffRecovery": {
+    "pending": "A booking request has no confirmed response. Check its result first.",
+    "committed": "The booking was saved. No second booking is needed.",
+    "unconfirmed": "No saved booking was found yet. The request may still be running. Check again; the request is never resubmitted automatically after reload.",
+    "check": "Check result",
+    "open": "Open saved booking",
+    "storageError": "The recovery token could not be saved. Allow site storage and retry."
+  },
+  "guestContext": {
+    "title": "Guest context",
+    "notes": "Guest profile notes",
+    "noNotes": "No guest notes",
+    "showHistory": "Previous bookings",
+    "hideHistory": "Hide history",
+    "noHistory": "No other bookings yet",
+    "services": "Service bookings"
+  },
   "accounting": {
     "actions": "Actions",
     "add": "Add",
@@ -383,7 +404,8 @@
     "yes": "Yes",
     "delete": "Delete",
     "close": "Close",
-    "remove": "Remove"
+    "remove": "Remove",
+    "confirm": "Confirm"
   },
   "commercial": {
     "arLedgers": "A/R ledgers",
@@ -2397,7 +2419,12 @@
       "availability": "Availability by date",
       "tasks": "Shift tasks and SLA",
       "maintenance": "Maintenance",
-      "requests": "Guest requests"
+      "requests": "Guest requests",
+      "occupancy": "Occupancy (OCC)",
+      "adr": "Average daily rate (ADR)",
+      "revpar": "Revenue per available room (RevPAR)",
+      "pickup": "Booking pickup",
+      "bookingPace": "Booking pace"
     },
     "moveUp": "Move up: {{name}}",
     "moveDown": "Move down: {{name}}",
@@ -2425,7 +2452,9 @@
     "periods": {
       "today": "Today",
       "next7": "Next 7 days",
-      "next28": "Next 28 days"
+      "next28": "Next 28 days",
+      "past7": "Last 7 days",
+      "past28": "Last 28 days"
     },
     "density": "Display",
     "compact": "Compact",
@@ -2454,6 +2483,13 @@
       "depositReceived": "Deposit not received",
       "guestInformationComplete": "Guest information incomplete",
       "operationalTasksComplete": "Tasks remain open"
+    },
+    "reportBasis": {
+      "occupancy": "Average actual occupancy for the period, from the existing report.",
+      "adr": "Average daily ADR for the period, from the existing report.",
+      "revpar": "Average daily RevPAR for the period, from the existing report.",
+      "pickup": "Booking change over the period for the stay night {{date}}.",
+      "bookingPace": "Average rooms on books per night. Daily values show rooms on books."
     }
   },
   "staffNotifications": {
@@ -2562,7 +2598,9 @@
     },
     "priceMode": "Show rates",
     "pricePreview": "One-night rate including taxes. The full stay is quoted when creating a reservation.",
-    "icalPool": "iCal: {{count}} blocks in room-category inventory. Remaining capacity accounts for them; blocks are not assigned to individual rooms."
+    "icalPool": "iCal: {{count}} blocks in room-category inventory. Remaining capacity accounts for them; blocks are not assigned to individual rooms.",
+    "icalCategory": "iCal blocks — {{name}}",
+    "icalNight": "Category blocks: {{count}}"
   },
   "guestQuickView": {
     "title": "Guest quick view",
@@ -2572,6 +2610,7 @@
     "dnr": "Guest is on the do-not-rent list"
   },
   "errorCodes": {
+    "TAX_INCLUSIVE_NOT_REPRESENTABLE": "The gross price cannot be decomposed exactly with the configured tax rounding. Check the tariff and tax rules.",
     "QUOTE_CHANGED": "The price changed. Refresh the quote and accept the new total.",
     "REQUEST_CHANGED": "This request key was used for different booking details. Check the existing reservation.",
     "WORKSPACE_CONFLICT": "The workspace changed in another session. Load the saved version before saving again.",
@@ -2631,5 +2670,63 @@
     "explain": "Explain with HAIP AI",
     "generating": "Generating…",
     "unavailable": "No explanation available (AI off or not enough numeric screen facts)."
+  },
+  "legacy": {
+    "csvDetected": "{{columns}} columns, {{rows}} data rows detected.",
+    "dryRun": "No data was written",
+    "committed": "Committed",
+    "wouldCreate": "Would create",
+    "created": "Created",
+    "cardUnavailable": "Card input is not configured",
+    "saveCard": "Save Card",
+    "processing": "Processing…",
+    "cardInvalid": "Card verification failed. Check the card details and try again.",
+    "gold": "Gold",
+    "platinum": "Platinum",
+    "diamond": "Diamond",
+    "doc": "• Doc:",
+    "identificaORegistroFnrh": "Identificação & Registro FNRH",
+    "folioId": "Folio ID:",
+    "balance": "Balance:",
+    "status": "Status:",
+    "guestDetailsRegistrationProfile": "Guest details & registration profile",
+    "selectAProperty": "Select a property",
+    "downloadCsvTemplate": "Download CSV template",
+    "requiredColumns": "Required columns",
+    "none": "None",
+    "optionalColumns": "Optional columns",
+    "uploadCsvFile": "Upload .csv file",
+    "blank": "(blank)",
+    "ignore": "— Ignore —",
+    "unmappedRequiredFieldS": "Unmapped required field(s):",
+    "totalRows": "Total rows",
+    "errors": "Errors",
+    "row": "Row",
+    "error": "Error",
+    "createdId": "Created ID",
+    "steps": "Steps",
+    "charges": "Charges",
+    "noShows": "No-Shows",
+    "revenue": "Revenue",
+    "derived": "Derived",
+    "negotiated": "Negotiated",
+    "package": "Package",
+    "paSCountryIso": "País / Country (ISO)",
+    "room": "Room",
+    "foodBeverage": "Food & Beverage",
+    "tax": "Tax",
+    "incidental": "Incidental",
+    "via": "via",
+    "paymentUnknown": "Unknown status",
+    "paymentStatuses": {
+      "authorized": "Authorized",
+      "captured": "Captured",
+      "settled": "Settled",
+      "pending": "Pending",
+      "failed": "Failed",
+      "voided": "Voided",
+      "refunded": "Refunded",
+      "partially_refunded": "Partial Refund"
+    }
   }
 }

@@ -8,7 +8,7 @@ describe('staff reservation quote', () => {
     rates = { findById: vi.fn().mockResolvedValue({ roomTypeId: 'rt-a', isTaxInclusive: false }), assertSellable: vi.fn(), calculateDerivedRate: vi.fn().mockResolvedValue({ effectiveRate: 1200.01, currency: 'KZT' }) };
     taxes = { calculateTaxes: vi.fn().mockResolvedValue([{ amount: '120.00' }]) };
     availability = { searchAvailability: vi.fn().mockResolvedValue([{ roomTypeId: 'rt-a', date: '2026-10-10', available: 1 }, { roomTypeId: 'rt-a', date: '2026-10-11', available: 1 }]) };
-    service = new ReservationQuoteService(rates, taxes, availability);
+    service = new ReservationQuoteService(rates, taxes, availability, { findById: vi.fn() } as any);
   });
   it('prices with canonical decimal amounts and scopes every call to the requesting property', async () => {
     const quote = await service.quote(input);

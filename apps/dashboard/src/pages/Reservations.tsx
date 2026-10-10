@@ -26,6 +26,7 @@ import { useToast } from '../components/ui/Toast';
 import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import ReservationWorkspace from '../components/reservations/ReservationWorkspace';
+import StaffBookingRecovery from '../components/reservations/StaffBookingRecovery';
 import type { Reservation } from '../components/reservations/types';
 import CreateReservationModal, {
   type CreateReservationPrefill,
@@ -96,6 +97,7 @@ function parseImportRows(text: string): Record<string, unknown>[] {
 // ---- Reservation List ----
 function ReservationList() {
   const { t } = useTranslation();
+  const { hasPermission } = useAuth();
   const { propertyId, currencyCode } = useProperty();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -360,27 +362,27 @@ function ReservationList() {
               <button onClick={() => { setDetailRes(row.original); setActionMenu(null); }} className="w-full text-left px-3 py-1.5 text-sm hover:bg-telivity-light-grey flex items-center gap-2">
                 <Eye size={14} /> {t('reservations.viewDetails')}
               </button>
-              {row.original.status === 'pending' && (
-                <button onClick={() => { api.patch(`/v1/reservations/${row.original.id}/confirm`).then(() => queryClient.invalidateQueries({ queryKey: ['reservations'] })); setActionMenu(null); }} className="w-full text-left px-3 py-1.5 text-sm hover:bg-telivity-light-grey flex items-center gap-2">
+              {hasPermission('reservations.write') && row.original.status === 'pending' && (
+                <button onClick={() => { api.patch(`/v1/reservations/${row.original.id}/confirm`, {}, { params: { propertyId } }).then(() => queryClient.invalidateQueries({ queryKey: ['reservations'] })); setActionMenu(null); }} className="w-full text-left px-3 py-1.5 text-sm hover:bg-telivity-light-grey flex items-center gap-2">
                   <Pencil size={14} /> {t('reservations.confirm')}
                 </button>
               )}
-              {['confirmed', 'assigned'].includes(row.original.status) && (
-                <button onClick={() => { setActionMenu(null); navigate('/front-desk'); }} className="w-full text-left px-3 py-1.5 text-sm hover:bg-telivity-light-grey flex items-center gap-2">
+              {hasPermission('reservations.write', 'frontdesk.access') && ['confirmed', 'assigned'].includes(row.original.status) && (
+                <button onClick={() => { setActionMenu(null); navigate(`/front-desk?reservationId=${row.original.id}&propertyId=${propertyId}&action=check-in`); }} className="w-full text-left px-3 py-1.5 text-sm hover:bg-telivity-light-grey flex items-center gap-2">
                   <LogIn size={14} /> {t('reservations.checkIn')}
                 </button>
               )}
-              {row.original.status === 'checked_in' && (
-                <button onClick={() => { api.patch(`/v1/reservations/${row.original.id}/check-out`, {}).then(() => queryClient.invalidateQueries({ queryKey: ['reservations'] })); setActionMenu(null); }} className="w-full text-left px-3 py-1.5 text-sm hover:bg-telivity-light-grey flex items-center gap-2">
+              {hasPermission('reservations.write', 'frontdesk.access') && ['checked_in','stayover','due_out'].includes(row.original.status) && (
+                <button onClick={() => { navigate(`/front-desk?reservationId=${row.original.id}&propertyId=${propertyId}&action=check-out`); setActionMenu(null); }} className="w-full text-left px-3 py-1.5 text-sm hover:bg-telivity-light-grey flex items-center gap-2">
                   <LogOut size={14} /> {t('reservations.checkOut')}
                 </button>
               )}
-              {['confirmed', 'assigned', 'pending'].includes(row.original.status) && (
+              {hasPermission('reservations.write') && ['confirmed', 'assigned', 'pending'].includes(row.original.status) && (
                 <button onClick={() => { if (confirm(t('reservations.confirmNoShow'))) { markNoShow(row.original.id); } setActionMenu(null); }} className="w-full text-left px-3 py-1.5 text-sm hover:bg-telivity-light-grey flex items-center gap-2">
                   <UserX size={14} /> {t('reservations.markNoShow')}
                 </button>
               )}
-              {!['cancelled', 'checked_out', 'no_show'].includes(row.original.status) && (
+              {hasPermission('reservations.write') && ['pending','confirmed','assigned'].includes(row.original.status) && (
                 <button onClick={() => { if (confirm(t('reservations.confirmCancellation'))) { cancelReservation(row.original.id); } setActionMenu(null); }} className="w-full text-left px-3 py-1.5 text-sm text-telivity-orange hover:bg-telivity-light-grey flex items-center gap-2">
                   <Ban size={14} /> {t('common.cancel')}
                 </button>
@@ -390,7 +392,7 @@ function ReservationList() {
         </div>
       ),
     },
-  ], [actionMenu, queryClient, navigate, cancelReservation, markNoShow, selectedIds, allOnPageSelected, pageIds, t]);
+  ], [actionMenu, queryClient, navigate, cancelReservation, markNoShow, selectedIds, allOnPageSelected, pageIds, t, propertyId, hasPermission]);
 
   const table = useReactTable({
     data: reservations,
@@ -727,6 +729,21 @@ function AvailabilityCalendar() {
   const roomTypes: { id: string; name: string }[] = calendarQuery.data?.roomTypes ?? [];
   const reservations: Reservation[] = calendarQuery.data?.reservations ?? [];
   const blocks: { roomTypeId: string; startDate: string; endDate: string }[] = calendarQuery.data?.blocks ?? [];
+  const reservationsByRoom = useMemo(() => {
+    const map = new Map<string, Reservation[]>();
+    for (const reservation of reservations) if (reservation.roomId) {
+      const group = map.get(reservation.roomId) ?? []; group.push(reservation); map.set(reservation.roomId, group);
+    }
+    return map;
+  }, [reservations]);
+  const availabilityByNight = useMemo(() => new Map<string, number>((calendarQuery.data?.availability ?? []).map((a: any) => [a.roomTypeId + ':' + a.date, a.available])), [calendarQuery.data?.availability]);
+  const pooledBlocks = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const block of blocks) for (const date of dayKeys) if (block.startDate <= date && block.endDate > date) {
+      const key = block.roomTypeId + ':' + date; map.set(key, (map.get(key) ?? 0) + 1);
+    }
+    return map;
+  }, [blocks, dayKeys.join(',')]);
   const cellIndex = useMemo(() => {
     const map = new Map<string, Reservation>();
     for (const r of reservations) for (const date of dayKeys) if (r.roomId && r.arrivalDate <= date && r.departureDate > date) map.set(r.roomId + ':' + date, r);
@@ -745,12 +762,12 @@ function AvailabilityCalendar() {
   const cellState = useCallback(
     (room: TapeRoom, date: string): 'booked' | 'blocked' | 'dirty' | 'free' => {
       if (getResForCell(room.id, date)) return 'booked';
-      if (calendarQuery.data?.availability?.some((a: any) => a.roomTypeId === room.roomTypeId && a.date === date && a.available <= 0)) return 'blocked';
+      if ((availabilityByNight.get(room.roomTypeId + ':' + date) ?? Infinity) <= 0) return 'blocked';
       if (room.status && UNSELLABLE_ROOM_STATUSES.includes(room.status)) return 'blocked';
       if (room.status === 'vacant_dirty' && date === todayKey) return 'dirty';
       return 'free';
     },
-    [getResForCell, todayKey, calendarQuery.data],
+    [getResForCell, todayKey, availabilityByNight],
   );
 
   const rangeKeys = useCallback((from: string, to: string) => {
@@ -805,9 +822,9 @@ function AvailabilityCalendar() {
   const visibleRooms = rooms.filter((room) => {
     if (roomTypeFilter && room.roomTypeId !== roomTypeFilter) return false;
     if (accessibleOnly && !room.isAccessible) return false;
-    if (statusFilter && !reservations.some(r => r.roomId === room.id && r.status === statusFilter)) return false;
+    if (statusFilter && !(reservationsByRoom.get(room.id) ?? []).some(r => r.status === statusFilter)) return false;
     const needle = search.trim().toLocaleLowerCase();
-    return !needle || room.number.toLocaleLowerCase().includes(needle) || reservations.some((r) => r.roomId === room.id && [r.guestName, r.guest?.firstName, r.guest?.lastName, r.confirmationNumber].some((v) => v?.toLocaleLowerCase().includes(needle)));
+    return !needle || room.number.toLocaleLowerCase().includes(needle) || (reservationsByRoom.get(room.id) ?? []).some((r) => [r.guestName, r.guest?.firstName, r.guest?.lastName, r.confirmationNumber].some((v) => v?.toLocaleLowerCase().includes(needle)));
   });
 
   if (!propertyId) {
@@ -870,6 +887,10 @@ function AvailabilityCalendar() {
             </tr>
           </thead>
           <tbody>
+            {roomTypes.filter(type => (!roomTypeFilter || type.id === roomTypeFilter) && blocks.some(block => block.roomTypeId === type.id)).map(type => <tr key={'pool-' + type.id} className="border-b bg-orange-50 text-xs text-orange-800">
+              <th scope="row" className="sticky left-0 bg-orange-50 p-3 text-left font-medium">{t('reservationWorkspace.icalCategory', { name: type.name })}</th>
+              {dayKeys.map(date => { const count = pooledBlocks.get(type.id + ':' + date) ?? 0; return <td key={date} className="p-2 text-center" title={t('reservationWorkspace.icalNight', { count })}>{count || '—'}</td>; })}
+            </tr>)}
             {visibleRooms.map((room, i) => (
               <tr key={room.id} className={`border-b border-gray-50 ${i % 2 === 1 ? 'bg-gray-50/30' : ''}`}>
                 <td className="px-3 py-2 text-xs font-medium text-telivity-navy sticky left-0 bg-white">{room.number}<div className="mt-1 text-[10px] text-telivity-mid-grey">{roomTypes.find((rt) => rt.id === room.roomTypeId)?.name}</div></td>
@@ -883,7 +904,7 @@ function AvailabilityCalendar() {
                       className={'h-full border-r border-gray-100 ' + (isSelected(room.id, date) ? 'bg-telivity-teal/50' : state === 'blocked' ? 'bg-orange-100' : state === 'dirty' ? 'bg-yellow-100' : 'hover:bg-teal-50')}
                       title={state === 'blocked' ? t('reservations.tape.legendBlocked') : state === 'dirty' ? t('reservations.tape.legendDirty') : date}>{priceMode && pricesQuery.data?.roomTypeId === room.roomTypeId && <span className="block pt-14 text-[10px] font-medium text-gray-600">{formatMoney(pricesQuery.data.prices.find((p: any) => p.date === date)?.totalAmount, currencyCode)}</span>}</button>
                   })}</div>
-                  {reservations.filter(r => r.roomId === room.id && (!statusFilter || r.status === statusFilter)).map(res => {
+                  {(reservationsByRoom.get(room.id) ?? []).filter(r => !statusFilter || r.status === statusFilter).map(res => {
                     const left = res.arrivalDate < dayKeys[0] ? 0 : dayKeys.indexOf(res.arrivalDate);
                     const right = res.departureDate > dayKeys[dayCount - 1] ? dayCount : dayKeys.indexOf(res.departureDate);
                     if (left < 0 || right <= left) return null;
@@ -1075,12 +1096,12 @@ function UnassignedQueue() {
 export default function Reservations() {
   const { propertyId } = useProperty();
   return (
-    <Routes key={propertyId}>
+    <><StaffBookingRecovery/><Routes key={propertyId}>
       <Route index element={<ReservationList />} />
       <Route path="calendar" element={<AvailabilityCalendar />} />
       <Route path="unassigned" element={<UnassignedQueue />} />
       <Route path=":id" element={<ReservationDetailRoute />} />
-    </Routes>
+    </Routes></>
   );
 }
 

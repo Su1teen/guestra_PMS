@@ -214,8 +214,7 @@ export default function Import() {
 
   if (!propertyId) {
     return (
-      <div className="flex items-center justify-center h-64 text-telivity-mid-grey">
-        Select a property
+      <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('legacy.selectAProperty')}
       </div>
     );
   }
@@ -257,17 +256,17 @@ export default function Import() {
             disabled={!entity}
             className="flex items-center gap-2 border border-telivity-teal text-telivity-teal rounded-lg px-3 py-2 text-sm font-semibold disabled:opacity-50"
           >
-            <Download size={15} /> Download CSV template
+            <Download size={15} />{t('legacy.downloadCsvTemplate')}
           </button>
         </div>
 
         {selectedEntity && (
           <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <p className="text-xs font-semibold text-telivity-slate uppercase mb-1.5">Required columns</p>
+              <p className="text-xs font-semibold text-telivity-slate uppercase mb-1.5">{t('legacy.requiredColumns')}</p>
               <div className="flex flex-wrap gap-1.5">
                 {selectedEntity.required.length === 0 && (
-                  <span className="text-xs text-telivity-mid-grey">None</span>
+                  <span className="text-xs text-telivity-mid-grey">{t('legacy.none')}</span>
                 )}
                 {selectedEntity.required.map((c) => (
                   <span key={c} className="bg-telivity-orange/10 text-telivity-orange text-xs rounded px-1.5 py-0.5">
@@ -277,10 +276,10 @@ export default function Import() {
               </div>
             </div>
             <div>
-              <p className="text-xs font-semibold text-telivity-slate uppercase mb-1.5">Optional columns</p>
+              <p className="text-xs font-semibold text-telivity-slate uppercase mb-1.5">{t('legacy.optionalColumns')}</p>
               <div className="flex flex-wrap gap-1.5">
                 {selectedEntity.columns.filter((c) => !selectedEntity.required.includes(c)).length === 0 && (
-                  <span className="text-xs text-telivity-mid-grey">None</span>
+                  <span className="text-xs text-telivity-mid-grey">{t('legacy.none')}</span>
                 )}
                 {selectedEntity.columns
                   .filter((c) => !selectedEntity.required.includes(c))
@@ -310,7 +309,7 @@ export default function Import() {
             onClick={() => fileInputRef.current?.click()}
             className="flex items-center gap-2 bg-telivity-teal text-white rounded-lg px-3 py-2 text-sm font-semibold"
           >
-            <FileText size={15} /> Upload .csv file
+            <FileText size={15} />{t('legacy.uploadCsvFile')}
           </button>
           <span className="text-xs text-telivity-mid-grey">{t('import.pasteBelow')}</span>
         </div>
@@ -323,7 +322,7 @@ export default function Import() {
         />
         {csvText.trim().length > 0 && (
           <p className="text-xs text-telivity-mid-grey mt-2">
-            {sourceColumns.length} column(s), {dataRowCount} data row(s) detected.
+            {t('legacy.csvDetected', { columns: sourceColumns.length, rows: dataRowCount })}
           </p>
         )}
       </div>
@@ -342,14 +341,14 @@ export default function Import() {
             <tbody>
               {sourceColumns.map((col, i) => (
                 <tr key={`${col}-${i}`} className={`border-b border-gray-50 ${i % 2 === 1 ? 'bg-gray-50/50' : ''}`}>
-                  <td className="px-4 py-2 text-sm font-medium text-telivity-navy font-mono">{col || <em className="text-telivity-mid-grey">(blank)</em>}</td>
+                  <td className="px-4 py-2 text-sm font-medium text-telivity-navy font-mono">{col || <em className="text-telivity-mid-grey">{t('legacy.blank')}</em>}</td>
                   <td className="px-4 py-2">
                     <select
                       value={mapping[col] ?? UNMAPPED}
                       onChange={(e) => setMapping((m) => ({ ...m, [col]: e.target.value }))}
                       className="w-full max-w-xs border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:border-telivity-teal"
                     >
-                      <option value={UNMAPPED}>— Ignore —</option>
+                      <option value={UNMAPPED}>{t('legacy.ignore')}</option>
                       {selectedEntity.columns.map((c) => (
                         <option key={c} value={c}>
                           {c}
@@ -364,8 +363,7 @@ export default function Import() {
           </table>
 
           {missingRequired.length > 0 && (
-            <p className="text-xs text-telivity-orange mt-3">
-              Unmapped required field(s): {missingRequired.join(', ')}
+            <p className="text-xs text-telivity-orange mt-3">{t('legacy.unmappedRequiredFieldS')} {missingRequired.join(', ')}
             </p>
           )}
 
@@ -403,21 +401,21 @@ export default function Import() {
                   : 'bg-telivity-dark-teal/10 text-telivity-dark-teal'
               }`}
             >
-              {lastResult.dryRun ? 'No data was written' : 'Committed'}
+              {t(lastResult.dryRun ? 'legacy.dryRun' : 'legacy.committed')}
             </span>
           </div>
 
           <div className="grid grid-cols-3 gap-4 mb-5">
             <div className="bg-telivity-light-grey rounded-lg p-4 text-center">
-              <p className="text-xs text-telivity-mid-grey">Total rows</p>
+              <p className="text-xs text-telivity-mid-grey">{t('legacy.totalRows')}</p>
               <p className="text-2xl font-semibold text-telivity-navy">{lastResult.total}</p>
             </div>
             <div className="bg-telivity-dark-teal/5 rounded-lg p-4 text-center">
-              <p className="text-xs text-telivity-mid-grey">{lastResult.dryRun ? 'Would create' : 'Created'}</p>
+              <p className="text-xs text-telivity-mid-grey">{t(lastResult.dryRun ? 'legacy.wouldCreate' : 'legacy.created')}</p>
               <p className="text-2xl font-semibold text-telivity-dark-teal">{lastResult.created}</p>
             </div>
             <div className="bg-telivity-orange/5 rounded-lg p-4 text-center">
-              <p className="text-xs text-telivity-mid-grey">Errors</p>
+              <p className="text-xs text-telivity-mid-grey">{t('legacy.errors')}</p>
               <p className="text-2xl font-semibold text-telivity-orange">{lastResult.failed}</p>
             </div>
           </div>
@@ -427,8 +425,8 @@ export default function Import() {
               <table className="w-full">
                 <thead>
                   <tr className="bg-telivity-orange/5 border-b border-gray-100">
-                    <th className="px-4 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">Row</th>
-                    <th className="px-4 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">Error</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('legacy.row')}</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('legacy.error')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -454,8 +452,8 @@ export default function Import() {
               <table className="w-full">
                 <thead>
                   <tr className="bg-telivity-dark-teal/5 border-b border-gray-100">
-                    <th className="px-4 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">Row</th>
-                    <th className="px-4 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">Created ID</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('legacy.row')}</th>
+                    <th className="px-4 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('legacy.createdId')}</th>
                   </tr>
                 </thead>
                 <tbody>

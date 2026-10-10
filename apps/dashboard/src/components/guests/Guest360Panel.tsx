@@ -10,8 +10,9 @@ import { formatMoney } from '../../lib/money';
 import StatusBadge from '../ui/StatusBadge';
 import type { Guest } from '../../types/guest';
 import CashbackWallet from './CashbackWallet';
+import GuestContextSummary from './GuestContextSummary';
 
-type Guest360 = {
+export type Guest360 = {
   guest: Guest;
   summary: {
     totalStays: number;
@@ -91,6 +92,7 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
         <div className="p-5">
           {tab === 'overview' && (
             <div className="space-y-5">
+              <GuestContextSummary guest={guest} data={data} propertyId={propertyId}/>
               <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
                 <Mini icon={CalendarDays} label={ru ? 'Проживаний' : 'Stays'} value={summary.totalStays} />
                 <Mini icon={CircleDollarSign} label={ru ? 'Доход от номеров' : 'Room revenue'} value={formatMoney(summary.roomRevenue, summary.currencyCode)} />

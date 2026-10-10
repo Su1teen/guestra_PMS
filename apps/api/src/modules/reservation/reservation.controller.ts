@@ -62,6 +62,12 @@ export class ReservationController {
   ) {}
 
   // --- Action routes BEFORE :id to avoid conflicts ---
+  @Get('staff-create/:requestId')
+  @RequirePermissions('reservations.read', 'reservations.write')
+  @ApiOperation({ summary: 'Read the committed result of a staff request after a lost response' })
+  staffCreateResult(@Param('requestId', ParseUUIDPipe) requestId: string, @Query('propertyId', ParseUUIDPipe) propertyId: string) {
+    return this.staffReservationService.result(propertyId, requestId);
+  }
 
   @Get('calendar-ledger')
   @RequirePermissions('reservations.read', 'folios.read')

@@ -682,9 +682,9 @@ function GroupDetail() {
       <Modal open={folioOpen} onClose={() => setFolioOpen(false)} title={t('groups.masterFolio')}>
         {folio ? (
           <div className="space-y-2 text-sm">
-            <p><span className="text-telivity-mid-grey">Folio ID:</span> {folio.id ?? folio.folioId ?? '—'}</p>
-            <p><span className="text-telivity-mid-grey">Balance:</span> {formatMoney(folio.balance ?? folio.totalBalance ?? 0, currencyCode)}</p>
-            <p><span className="text-telivity-mid-grey">Status:</span> {folio.status ?? '—'}</p>
+            <p><span className="text-telivity-mid-grey">{t('legacy.folioId')}</span> {folio.id ?? folio.folioId ?? '—'}</p>
+            <p><span className="text-telivity-mid-grey">{t('legacy.balance')}</span> {formatMoney(folio.balance ?? folio.totalBalance ?? 0, currencyCode)}</p>
+            <p><span className="text-telivity-mid-grey">{t('legacy.status')}</span> {folio.status ?? '—'}</p>
           </div>
         ) : (
           <p className="text-sm text-telivity-mid-grey">{t('groups.noMasterFolio')}</p>

@@ -51,7 +51,7 @@ export class GuestService {
    */
   private async assertGuestAtProperty(guestId: string, propertyId: string): Promise<void> {
     // Primary guest on a reservation OR named accompanying occupant.
-    const [asPrimary, asOccupant, asServiceGuest] = await Promise.all([
+    const [asPrimary, asOccupant, asMember, asServiceGuest] = await Promise.all([
       this.db
         .select({ id: reservations.id })
         .from(reservations)
@@ -73,8 +73,9 @@ export class GuestService {
         )
         .limit(1),
       this.db.select({ id: guestPropertyLinks.id }).from(guestPropertyLinks).where(and(eq(guestPropertyLinks.guestId, guestId), eq(guestPropertyLinks.propertyId, propertyId))).limit(1),
+      this.db.select({ id: serviceBookings.id }).from(serviceBookings).where(and(eq(serviceBookings.guestId, guestId), eq(serviceBookings.propertyId, propertyId))).limit(1),
     ]);
-    if (!asPrimary.length && !asOccupant.length && !asServiceGuest.length) {
+    if (!asPrimary.length && !asOccupant.length && !asMember.length && !asServiceGuest.length) {
       throw new NotFoundException(`Guest ${guestId} not found`);
     }
   }
@@ -231,6 +232,7 @@ export class GuestService {
       isNull(guests.mergedIntoGuestId),
       or(
         inArray(guests.id, this.db.select({ guestId: guestPropertyLinks.guestId }).from(guestPropertyLinks).where(eq(guestPropertyLinks.propertyId, propertyId))),
+        inArray(guests.id, this.db.select({ guestId: serviceBookings.guestId }).from(serviceBookings).where(eq(serviceBookings.propertyId, propertyId))),
         inArray(
           guests.id,
           this.db
@@ -435,7 +437,13 @@ export class GuestService {
       ...folioIds,
       ...chargeRows.map((c: any) => c.id),
     ];
-    const timeline = entityIds.length ? await this.db.select().from(auditLogs).where(and(
+    // Return the public timeline contract only. Internal bigint sequence values
+    // cannot be JSON-serialized and are not needed by the guest workspace.
+    const timeline = entityIds.length ? await this.db.select({
+      id: auditLogs.id, action: auditLogs.action, entityType: auditLogs.entityType,
+      entityId: auditLogs.entityId, description: auditLogs.description,
+      occurredAt: auditLogs.occurredAt, userEmail: auditLogs.userEmail,
+    }).from(auditLogs).where(and(
       inArray(auditLogs.propertyId, scope),
       inArray(auditLogs.entityId, entityIds),
     )).orderBy(desc(auditLogs.occurredAt)).limit(100) : [];

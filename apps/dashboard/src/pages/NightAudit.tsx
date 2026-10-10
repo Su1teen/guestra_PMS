@@ -164,7 +164,7 @@ export default function NightAudit() {
 
         {lastResult?.steps && (
           <div className="mt-4">
-            <h3 className="text-xs font-semibold text-telivity-mid-grey uppercase mb-2">Steps</h3>
+            <h3 className="text-xs font-semibold text-telivity-mid-grey uppercase mb-2">{t('legacy.steps')}</h3>
             <div className="space-y-1">
               {lastResult.steps.map((s, i) => (
                 <div key={i} className="flex items-center justify-between py-1.5 border-b border-gray-50">
@@ -192,9 +192,9 @@ export default function NightAudit() {
               <th className="px-4 py-3 text-left text-xs font-semibold text-telivity-slate uppercase">{t('common.status')}</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-telivity-slate uppercase">{t('nightAudit.started')}</th>
               <th className="px-4 py-3 text-left text-xs font-semibold text-telivity-slate uppercase">{t('nightAudit.completed')}</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-telivity-slate uppercase">Charges</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-telivity-slate uppercase">No-Shows</th>
-              <th className="px-4 py-3 text-right text-xs font-semibold text-telivity-slate uppercase">Revenue</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold text-telivity-slate uppercase">{t('legacy.charges')}</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold text-telivity-slate uppercase">{t('legacy.noShows')}</th>
+              <th className="px-4 py-3 text-right text-xs font-semibold text-telivity-slate uppercase">{t('legacy.revenue')}</th>
             </tr>
           </thead>
           <tbody>

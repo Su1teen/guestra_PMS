@@ -11,7 +11,10 @@ const prefill = { roomId: 'room-a', roomNumber: '101', roomTypeId: 'type-a', roo
 const price = { currency: 'KZT', totalAmount: '2640.02', taxTotal: '240.00', lineItems: [{ date: '2026-10-10', rate: '1200.01', tax: '120.00' }, { date: '2026-10-11', rate: '1200.01', tax: '120.00' }] };
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(api.get).mockResolvedValue({ data: [{ id: 'plan-a', name: 'Тариф A', roomTypeId: 'type-a' }] });
+  sessionStorage.clear();
+  vi.mocked(api.get).mockImplementation(async url => ({ data: url.includes('/360')
+    ? { guest: { id: 'guest-a', firstName: 'Анна', lastName: 'Иванова' }, stays: [], bookedServices: [] }
+    : [{ id: 'plan-a', name: 'Тариф A', roomTypeId: 'type-a' }] }));
   vi.mocked(api.post).mockImplementation(async (url) => ({ data: url === '/v1/reservations/quote' ? price : { id: 'reservation-a' } }));
   vi.mocked(api.patch).mockResolvedValue({ data: {} });
 });

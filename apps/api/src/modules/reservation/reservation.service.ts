@@ -1345,7 +1345,11 @@ export class ReservationService {
 
   async auditHistory(id: string, propertyId: string) {
     await this.findById(id, propertyId);
-    return this.db.select().from(auditLogs).where(and(
+    return this.db.select({
+      id: auditLogs.id, action: auditLogs.action, entityType: auditLogs.entityType,
+      entityId: auditLogs.entityId, description: auditLogs.description,
+      occurredAt: auditLogs.occurredAt, userEmail: auditLogs.userEmail,
+    }).from(auditLogs).where(and(
       eq(auditLogs.propertyId, propertyId),
       eq(auditLogs.entityType, 'reservation'),
       eq(auditLogs.entityId, id),

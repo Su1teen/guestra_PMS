@@ -207,13 +207,21 @@ export class TaxService {
       guest = g ?? null;
     }
 
+    return this.calculateLoadedTaxes(chargeAmount, chargeType, profile.rules, options, guest);
+  }
+
+  /** Same ordered rules and rounding boundary for forward and inclusive pricing. */
+  private calculateLoadedTaxes(
+    chargeAmount: string, chargeType: string, rules: any[],
+    options?: { guestId?: string; numberOfNights?: number; nightNumber?: number }, guest?: any,
+  ): TaxLineItem[] {
     // Monetary math: use Decimal on string inputs to preserve precision
     // (numeric columns are strings in drizzle).
     const amount = new Decimal(chargeAmount);
     const items: TaxLineItem[] = [];
     let runningBase = amount;
 
-    for (const rule of profile.rules) {
+    for (const rule of rules) {
       // Check if rule applies to this charge type
       if (rule.appliesToChargeTypes && rule.appliesToChargeTypes.length > 0) {
         if (!rule.appliesToChargeTypes.includes(chargeType) && !rule.appliesToChargeTypes.includes('*')) {
@@ -265,10 +273,11 @@ export class TaxService {
           break;
         }
         case 'flat_per_night':
-          taxAmount = rateValue.times(options?.numberOfNights ?? 1);
+          // A nightly posting has full LOS for exemptions, but bills one night.
+          taxAmount = rateValue.times(options?.nightNumber ? 1 : options?.numberOfNights ?? 1);
           break;
         case 'flat_per_stay':
-          taxAmount = rateValue;
+          taxAmount = options?.nightNumber && options.nightNumber !== 1 ? new Decimal(0) : rateValue;
           break;
         default:
           taxAmount = new Decimal(0);
@@ -297,9 +306,8 @@ export class TaxService {
 
   /**
    * Back-calculate base amount from a tax-inclusive total.
-   * Iterates percentage rules to find the effective total rate,
-   * then: base = total / (1 + totalPercentageRate/100)
-   * Flat taxes are subtracted from the total before percentage division.
+   * Find a cent-denominated net whose forward-posted taxes equal the gross.
+   * Uses the exact forward engine, including compounding, exemptions and caps.
    */
   async backCalculateFromInclusive(
     totalAmount: string,
@@ -307,59 +315,36 @@ export class TaxService {
     propertyId: string,
     serviceDate: string,
     options?: { guestId?: string; numberOfNights?: number; nightNumber?: number },
+    db?: any,
   ): Promise<{ baseAmount: string; taxes: TaxLineItem[] }> {
-    const profile = await this.getActiveTaxProfile(propertyId, serviceDate.slice(0, 10));
+    const conn = db ?? this.db;
+    const profile = await this.getActiveTaxProfile(propertyId, serviceDate.slice(0, 10), conn);
     if (!profile || !profile.rules.length) {
       return { baseAmount: totalAmount, taxes: [] };
     }
 
-    // Monetary math: use Decimal on strings. Back-calc net from gross as
-    //   net = (gross - flats) / (1 + totalPercentRate/100)
     const total = new Decimal(totalAmount);
-
-    // Separate flat and percentage rules (simplified — ignores compounding for back-calc)
-    let totalPercentageRate = new Decimal(0);
-    let totalFlat = new Decimal(0);
-
-    for (const rule of profile.rules) {
-      if (rule.appliesToChargeTypes && rule.appliesToChargeTypes.length > 0) {
-        if (!rule.appliesToChargeTypes.includes(chargeType) && !rule.appliesToChargeTypes.includes('*')) {
-          continue;
-        }
-      }
-
-      const rateValue = new Decimal(rule.rate);
-      switch (rule.type) {
-        case 'percentage':
-          totalPercentageRate = totalPercentageRate.plus(rateValue);
-          break;
-        case 'split_component': {
-          // Effective rate contribution is (splitPercentage/100) * rate.
-          // Keep it in "percent" units (consistent with totalPercentageRate)
-          // by multiplying rate by splitPercentage/100.
-          const splitPct = rule.splitPercentage
-            ? new Decimal(rule.splitPercentage)
-            : new Decimal(0);
-          totalPercentageRate = totalPercentageRate.plus(rateValue.times(splitPct).div(100));
-          break;
-        }
-        case 'flat_per_night':
-          totalFlat = totalFlat.plus(rateValue.times(options?.numberOfNights ?? 1));
-          break;
-        case 'flat_per_stay':
-          totalFlat = totalFlat.plus(rateValue);
-          break;
-      }
+    if (!total.isFinite() || total.isNegative() || !total.times(100).isInteger()) {
+      throw new BadRequestException({ code: 'TAX_INCLUSIVE_NOT_REPRESENTABLE', message: 'Inclusive amount must be nonnegative with two decimal places' });
     }
-
-    const afterFlat = total.minus(totalFlat);
-    const divisor = new Decimal(1).plus(totalPercentageRate.div(100));
-    const baseAmount = afterFlat.div(divisor);
-    const baseStr = baseAmount.toFixed(2);
-
-    // Recalculate forward to get exact tax line items
-    const taxes = await this.calculateTaxes(baseStr, chargeType, propertyId, serviceDate, options);
-
-    return { baseAmount: baseStr, taxes };
+    let guest: any = null;
+    if (options?.guestId) {
+      const [row] = await conn.select().from(guests).where(eq(guests.id, options.guestId));
+      guest = row ?? null;
+    }
+    // BigInt is internal only: no float conversion of large monetary amounts.
+    let lower = 0n;
+    let upper = BigInt(total.times(100).toFixed(0));
+    while (lower <= upper) {
+      const cents = (lower + upper) / 2n;
+      const baseAmount = new Decimal(cents.toString()).div(100).toFixed(2);
+      const taxes = this.calculateLoadedTaxes(baseAmount, chargeType, profile.rules, options, guest);
+      const gross = taxes.reduce((sum, tax) => sum.plus(tax.amount), new Decimal(baseAmount));
+      if (gross.eq(total)) return { baseAmount, taxes };
+      if (gross.lt(total)) lower = cents + 1n;
+      else upper = cents - 1n;
+    }
+    // Never change a tax line or a quoted gross to hide a rounding mismatch.
+    throw new BadRequestException({ code: 'TAX_INCLUSIVE_NOT_REPRESENTABLE', message: 'Inclusive amount cannot be decomposed with the configured tax rounding' });
   }
 }
