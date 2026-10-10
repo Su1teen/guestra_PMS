@@ -277,6 +277,7 @@ export class ConnectBookingService {
       children: dto.children ?? 0,
       roomId: room.id,
       roomAssigned: true,
+      roomNumber: room.number,
       confirmationCodes: {
         pms: confirmationNumber,
         external: dto.externalReference,

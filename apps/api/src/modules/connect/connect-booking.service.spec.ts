@@ -131,7 +131,7 @@ describe('ConnectBookingService', () => {
       ]);
 
       const queryFor = (table: any) => {
-        const rows = responses.get(table)?.shift() ?? [];
+        const rows = table === rooms ? responses.get(table)?.[0] ?? [] : responses.get(table)?.shift() ?? [];
         const chain: any = {
           where: vi.fn(() => chain),
           for: vi.fn().mockResolvedValue(rows),
@@ -225,7 +225,7 @@ describe('ConnectBookingService', () => {
 
     it('rejects a date overlap on the physical room', async () => {
       configureBookDb({ conflicts: [{ id: 'res-conflict' }] });
-      await expect(service.book(baseDto)).rejects.toThrow(/already reserved/);
+      await expect(service.book(baseDto)).rejects.toThrow(/NO_AVAILABILITY/);
     });
 
     it('rejects a stay when any requested night has no type availability', async () => {

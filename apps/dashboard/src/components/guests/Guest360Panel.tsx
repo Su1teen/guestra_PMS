@@ -1,10 +1,12 @@
+import { Link } from 'react-router-dom';
+import { useProperty } from '../../context/PropertyContext';
+import { useAuth } from '../../context/AuthContext';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { CalendarDays, CircleDollarSign, Clock3, HeartHandshake, Merge, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { formatMoney } from '../../lib/money';
-import Modal from '../ui/Modal';
 import StatusBadge from '../ui/StatusBadge';
 import type { Guest } from '../../types/guest';
 import CashbackWallet from './CashbackWallet';
@@ -25,11 +27,14 @@ type Guest360 = {
   };
   stays: Array<any>;
   services: Array<any>;
+  bookedServices?: Array<any>;
   timeline: Array<any>;
 };
 
 export default function Guest360Panel({ data, propertyId }: { data: Guest360; propertyId: string }) {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const { setPropertyId } = useProperty();
+  const { hasPermission } = useAuth();
   const ru = i18n.language.startsWith('ru');
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<'overview' | 'stays' | 'services' | 'preferences' | 'history' | 'loyalty'>('overview');
@@ -37,7 +42,8 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
   const { guest, summary } = data;
   const { data: duplicates = [] } = useQuery<Guest[]>({
     queryKey: ['guest-duplicates', guest.id, propertyId],
-    queryFn: () => api.get(`/v1/guests/${guest.id}/duplicates`, { params: { propertyId } }).then((r) => r.data),
+    queryFn: () => api.get(`/v1/guests/${guest.id}/duplicates`, { params: { propertyId } }).then((r) => r.data?.data ?? r.data),
+    enabled: hasPermission('guests.write'),
   });
   const mergeMutation = useMutation({
     mutationFn: (targetGuestId: string) => api.post(`/v1/guests/${guest.id}/merge`, {
@@ -45,7 +51,7 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
     }),
     onSuccess: (_, targetGuestId) => {
       queryClient.invalidateQueries({ queryKey: ['guests'] });
-      window.location.assign(`/guests/${targetGuestId}`);
+      window.location.assign(`/guests/${targetGuestId}?propertyId=${propertyId}`);
     },
   });
 
@@ -60,7 +66,7 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
 
   return (
     <section className="mb-6 space-y-4">
-      {duplicates.length > 0 && (
+      {duplicates.length > 0 && hasPermission('guests.write') && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex flex-wrap items-center gap-3">
           <Merge size={18} className="text-amber-700" />
           <div className="flex-1">
@@ -107,15 +113,16 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
           )}
 
           {tab === 'stays' && <div className="space-y-3">{data.stays.map((stay) => (
-            <a key={stay.id} href={`/reservations/${stay.id}`} className="block rounded-lg border border-gray-100 p-4 hover:border-telivity-teal/40">
+            <Link key={stay.id} to={`/reservations/${stay.id}?propertyId=${stay.propertyId}`} onClick={() => setPropertyId(stay.propertyId)} className="block rounded-lg border border-gray-100 p-4 hover:border-telivity-teal/40">
               <div className="flex gap-3 items-center"><p className="font-semibold text-telivity-navy">{stay.propertyName}</p><StatusBadge status={stay.status} /></div>
               <p className="text-xs text-telivity-slate mt-1">{stay.arrivalDate} → {stay.departureDate} · {stay.nights} {ru ? 'ноч.' : 'nights'} · {stay.roomNumber ?? '—'} · {stay.roomType ?? '—'} · {stay.ratePlan ?? '—'}</p>
               <p className="text-sm font-semibold text-telivity-navy mt-2">{formatMoney(stay.totalRevenue, stay.currencyCode)}</p>
-            </a>
+            </Link>
           ))}{data.stays.length === 0 && <Empty text={ru ? 'Проживаний пока нет' : 'No stays yet'} />}</div>}
 
           {tab === 'services' && <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="text-left text-xs text-telivity-mid-grey border-b"><th className="py-2">{ru ? 'Дата' : 'Date'}</th><th>{ru ? 'Услуга' : 'Service'}</th><th>{ru ? 'Объект' : 'Property'}</th><th className="text-right">{ru ? 'Сумма' : 'Amount'}</th></tr></thead><tbody>{data.services.map((s) => <tr key={s.id} className="border-b border-gray-50"><td className="py-3">{new Date(s.date).toLocaleDateString()}</td><td><p className="font-medium text-telivity-navy">{s.description}</p><p className="text-xs text-telivity-mid-grey">{s.type}</p></td><td>{s.propertyName ?? '—'}</td><td className="text-right font-semibold">{formatMoney(s.amount, s.currencyCode)}</td></tr>)}</tbody></table>{data.services.length === 0 && <Empty text={ru ? 'Дополнительных услуг пока нет' : 'No ancillary services yet'} />}</div>}
 
+          {tab === 'services' && (data.bookedServices ?? []).length > 0 && <div className="mt-4 space-y-2"><h3 className="text-sm font-semibold">{t('guestQuickView.bookedServices')}</h3>{data.bookedServices!.map(service => <div key={service.id} className="flex justify-between gap-3 rounded-lg border p-3 text-sm"><span>{service.serviceName} · {service.propertyName}</span><span>{new Date(service.scheduledAt).toLocaleString(i18n.resolvedLanguage)} · {t('reservationWorkspace.serviceStatuses.' + service.status, { defaultValue: t('reservationWorkspace.unknownStatus') })}</span></div>)}</div>}
           {tab === 'preferences' && <div className="grid md:grid-cols-2 gap-3">{Object.entries(guest.preferences ?? {}).map(([key, value]) => <Info key={key} label={key.replace(/_/g, ' ')} value={String(value)} />)}{Object.keys(guest.preferences ?? {}).length === 0 && <Empty text={ru ? 'Предпочтения не указаны' : 'No preferences recorded'} />}</div>}
 
           {tab === 'loyalty' && <CashbackWallet guestId={guest.id} guestName={`${guest.firstName} ${guest.lastName}`} eligibleSpend={summary.totalRevenue} lastStayDate={summary.lastStay} />}
@@ -124,15 +131,15 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
         </div>
       </div>
 
-      <Modal open={!!compare} onClose={() => setCompare(null)} title={ru ? 'Сравнение профилей' : 'Compare profiles'}>
+      {compare && <section className="rounded-xl border border-amber-200 bg-white p-4"><h3 className="mb-3 font-semibold">{ru ? 'Сравнение профилей' : 'Compare profiles'}</h3>
         {compare && <div className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
-            {[guest, compare].map((g) => <div key={g.id} className="rounded-lg border p-3 space-y-2"><p className="font-semibold">{g.firstName} {g.lastName}</p><Info label="Email" value={g.email ?? '—'} /><Info label={ru ? 'Телефон' : 'Phone'} value={g.phone ?? '—'} /><Info label="VIP" value={g.vipLevel ?? 'none'} /><Info label={ru ? 'Лояльность' : 'Loyalty'} value={g.loyaltyNumber ?? '—'} /></div>)}
+            {[guest, compare].map((g) => <div key={g.id} className="rounded-lg border p-3 space-y-2"><p className="font-semibold">{g.firstName} {g.lastName}</p><Info label={ru ? 'Эл. почта' : 'Email'} value={g.email ?? '—'} /><Info label={ru ? 'Телефон' : 'Phone'} value={g.phone ?? '—'} /><Info label="VIP" value={g.vipLevel && g.vipLevel !== 'none' ? g.vipLevel : '—'} /><Info label={ru ? 'Лояльность' : 'Loyalty'} value={g.loyaltyNumber ?? '—'} /></div>)}
           </div>
           <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded-lg">{ru ? 'Бронирования, фолио, услуги, задачи, предпочтения и история будут сохранены. Исходный профиль станет архивной записью с трассировкой слияния.' : 'Reservations, folios, services, tasks, preferences and audit history are preserved. The source becomes a merge tombstone.'}</p>
           <div className="flex justify-end gap-2"><button onClick={() => setCompare(null)} className="border rounded-lg px-4 py-2 text-sm">{ru ? 'Отмена' : 'Cancel'}</button><button disabled={mergeMutation.isPending} onClick={() => mergeMutation.mutate(compare.id)} className="bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold">{ru ? 'Объединить в выбранный профиль' : 'Merge into selected profile'}</button></div>
         </div>}
-      </Modal>
+      </section>}
     </section>
   );
 }

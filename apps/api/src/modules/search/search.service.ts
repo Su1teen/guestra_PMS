@@ -2,6 +2,8 @@ import { Injectable, Inject } from '@nestjs/common';
 import { eq, and, or, ilike, inArray } from 'drizzle-orm';
 import {
   guests,
+  guestPropertyLinks,
+  reservationGuests,
   reservations,
   bookings,
   folios,
@@ -78,12 +80,10 @@ export class SearchService {
       .where(
         and(
           eq(guests.isDeleted, false),
-          inArray(
-            guests.id,
-            this.db
-              .select({ guestId: reservations.guestId })
-              .from(reservations)
-              .where(eq(reservations.propertyId, propertyId)),
+          or(
+            inArray(guests.id, this.db.select({ guestId: guestPropertyLinks.guestId }).from(guestPropertyLinks).where(eq(guestPropertyLinks.propertyId, propertyId))),
+            inArray(guests.id, this.db.select({ guestId: reservationGuests.guestId }).from(reservationGuests).where(eq(reservationGuests.propertyId, propertyId))),
+            inArray(guests.id, this.db.select({ guestId: reservations.guestId }).from(reservations).where(eq(reservations.propertyId, propertyId))),
           ),
           or(
             ilike(guests.firstName, pattern),

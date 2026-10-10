@@ -226,15 +226,15 @@ describe('GuestService', () => {
 
   describe('search', () => {
     it('should return paginated results scoped to property', async () => {
-      // search() issues four select() calls:
-      //   1–2. inArray subqueries (reservations.guestId + reservation_guests.guestId)
+      // search() issues five select() calls:
+      //   1–3. membership subqueries (primary/roster guest + guest_property_links)
       //      — NOT awaited directly; drizzle embeds them in SQL.
-      //   3. paginated listing — `.from(guests).where().limit().offset().orderBy()`
-      //   4. count — `.from(guests).where()` then awaited via thenable
+      //   4. paginated listing — `.from(guests).where().limit().offset().orderBy()`
+      //   5. count — `.from(guests).where()` then awaited via thenable
       let callCount = 0;
       mockDb.select.mockImplementation(() => {
         callCount++;
-        if (callCount <= 2) {
+        if (callCount <= 3) {
           // inArray subqueries — chainable objects (never awaited)
           return {
             from: vi.fn().mockReturnValue({
@@ -242,7 +242,7 @@ describe('GuestService', () => {
             }),
           };
         }
-        if (callCount === 3) {
+        if (callCount === 4) {
           // paginated data query
           return {
             from: vi.fn().mockReturnValue({

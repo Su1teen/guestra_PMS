@@ -12,6 +12,9 @@ import { join } from 'node:path';
 import request from 'supertest';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { randomUUID } from 'node:crypto';
+import { sql } from 'drizzle-orm';
+import { DRIZZLE } from './database/database.module';
 
 const runSmoke = process.env.RELEASE_SMOKE === '1';
 
@@ -158,5 +161,51 @@ describe.runIf(runSmoke)('release smoke (migrate → reservation lifecycle)', ()
     expect(auditRes.body.auditRun?.status === 'completed' || auditRes.body.alreadyRun === true).toBe(
       true,
     );
+  });
+
+  it('accepts one staff booking under concurrent retries and keeps one durable consequence', async () => {
+    const checkIn = offsetDate(60);
+    const checkOut = offsetDate(63);
+    const quote = await request(app.getHttpServer()).post('/api/v1/reservations/quote')
+      .send({ propertyId: PROPERTY_ID, roomTypeId: ROOM_TYPE_ID, ratePlanId: RATE_PLAN_ID, checkIn, checkOut }).expect(201);
+    const requestId = randomUUID();
+    const payload = { propertyId: PROPERTY_ID, guestId: GUEST_ID, roomTypeId: ROOM_TYPE_ID,
+      ratePlanId: RATE_PLAN_ID, roomId: 'c0000001-0000-4000-a000-000000000004', checkIn, checkOut,
+      expectedTotal: quote.body.totalAmount, currencyCode: quote.body.currency, requestId, adults: 2 };
+    const [first, replay] = await Promise.all([0, 1].map(() => request(app.getHttpServer())
+      .post('/api/v1/reservations/staff-create').send(payload).expect(201)));
+    expect(first.body.id).toBeTruthy();
+    expect(replay.body.id).toBe(first.body.id);
+    expect([first.body.replayed, replay.body.replayed].sort()).toEqual([false, true]);
+    const db = app.get(DRIZZLE);
+    const bookingCount = await db.execute(sql`select count(*)::int as count from bookings where property_id = ${PROPERTY_ID} and idempotency_key = ${'staff:' + requestId}`);
+    const eventCount = await db.execute(sql`select count(*)::int as count from domain_event_outbox where property_id = ${PROPERTY_ID} and logical_event_id = ${'staff-reservation:' + requestId}`);
+    expect(bookingCount[0].count).toBe(1);
+    expect(eventCount[0].count).toBe(1);
+    await request(app.getHttpServer()).post('/api/v1/reservations/staff-create')
+      .send({ ...payload, adults: 1 }).expect(409);
+    const calendar = await request(app.getHttpServer()).get('/api/v1/reservations/calendar')
+      .query({ propertyId: PROPERTY_ID, checkIn, checkOut }).expect(200);
+    expect(calendar.body.complete).toBe(true);
+    expect(calendar.body.reservations.filter((stay: { id: string }) => stay.id === first.body.id)).toHaveLength(1);
+  });
+
+  it('rolls back the booking and outbox when physical room assignment fails', async () => {
+    const checkIn = offsetDate(70);
+    const checkOut = offsetDate(73);
+    const quote = await request(app.getHttpServer()).post('/api/v1/reservations/quote')
+      .send({ propertyId: PROPERTY_ID, roomTypeId: ROOM_TYPE_ID, ratePlanId: RATE_PLAN_ID, checkIn, checkOut }).expect(201);
+    const requestId = randomUUID();
+    const failed = await request(app.getHttpServer()).post('/api/v1/reservations/staff-create')
+      .send({ propertyId: PROPERTY_ID, guestId: GUEST_ID, roomTypeId: ROOM_TYPE_ID, ratePlanId: RATE_PLAN_ID,
+        roomId: randomUUID(), requestId, checkIn, checkOut, expectedTotal: quote.body.totalAmount,
+        currencyCode: quote.body.currency, adults: 2 });
+    expect(failed.status).toBeGreaterThanOrEqual(400);
+    expect(failed.status).toBeLessThan(500);
+    const db = app.get(DRIZZLE);
+    const bookingCount = await db.execute(sql`select count(*)::int as count from bookings where property_id = ${PROPERTY_ID} and idempotency_key = ${'staff:' + requestId}`);
+    const eventCount = await db.execute(sql`select count(*)::int as count from domain_event_outbox where property_id = ${PROPERTY_ID} and logical_event_id = ${'staff-reservation:' + requestId}`);
+    expect(bookingCount[0].count).toBe(0);
+    expect(eventCount[0].count).toBe(0);
   });
 });

@@ -69,7 +69,7 @@ async function mkService(assertSellable: ReturnType<typeof vi.fn>, db = mkDb()) 
       ReservationService,
       { provide: DRIZZLE, useValue: db },
       { provide: AvailabilityService, useValue: availability },
-      { provide: FolioService, useValue: {} },
+      { provide: FolioService, useValue: { createAutoFolio: vi.fn().mockResolvedValue({ id: 'folio-1' }) } },
       { provide: RoomStatusService, useValue: {} },
       { provide: PaymentService, useValue: {} },
       { provide: WebhookService, useValue: { emit: vi.fn() } },

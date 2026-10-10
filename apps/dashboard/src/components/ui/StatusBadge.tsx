@@ -48,16 +48,17 @@ interface StatusBadgeProps {
 }
 
 export default function StatusBadge({ status, label, className = '' }: StatusBadgeProps) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const colors = STATUS_COLORS[status] ?? 'bg-telivity-mid-grey text-white';
   
-  const defaultLabel = formatLabel(status);
+  const defaultLabel = i18n.resolvedLanguage?.startsWith('ru') ? t('statuses.unknown') : formatLabel(status);
   const resolvedLabel = label ?? t([
     `dashboard.roomStatuses.${status}`,
     `housekeeping.statuses.${status}`,
     `reservations.statuses.${status}`,
     `channels.statuses.${status}`,
     `communications.statuses.${status}`,
+    `statuses.${status}`,
   ], { defaultValue: defaultLabel });
 
   return (

@@ -1,7 +1,7 @@
 import type { AcceptedPricingSnapshot } from '@telivityhaip/database';
 import { ConflictException } from '@nestjs/common';
 import Decimal from 'decimal.js';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FolioService } from './folio.service';
 
 const oldPricing: AcceptedPricingSnapshot = {
@@ -116,6 +116,11 @@ function service() {
 }
 
 describe('FolioService accepted-pricing stay amendment reconciliation', () => {
+  beforeEach(() => {
+    // Business-date expectations must not depend on the date the suite runs.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+  });
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -461,6 +466,7 @@ describe('FolioService accepted-pricing stay amendment reconciliation', () => {
   });
 
   it('balances a partially posted per-night group and defers a future once group', async () => {
+    vi.setSystemTime(new Date('2026-10-01T12:00:00Z'));
     const serviceRow = {
       id: 'rs-1', propertyId: PROPERTY, reservationId: RESERVATION, serviceId: 'svc-1',
     };
@@ -481,7 +487,7 @@ describe('FolioService accepted-pricing stay amendment reconciliation', () => {
         serviceId: 'svc-1', code: 'PARK', name: 'Parking', postingRule: 'once',
         chargeType: 'parking', currencyCode: 'EUR', unitPrice: '25.00', quantity: 1,
         lineTotal: '25.00', taxTotal: '3.00',
-        lineItems: [{ date: '2026-10-01', amount: '25.00', taxAmount: '3.00' }],
+        lineItems: [{ date: '2026-10-02', amount: '25.00', taxAmount: '3.00' }],
       }],
       servicesTotal: '25.00', servicesTaxTotal: '3.00', grandTotal: '248.00',
     };
@@ -499,7 +505,7 @@ describe('FolioService accepted-pricing stay amendment reconciliation', () => {
       expect.objectContaining({ type: 'tax', amount: '-2.00', isReversal: false }),
     ]));
     expect(inserted.some((row) =>
-      row.sourceKey === 'accepted-pricing:reservation-service:rs-1:once:2026-10-01')).toBe(false);
+      row.sourceKey === 'accepted-pricing:reservation-service:rs-1:once:2026-10-02')).toBe(false);
   });
 
   it('balances an old once date and recovers a reanchored closed once date exactly once', async () => {

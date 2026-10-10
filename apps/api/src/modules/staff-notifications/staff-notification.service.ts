@@ -1,5 +1,5 @@
 import { Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { eq, and, desc, sql, isNull, or } from 'drizzle-orm';
+import { eq, and, desc, sql, isNull, or, inArray } from 'drizzle-orm';
 import { staffNotifications, staffNotificationReads } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { WebhookService } from '../webhook/webhook.service';
@@ -13,6 +13,8 @@ export interface CreateStaffNotificationInput {
   message: string;
   severity?: 'info' | 'warning' | 'critical';
   sourceEvent?: string;
+  deduplicationKey?: string;
+  requiredPermission?: string;
   sourceEntityType?: string;
   sourceEntityId?: string;
 }
@@ -35,11 +37,15 @@ export class StaffNotificationService {
         title: input.title,
         message: input.message,
         severity: input.severity ?? 'info',
+        deduplicationKey: input.deduplicationKey ?? null,
+        requiredPermission: input.requiredPermission ?? null,
         sourceEvent: input.sourceEvent ?? null,
         sourceEntityType: input.sourceEntityType ?? null,
         sourceEntityId: input.sourceEntityId ?? null,
       })
+      .onConflictDoNothing()
       .returning();
+    if (!row) return null; // A replay creates no duplicate row, event or badge.
 
     await this.webhookService.emit(
       'staff.notification_created',
@@ -53,19 +59,12 @@ export class StaffNotificationService {
       input.propertyId,
     );
 
-    this.eventsGateway.broadcastStaffNotification(input.propertyId, {
-      id: row.id,
-      type: row.type,
-      title: row.title,
-      message: row.message,
-      severity: row.severity,
-      createdAt: row.createdAt,
-    });
+    this.eventsGateway.broadcastStaffNotification(input.propertyId, { id: row.id });
 
     return row;
   }
 
-  async listForUser(propertyId: string, userId: string, limit = 50) {
+  async listForUser(propertyId: string, userId: string, permissions: readonly string[], limit = 50) {
     const rows = await this.db
       .select({
         id: staffNotifications.id,
@@ -74,6 +73,7 @@ export class StaffNotificationService {
         title: staffNotifications.title,
         message: staffNotifications.message,
         severity: staffNotifications.severity,
+        requiredPermission: staffNotifications.requiredPermission,
         sourceEvent: staffNotifications.sourceEvent,
         sourceEntityType: staffNotifications.sourceEntityType,
         sourceEntityId: staffNotifications.sourceEntityId,
@@ -92,6 +92,7 @@ export class StaffNotificationService {
         and(
           eq(staffNotifications.propertyId, propertyId),
           or(isNull(staffNotifications.userId), eq(staffNotifications.userId, userId)),
+          permissions.length ? or(isNull(staffNotifications.requiredPermission), inArray(staffNotifications.requiredPermission, [...permissions])) : isNull(staffNotifications.requiredPermission),
         ),
       )
       .orderBy(desc(staffNotifications.createdAt))
@@ -103,7 +104,7 @@ export class StaffNotificationService {
     }));
   }
 
-  async unreadCount(propertyId: string, userId: string): Promise<number> {
+  async unreadCount(propertyId: string, userId: string, permissions: readonly string[]): Promise<number> {
     const [row] = await this.db
       .select({ count: sql<number>`count(*)::int` })
       .from(staffNotifications)
@@ -118,13 +119,14 @@ export class StaffNotificationService {
         and(
           eq(staffNotifications.propertyId, propertyId),
           or(isNull(staffNotifications.userId), eq(staffNotifications.userId, userId)),
+          permissions.length ? or(isNull(staffNotifications.requiredPermission), inArray(staffNotifications.requiredPermission, [...permissions])) : isNull(staffNotifications.requiredPermission),
           sql`${staffNotificationReads.id} is null`,
         ),
       );
     return row?.count ?? 0;
   }
 
-  async markRead(notificationId: string, propertyId: string, userId: string) {
+  async markRead(notificationId: string, propertyId: string, userId: string, permissions: readonly string[]) {
     const [notification] = await this.db
       .select()
       .from(staffNotifications)
@@ -132,6 +134,8 @@ export class StaffNotificationService {
         and(
           eq(staffNotifications.id, notificationId),
           eq(staffNotifications.propertyId, propertyId),
+          or(isNull(staffNotifications.userId), eq(staffNotifications.userId, userId)),
+          permissions.length ? or(isNull(staffNotifications.requiredPermission), inArray(staffNotifications.requiredPermission, [...permissions])) : isNull(staffNotifications.requiredPermission),
         ),
       );
     if (!notification) {
@@ -146,7 +150,7 @@ export class StaffNotificationService {
     return { read: true };
   }
 
-  async markAllRead(propertyId: string, userId: string) {
+  async markAllRead(propertyId: string, userId: string, permissions: readonly string[]) {
     const unread = await this.db
       .select({ id: staffNotifications.id })
       .from(staffNotifications)
@@ -161,6 +165,7 @@ export class StaffNotificationService {
         and(
           eq(staffNotifications.propertyId, propertyId),
           or(isNull(staffNotifications.userId), eq(staffNotifications.userId, userId)),
+          permissions.length ? or(isNull(staffNotifications.requiredPermission), inArray(staffNotifications.requiredPermission, [...permissions])) : isNull(staffNotifications.requiredPermission),
           sql`${staffNotificationReads.id} is null`,
         ),
       );

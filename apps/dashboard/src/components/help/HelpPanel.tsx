@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { X, CircleHelp, Sparkles } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 
 interface HelpEntry {
@@ -20,6 +21,7 @@ interface HelpPanelProps {
 }
 
 export default function HelpPanel({ open, onClose }: HelpPanelProps) {
+  const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
   const [explainOpen, setExplainOpen] = useState(false);
@@ -63,23 +65,23 @@ export default function HelpPanel({ open, onClose }: HelpPanelProps) {
       <aside
         className="relative w-full max-w-md bg-white shadow-2xl border-l border-gray-200 h-full overflow-y-auto"
         role="dialog"
-        aria-label="Help"
+        aria-label={t('helpPanel.title')}
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2">
             <CircleHelp size={18} className="text-telivity-teal" />
-            <h2 className="text-sm font-semibold text-telivity-navy">Help</h2>
+            <h2 className="text-sm font-semibold text-telivity-navy">{t('helpPanel.title')}</h2>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-telivity-light-grey" aria-label="Close help">
+          <button onClick={onClose} className="p-1.5 rounded hover:bg-telivity-light-grey" aria-label={t('helpPanel.close')}>
             <X size={16} className="text-telivity-mid-grey" />
           </button>
         </div>
 
         <div className="p-5 space-y-4">
-          {isFetching && <p className="text-sm text-telivity-mid-grey">Loading…</p>}
+          {isFetching && <p className="text-sm text-telivity-mid-grey">{t('common.loading')}</p>}
           {error && (
             <p className="text-sm text-telivity-mid-grey">
-              No help is available for this screen yet.
+              {t('helpPanel.none')}
             </p>
           )}
           {help && (
@@ -100,7 +102,7 @@ export default function HelpPanel({ open, onClose }: HelpPanelProps) {
               )}
               {help.related && help.related.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold text-telivity-mid-grey uppercase mb-2">Related</p>
+                  <p className="text-xs font-semibold text-telivity-mid-grey uppercase mb-2">{t('helpPanel.related')}</p>
                   <div className="flex flex-wrap gap-2">
                     {help.related.map((r) => (
                       <button
@@ -129,14 +131,14 @@ export default function HelpPanel({ open, onClose }: HelpPanelProps) {
                     className="flex items-center gap-2 text-sm font-medium text-telivity-teal hover:underline"
                   >
                     <Sparkles size={14} />
-                    Explain with HAIP AI
+                    {t('helpPanel.explain')}
                   </button>
                   {explainOpen && (
                     <div className="mt-3 bg-telivity-light-grey/60 rounded-lg p-3 text-sm text-telivity-slate">
-                      {explainMutation.isPending && <p>Generating…</p>}
+                      {explainMutation.isPending && <p>{t('helpPanel.generating')}</p>}
                       {!explainMutation.isPending && !explanation && (
                         <p className="text-telivity-mid-grey">
-                          No explanation available (AI off or not enough numeric screen facts).
+                          {t('helpPanel.unavailable')}
                         </p>
                       )}
                       {explanation && (

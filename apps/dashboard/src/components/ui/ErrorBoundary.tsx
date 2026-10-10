@@ -1,6 +1,8 @@
 import { Component, type ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 
+import i18n from '../../i18n';
+
 interface Props {
   children: ReactNode;
   fallback?: ReactNode;
@@ -30,16 +32,16 @@ export class ErrorBoundary extends Component<Props, State> {
           <div className="p-3 bg-telivity-orange/10 rounded-full mb-4">
             <AlertTriangle size={24} className="text-telivity-orange" />
           </div>
-          <h2 className="text-lg font-semibold text-telivity-navy mb-2">Something went wrong</h2>
+          <h2 className="text-lg font-semibold text-telivity-navy mb-2">{i18n.t('systemErrors.unexpected')}</h2>
           <p className="text-sm text-telivity-mid-grey mb-4 text-center max-w-md">
-            {this.state.error?.message ?? 'An unexpected error occurred.'}
+            {i18n.t('systemErrors.request')}
           </p>
           <button
             onClick={() => this.setState({ hasError: false, error: undefined })}
             className="flex items-center gap-2 bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-telivity-light-teal transition-colors"
           >
             <RefreshCw size={14} />
-            Try Again
+            {i18n.t('systemErrors.retry')}
           </button>
         </div>
       );
@@ -55,15 +57,15 @@ export function QueryError({ onRetry }: { onRetry?: () => void }) {
       <div className="p-3 bg-telivity-orange/10 rounded-full mb-4">
         <AlertTriangle size={24} className="text-telivity-orange" />
       </div>
-      <h3 className="text-base font-semibold text-telivity-navy mb-1">Failed to load data</h3>
-      <p className="text-sm text-telivity-mid-grey mb-4">Please check your connection and try again.</p>
+      <h3 className="text-base font-semibold text-telivity-navy mb-1">{i18n.t('systemErrors.load')}</h3>
+      <p className="text-sm text-telivity-mid-grey mb-4">{i18n.t('systemErrors.request')}</p>
       {onRetry && (
         <button
           onClick={onRetry}
           className="flex items-center gap-2 bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-telivity-light-teal transition-colors"
         >
           <RefreshCw size={14} />
-          Retry
+          {i18n.t('systemErrors.retry')}
         </button>
       )}
     </div>

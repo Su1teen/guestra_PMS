@@ -44,8 +44,9 @@ export class RoomStatusService {
     propertyId: string,
     newStatus: RoomStatus,
     note?: string,
+    tx?: any,
   ) {
-    const room = await this.findRoom(roomId, propertyId);
+    const room = await this.findRoom(roomId, propertyId, tx);
     const currentStatus = room.status as RoomStatus;
     const allowed = VALID_TRANSITIONS[currentStatus] ?? [];
 
@@ -63,13 +64,14 @@ export class RoomStatusService {
       updates['maintenanceNotes'] = note;
     }
 
-    const [updated] = await this.db
+    const [updated] = await (tx ?? this.db)
       .update(rooms)
       .set(updates)
-      .where(and(eq(rooms.id, roomId), eq(rooms.propertyId, propertyId)))
+      .where(and(eq(rooms.id, roomId), eq(rooms.propertyId, propertyId), eq(rooms.status, currentStatus)))
       .returning();
+    if (!updated) throw new BadRequestException('Room status changed concurrently');
 
-    await this.webhookService.emit(
+    if (!tx) await this.webhookService.emit(
       'room.status_changed',
       'room',
       updated.id,
@@ -80,12 +82,12 @@ export class RoomStatusService {
     return updated;
   }
 
-  async markOccupied(roomId: string, propertyId: string) {
-    return this.transitionStatus(roomId, propertyId, 'occupied');
+  async markOccupied(roomId: string, propertyId: string, tx?: any) {
+    return this.transitionStatus(roomId, propertyId, 'occupied', undefined, tx);
   }
 
-  async markVacantDirty(roomId: string, propertyId: string) {
-    return this.transitionStatus(roomId, propertyId, 'vacant_dirty');
+  async markVacantDirty(roomId: string, propertyId: string, tx?: any) {
+    return this.transitionStatus(roomId, propertyId, 'vacant_dirty', undefined, tx);
   }
 
   async markOutOfOrder(roomId: string, propertyId: string, notes: string) {
@@ -134,8 +136,8 @@ export class RoomStatusService {
     return result;
   }
 
-  private async findRoom(roomId: string, propertyId: string) {
-    const [room] = await this.db
+  private async findRoom(roomId: string, propertyId: string, tx?: any) {
+    const [room] = await (tx ?? this.db)
       .select()
       .from(rooms)
       .where(and(eq(rooms.id, roomId), eq(rooms.propertyId, propertyId)));

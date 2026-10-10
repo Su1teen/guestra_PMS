@@ -85,6 +85,7 @@ export class ReservationService {
       confirmationNumber?: string;
       acceptedPricingSnapshot?: AcceptedPricingSnapshot;
       idempotencyKey?: string;
+      integrationContext?: Record<string, unknown>;
     },
     tx?: any,
   ) {
@@ -188,6 +189,7 @@ export class ReservationService {
           confirmationNumber,
           ...(opts?.idempotencyKey != null ? { idempotencyKey: opts.idempotencyKey } : {}),
           externalConfirmation: dto.externalConfirmation,
+          integrationContext: opts?.integrationContext,
           source: dto.source,
           channelCode: dto.channelCode,
         })
@@ -290,8 +292,8 @@ export class ReservationService {
     return updated;
   }
 
-  async assignRoom(id: string, propertyId: string, dto: AssignRoomDto) {
-    return this.db.transaction(async (tx: any) => {
+  async assignRoom(id: string, propertyId: string, dto: AssignRoomDto, transaction?: any) {
+    const assign = async (tx: any) => {
       const lockedReservations = await tx
         .select()
         .from(reservations)
@@ -359,7 +361,8 @@ export class ReservationService {
         throw new ConflictException('Reservation changed while assigning the room');
       }
       return updated;
-    });
+    };
+    return transaction ? assign(transaction) : this.db.transaction(assign);
   }
 
   /**
@@ -367,76 +370,41 @@ export class ReservationService {
    * Vacates the previous room when the guest is already in-house.
    */
   async moveRoom(id: string, propertyId: string, dto: MoveRoomDto) {
-    const reservation = await this.findByIdRaw(id, propertyId);
-    const movable = ['assigned', 'checked_in', 'stayover', 'due_out'];
-    if (!movable.includes(reservation.status)) {
-      throw new BadRequestException(
-        `Cannot move room for reservation in '${reservation.status}' status`,
-      );
-    }
-    if (reservation.doNotMove && !dto.overrideDoNotMove) {
-      throw new BadRequestException(
-        'Reservation is marked do-not-move — pass overrideDoNotMove to proceed',
-      );
-    }
-    if (!dto.roomId || dto.roomId === reservation.roomId) {
-      throw new BadRequestException('A different target roomId is required');
-    }
-
-    const [room] = await this.db
-      .select()
-      .from(rooms)
-      .where(and(eq(rooms.id, dto.roomId), eq(rooms.propertyId, propertyId)));
-    if (!room) {
-      throw new NotFoundException(`Room ${dto.roomId} not found in this property`);
-    }
-    if (room.roomTypeId !== reservation.roomTypeId) {
-      throw new BadRequestException(
-        `Room ${dto.roomId} is type ${room.roomTypeId}, but reservation requires type ${reservation.roomTypeId}`,
-      );
-    }
-    const allowedStatuses = ['guest_ready', 'vacant_clean'];
-    if (!allowedStatuses.includes(room.status)) {
-      throw new BadRequestException(
-        `Room ${dto.roomId} is not available (status: ${room.status}). Must be 'guest_ready' or 'vacant_clean'.`,
-      );
-    }
-
-    const previousRoomId = reservation.roomId as string | null;
-    const inHouse = ['checked_in', 'stayover', 'due_out'].includes(reservation.status);
-
-    const [updated] = await this.db
-      .update(reservations)
-      .set({ roomId: dto.roomId, updatedAt: new Date() })
-      .where(and(eq(reservations.id, id), eq(reservations.propertyId, propertyId)))
-      .returning();
-
-    if (inHouse) {
-      if (previousRoomId) {
-        try {
-          await this.roomStatusService.markVacantDirty(previousRoomId, propertyId);
-        } catch {
-          // Non-blocking — room may already be dirty
-        }
+    const result = await this.db.transaction(async (tx: any) => {
+      const [reservation] = await tx.select().from(reservations).where(and(eq(reservations.id, id), eq(reservations.propertyId, propertyId))).for('update');
+      if (!reservation) throw new NotFoundException('Reservation not found');
+      if (!['assigned','checked_in','stayover','due_out'].includes(reservation.status)) throw new BadRequestException('Cannot move room for reservation in current status');
+      if (reservation.doNotMove && !dto.overrideDoNotMove) throw new BadRequestException('Reservation is marked do-not-move — pass overrideDoNotMove to proceed');
+      if (!dto.roomId || dto.roomId === reservation.roomId) throw new BadRequestException('A different target roomId is required');
+      // Consistent physical-room lock order prevents crossing moves from deadlocking.
+      const ids = [dto.roomId, reservation.roomId].filter(Boolean).sort();
+      const locked = await tx.select().from(rooms).where(and(eq(rooms.propertyId, propertyId), inArray(rooms.id, ids))).orderBy(rooms.id).for('update');
+      const target = locked.find((room: any) => room.id === dto.roomId);
+      if (!target?.isActive) throw new NotFoundException('Room not found or inactive in this property');
+      if (target.roomTypeId !== reservation.roomTypeId) throw new BadRequestException('Target room does not match the booked room type');
+      if (!['guest_ready','vacant_clean'].includes(target.status)) throw new BadRequestException('Target room is not available');
+      const overlaps = await tx.select({ id: reservations.id }).from(reservations).where(and(
+        eq(reservations.propertyId, propertyId), eq(reservations.roomId, dto.roomId), ne(reservations.id, id),
+        notInArray(reservations.status, ['cancelled','no_show','checked_out'] as any),
+        lt(reservations.arrivalDate, reservation.departureDate), gt(reservations.departureDate, reservation.arrivalDate),
+      )).limit(1);
+      if (overlaps.length) throw new ConflictException('Target room is already reserved for these dates');
+      const [updated] = await tx.update(reservations).set({ roomId: dto.roomId, updatedAt: new Date() }).where(and(eq(reservations.id, id), eq(reservations.propertyId, propertyId))).returning();
+      const previous = locked.find((room: any) => room.id === reservation.roomId);
+      const inHouse = ['checked_in','stayover','due_out'].includes(reservation.status);
+      if (inHouse) {
+        if (previous?.status === 'occupied') await this.roomStatusService.markVacantDirty(previous.id, propertyId, tx);
+        else if (previous && previous.status !== 'vacant_dirty') throw new ConflictException('Previous room status does not match the stay');
+        await this.roomStatusService.markOccupied(target.id, propertyId, tx);
       }
-      await this.roomStatusService.markOccupied(dto.roomId, propertyId);
+      return { updated, previous, target, inHouse };
+    });
+    if (result.inHouse) {
+      if (result.previous?.status === 'occupied') await this.webhookService.emit('room.status_changed','room',result.previous.id, { previousStatus: 'occupied', newStatus: 'vacant_dirty', roomNumber: result.previous.number },propertyId);
+      await this.webhookService.emit('room.status_changed','room',result.target.id, { previousStatus: result.target.status, newStatus: 'occupied', roomNumber: result.target.number },propertyId);
     }
-
-    await this.webhookService.emit(
-      'reservation.room_moved',
-      'reservation',
-      updated.id,
-      {
-        reservationId: updated.id,
-        previousRoomId,
-        newRoomId: dto.roomId,
-        reason: dto.reason ?? null,
-        status: updated.status,
-      },
-      propertyId,
-    );
-
-    return updated;
+    await this.webhookService.emit('reservation.room_moved', 'reservation', id, { reservationId: id, previousRoomId: result.previous?.id ?? null, newRoomId: dto.roomId, reason: dto.reason ?? null, status: result.updated.status }, propertyId);
+    return result.updated;
   }
 
   // DELIBERATE NON-FEATURE (KB §14.8): there is intentionally NO un-cancel /

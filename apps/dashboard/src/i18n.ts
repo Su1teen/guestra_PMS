@@ -14,11 +14,11 @@ import srLatn from './locales/sr-Latn.json';
 /**
  * i18n foundation for the dashboard.
  *
- * - English (`en`) is the source of truth and the fallback language: any key
+ * - English (`en`) is the key catalog; Russian is the default and fallback language: any key
  *   missing from another locale renders the English string, so the UI stays
  *   fully functional while a translation is incomplete.
  * - Detection order: a user's saved choice (localStorage) wins, otherwise we
- *   fall back to the browser language, otherwise English.
+ *   fall back to Russian.
  * - Resources are bundled inline (no async backend) so `t()` is ready
  *   synchronously — important for tests and first paint.
  *
@@ -63,13 +63,13 @@ i18n
       sr: { translation: srLatn },
       'sr-Latn': { translation: srLatn },
     },
-    fallbackLng: 'en',
+    fallbackLng: 'ru',
     supportedLngs: [...SUPPORTED_LOCALES],
     nonExplicitSupportedLngs: true, // treat de-DE, de-AT, etc. as `de`
-    returnEmptyString: false, // empty "" values fall back to English, not blank
+    returnEmptyString: false, // empty "" values fall back to Russian, not blank
     interpolation: { escapeValue: false }, // React already escapes
     detection: {
-      order: ['localStorage', 'navigator'],
+      order: ['localStorage'],
       caches: ['localStorage'],
       lookupLocalStorage: 'haip.lang',
     },

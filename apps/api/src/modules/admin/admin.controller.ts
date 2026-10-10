@@ -27,6 +27,10 @@ import { AssignRolesDto } from './dto/assign-roles.dto';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { SetRolePermissionsDto } from './dto/set-role-permissions.dto';
+import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
+import { isWorkspaceLayout } from '@telivityhaip/shared';
+import { userCanAccessProperty } from '../auth/property-access';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 
 @ApiTags('admin')
@@ -69,6 +73,32 @@ export class AdminController {
       ? await this.permissionsService.getEffectivePermissions(user.id, propertyId)
       : [];
     return { permissions, navKeys: navKeysFor(permissions) };
+  }
+
+  @Get('me/workspace')
+  @Roles()
+  @RequirePermissions('dashboard.view')
+  @ApiOperation({ summary: 'Read current user workspace for this property' })
+  async myWorkspace(@Query('propertyId', ParseUUIDPipe) propertyId: string, @CurrentUser() authUser: AuthUser | undefined) {
+    if (!authUser) return { revision: 0, layout: null, persistent: false };
+    const user = await this.permissionsService.findLocalUser(authUser.sub, authUser.email);
+    if (!user) throw new ForbiddenException('Local staff profile is required');
+    return this.usersService.getWorkspace(user.id, propertyId);
+  }
+
+  @Patch('me/workspace')
+  @Roles()
+  @RequirePermissions('dashboard.view')
+  @ApiOperation({ summary: 'Save current user workspace with optimistic revision protection' })
+  async saveMyWorkspace(@Body() dto: UpdateWorkspaceDto, @CurrentUser() authUser: AuthUser | undefined) {
+    if (!authUser) throw new BadRequestException({ code: 'WORKSPACE_DEMO', message: 'Server workspace saving requires authentication' });
+    if (!isWorkspaceLayout(dto.layout)) throw new BadRequestException('Invalid workspace configuration');
+    for (const page of dto.layout.pages) for (const widget of page.widgets) {
+      if (widget.settings.propertyId && !userCanAccessProperty(authUser, widget.settings.propertyId)) throw new ForbiddenException('You do not have access to this property');
+    }
+    const user = await this.permissionsService.findLocalUser(authUser.sub, authUser.email);
+    if (!user) throw new ForbiddenException('Local staff profile is required');
+    return this.usersService.updateWorkspace(user.id, dto);
   }
 
   @Get('me/preferences')

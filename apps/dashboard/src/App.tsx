@@ -1,5 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
+import { GuestQuickViewProvider } from './components/guests/GuestQuickView';
 import AppLayout from './components/layout/AppLayout';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { SkeletonPage } from './components/ui/Skeleton';
@@ -38,7 +39,7 @@ export default function App() {
   useRealtimeInvalidation();
 
   return (
-    <AppLayout>
+    <GuestQuickViewProvider><AppLayout>
       <ErrorBoundary>
         <Suspense fallback={<SkeletonPage />}>
           <Routes>
@@ -74,6 +75,6 @@ export default function App() {
           </Routes>
         </Suspense>
       </ErrorBoundary>
-    </AppLayout>
+    </AppLayout></GuestQuickViewProvider>
   );
 }

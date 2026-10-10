@@ -48,6 +48,7 @@ export const users = pgTable(
     // Self-service UI prefs (report favorites, etc.) — not property-scoped roles.
     preferences: jsonb('preferences').$type<{
       reportFavorites?: string[];
+      workspaces?: Record<string, { revision: number; layout: Record<string, unknown> }>;
     }>().notNull().default({}),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

@@ -11,6 +11,7 @@ import { keycloak, AUTH_ENABLED } from '../lib/keycloak';
 import { api } from '../lib/api';
 import { reconnectSocket } from '../lib/socket';
 import { useToast } from '../components/ui/Toast';
+import { errorMessage } from '../lib/error-message';
 import { useTranslation } from 'react-i18next';
 
 interface ApiErrorResponse {
@@ -169,7 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         console.error('[API Error]', config?.method?.toUpperCase() || 'GET', url, rawMessage);
 
-        const displayMessage = String(t(`errors.${rawMessage}`, { defaultValue: rawMessage }));
+        const displayMessage = errorMessage(error);
 
         toast('error', displayMessage);
         return Promise.reject(error);
@@ -228,7 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       <div className="flex h-screen items-center justify-center bg-gray-50">
         <div className="text-center">
           <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-slate-900 mx-auto" />
-          <p className="mt-4 text-sm text-gray-500">Authenticating...</p>
+          <p className="mt-4 text-sm text-gray-500">{t('systemErrors.authenticating')}</p>
         </div>
       </div>
     );

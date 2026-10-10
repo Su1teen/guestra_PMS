@@ -295,3 +295,5 @@ export {
   migrationJobs,
   migrationRowResults,
 } from './migration.js';
+
+export * from './domain-event-outbox.js';

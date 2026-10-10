@@ -1,3 +1,5 @@
+import i18n from '../i18n';
+
 /**
  * Shared helpers for dashboard API write payloads.
  * Money fields must be decimal strings; propertyId is required on most mutations.
@@ -11,7 +13,7 @@ export function moneyString(value: number | string): string {
 
 export function requirePropertyId(propertyId: string | null): asserts propertyId is string {
   if (!propertyId) {
-    throw new Error('Select a property first');
+    throw new Error(i18n.t('common.selectProperty'));
   }
 }
 
@@ -27,7 +29,7 @@ export function requirePropertyId(propertyId: string | null): asserts propertyId
  */
 export function requireCurrency(currencyCode: string | null): asserts currencyCode is string {
   if (!currencyCode) {
-    throw new Error('No currency for this property — select a single property first');
+    throw new Error(i18n.t('reservationWorkspace.currencyMismatch'));
   }
 }
 

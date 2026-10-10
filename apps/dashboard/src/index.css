@@ -1,3 +1,8 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+.workspace-canvas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; align-items: start; }
+.workspace-tile { grid-column: span var(--tile-width); height: calc(340px * var(--tile-height)); display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1px solid #e5e7eb; border-radius: 14px; background: white; box-shadow: 0 2px 6px #12263908; }
+.workspace-tile [data-widget] { margin-bottom: 0; box-shadow: none; }
+@media (max-width: 1023px) { .workspace-canvas { grid-template-columns: 1fr; } .workspace-tile { grid-column: span 1; } }
