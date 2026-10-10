@@ -104,7 +104,7 @@ export default function FindGuest({
               <div className="flex items-center gap-3 text-xs text-telivity-mid-grey">
                 {selectedGuest.email && <span>{selectedGuest.email}</span>}
                 {selectedGuest.phone && <span>• {selectedGuest.phone}</span>}
-                {selectedGuest.taxId && <span>• Doc: {selectedGuest.taxId}</span>}
+                {selectedGuest.taxId && <span>{t('legacy.doc')} {selectedGuest.taxId}</span>}
               </div>
             </div>
           </div>

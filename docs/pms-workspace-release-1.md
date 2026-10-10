@@ -29,27 +29,39 @@ This branch replaces the existing staff UI components in their existing routes. 
 
 ## UI scope implemented
 
-- Multiple named home pages, five presets, initial page, add/remove/order widgets, pointer drag ordering, keyboard ordering, width/height controls, supported property/period/density settings and server save with conflict handling. Coarse report widgets retain their fixed current-property/day contract.
-- Standalone Guest Quick View from calendar, home arrivals, guest list, search, Front Desk and reservation context. The same Guest 360 content serves the full profile. Drawer closes before Quick View opens.
+- Multiple named home pages, five presets, initial page, add/remove/order widgets, pointer drag ordering, keyboard ordering, width/height controls, supported property/period/density settings and server save with conflict handling. OCC, ADR, RevPAR, pickup and booking pace now have independent property/period/density settings and read the existing Reports APIs. Existing saved aggregate widgets remain compatible; new management/revenue templates use the independent metrics. Historical ADR/RevPAR cards explicitly describe the existing daily-average report semantics.
+- Standalone Guest Quick View from calendar, home arrivals, guest list, search, Front Desk and reservation context. The same Guest 360 content serves the full profile. The drawer is suspended before Quick View opens; closing Quick View restores the selected reservation, tab and drawer scroll without unmounting the calendar.
 - Shared contextual reservation drawer and `/reservations/:id` page. Full page exposes overview, accommodation, guests, services, folios, tasks, notes and history tabs. Operational mutations continue to use existing services and Front Desk workflows.
 - Calendar 7/14/28-day views, date navigation, category/status/search/accessibility filters, continuous stay bands, room states, canonical tariff previews, ledger indicators and keyboard selection of a free night.
 - Russian default locale, safe translated error boundary/toasts/validation messages, translated notification chrome and known legacy system notices, guest/readiness/status labels and help-panel chrome. User-authored text, brands, acronyms and other locale resources are retained.
 
-## Release gates still open
+## Follow-up validation and remaining gates
 
-- Run migrations and real PostgreSQL contention/rollback tests for staff creation, move-room, workspace revisions, notification deduplication and outbox recovery. Unit tests and synthetic browser fixtures are not substitutes.
-- Verify release smoke, CRM/n8n/channel contracts and all GitHub Actions on the published head.
-- Tax-inclusive staff tariffs currently fail closed because the existing canonical engine lacks verified gross-to-net decomposition for every tax rule. Complete that work before enabling them in the new creation flow.
-- Finish full-page accommodation actions and parity checks across all existing reservation actions; avoid nested operation modals in the drawer. Verify staff creation recovery across browser reloads, not only retries within the current dialog.
-- Complete calendar pooled-iCal presentation, date-scoped OOO/OOS restrictions and large-hotel performance/virtualization checks. Do not enable reservation drag mutations before backend concurrency tests pass.
-- Complete the remaining Russian audit across every legacy page, backend-generated help text, exports/print forms and system enum fallbacks.
-- Complete readiness policy checks (deposit rules, guest data, operational tasks), workflow permissions and operational closure scenarios end to end.
-- Verify authenticated persistence and role differences per property in a real test environment. Synthetic browser fixtures exercise layout/navigation only.
+The Guest 360 HTTP regression was reproduced on real PostgreSQL: selecting all audit columns included the internal BigInt timeline sequence, which Express could not serialize. Guest 360 and reservation audit history now project only their public timeline fields. Service-only clients are included through property-scoped service bookings in guest lookup, search and staff creation eligibility.
 
-## Validation
+The drawer shows guest notes, booking notes, special requests and read-only operational comments immediately. Compact history reads Guest 360 and excludes the selected stay. The full booking page routes check-in, checkout and room move to existing Front Desk forms; confirm/cancel/no-show use existing scoped lifecycle APIs. Drawer editing controls remain on the full workspace.
 
-The complete local workspace run passed 2,350 test cases in 286 files containing passed tests. Skipped cases are excluded from published totals. Workspace build/typecheck/lint passed; lint retains warnings. The final UI string and guest eligibility changes were followed by focused validation. Two additional real-PostgreSQL scenarios were added to the existing release smoke job for concurrent staff request replay and rollback on failed physical-room assignment; their execution is NOT VERIFIED locally.
+Inclusive pricing now uses the same ordered, rounded TaxService rules in both directions, including compounding, split components, flat taxes, night caps and guest exemptions. Exact cent decomposition is required; impossible gross values fail closed rather than changing a tax or total. A nightly charge bills one flat night and charges a flat stay fee only on the first night.
 
-Validation evidence and final counts are recorded in the accompanying implementation report. The first full run exposed failures already present at the base commit; these were reproduced in an isolated base snapshot. Test fixtures were corrected for explicit business dates, real future service dates and current API/transaction shapes without weakening amount or replay assertions. The Connect booking response also restores the expected roomNumber field.
+A session receipt stores only the request UUID, scoped to actor/property. The new result endpoint takes the existing request advisory lock and returns a committed reservation without repricing. After a browser reload, an unconfirmed result is deliberately not permission to create another request: the receipt remains and new creation is blocked. A terminal recovery/fencing workflow for a request that never committed remains open.
 
-Keep this PR draft until the open gates are closed. Do not merge or deploy automatically. Apply additive migrations through the existing migration runner only in a verified test/staging environment before promotion.
+Calendar iCal blocks now have separate category/date rows. Reservation and availability indexes remove repeated whole-range scans in each room/cell. This is not a verified large-hotel virtualization or load result. Pickup now counts bookings cancelled later in its historical baseline and offsets additions cancelled within the same booking window. Readiness no longer treats a historical inspection as making a currently dirty/OOO room ready, or mixes deposit currencies. These indicators do not implement additional deposit or registration policies.
+
+### PASS
+
+- Complete local workspace suite: 2,373 passed cases in 292 files with passes; 53 skipped cases excluded. Later guest membership changes received focused guest/staff and real HTTP checks.
+- Workspace build, all package type checks and lint (zero lint errors; existing warnings remain). A missing import exposed by typecheck was restored; a concurrent dependency rebuild caused a separate transient type resolution failure, followed by a passing API check after build.
+- Real PostgreSQL 16.15: six Guest 360 HTTP/RBAC/property/service-only cases, nine operation/pricing/pickup/readiness cases, four workspace/notification/migration cases, and six accepted-pricing mutex cases. External delivery ports are doubles in the outbox test.
+- Core migration runner and optional booking-request migration runner on the isolated local database. Migrations 0030/0031 were also applied twice to an isolated legacy schema with notification/read-receipt preservation assertions.
+- Focused UI tests and a local browser fixture check: immediate notes, expandable history, a single Quick View dialog, restored reservation/filter/date/28-day scale, and guest-list opening without contact fields. Browser fixtures are synthetic and are not production or database evidence.
+
+### NOT VERIFIED / requirements still open
+
+- Actual Keycloak login/JWT verification and persistence across devices; HTTP guard tests inject a test identity but execute real property membership and PostgreSQL RBAC.
+- Redis-backed full release smoke and the published-head CI result, until GitHub Actions executes. The workflow now explicitly runs the core PostgreSQL tests before optional-package migrations, then financial mutex checks and the existing release smoke.
+- Live CRM/n8n/channel sandbox delivery, process-kill recovery and the complete legacy event delivery surface. Passing contract tests are not proof of live provider certification.
+- Terminal recovery after a reload when the original request never committed.
+- Date-scoped planned OOO/OOS, virtualized large-hotel performance and concurrency between room moves and check-in/other moves. Existing OOO/OOS remains blocked until explicit manual return; resolved maintenance does not reopen it automatically.
+- Complete accommodation mutation parity (including changes protected by accepted-pricing invariants), service/task authoring from booking context, readiness policy completeness, all viewport/focus paths, all legacy enum/help/export/print translations. Forty visible legacy text instances plus report/payment labels were localized; this does not assert a complete Russian audit.
+
+No production migration or deployment was performed. Keep the follow-up PR draft, finish the outstanding P0/P1 gates, then start P2.

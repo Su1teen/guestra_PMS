@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { hotelDate } from '../lib/hotel-date';
@@ -211,13 +211,25 @@ export default function FrontDesk() {
     queryFn: () => api.get('/v1/operations/pre-arrivals', { params: { propertyId, startDate: today, endDate: today } }).then(r => r.data?.data ?? r.data),
     enabled: !!propertyId && hasPermission('ops.read') });
   const focusId = routeParams.get('reservationId');
+  const focusAction = routeParams.get('action');
+  const consumedFocus = useRef('');
   const focusedQuery = useQuery({ queryKey: ['reservations', 'detail', propertyId, focusId], enabled: !!focusId && !!propertyId && hasPermission('reservations.read'),
     queryFn: () => api.get('/v1/reservations/' + focusId, { params: { propertyId } }).then(r => r.data?.data ?? r.data) });
   useEffect(() => {
     const e = focusedQuery.data;
     if (!e?.reservation) return;
-    setDetailsModal({ ...e.reservation, confirmationNumber: e.confirmationNumber, guest: e.guest, roomNumber: e.room?.number, roomTypeName: e.roomType?.name });
-  }, [focusedQuery.data]);
+    const signature = `${propertyId}:${focusId}:${focusAction ?? ''}`;
+    if (consumedFocus.current === signature) return;
+    consumedFocus.current = signature;
+    const selected = { ...e.reservation, confirmationNumber: e.confirmationNumber, guest: e.guest, roomNumber: e.room?.number, roomTypeName: e.roomType?.name };
+    if (hasPermission('reservations.write', 'frontdesk.access') && focusAction === 'move-room' && ['assigned','checked_in','stayover','due_out'].includes(selected.status)) {
+      setMoveModal(selected); setMoveRoomId(''); setOverrideDoNotMove(false); setMoveReason('');
+    } else if (hasPermission('reservations.write', 'frontdesk.access') && focusAction === 'check-in' && ['confirmed','assigned'].includes(selected.status)) {
+      void openCheckIn(selected);
+    } else if (hasPermission('reservations.write', 'frontdesk.access') && focusAction === 'check-out' && ['checked_in','stayover','due_out'].includes(selected.status)) {
+      setCheckOutModal(selected);
+    } else setDetailsModal(selected);
+  }, [focusedQuery.data, propertyId, focusId, focusAction, hasPermission]);
 
   const { data: arrivals } = useQuery({
     queryKey: ['reservations', 'arrivals', propertyId, today],
@@ -999,7 +1011,7 @@ export default function FrontDesk() {
                       <td className="px-4 py-3 text-sm font-medium text-telivity-navy">
                         <div>{guestName(r)}</div>
                         {(tab === 'arrivals' || tab === 'in-house') && guestRecognition(r)}
-                        {tab === 'arrivals' && readiness.find(a => a.reservationId === r.id) && <div className="mt-1 flex flex-wrap gap-1">{['roomAssigned','housekeepingReady','depositReceived','operationalTasksComplete'].map(key => <span key={key} className={'rounded px-1.5 py-0.5 text-[10px] ' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.checks.' + key)}</span>)}</div>}
+                        {tab === 'arrivals' && readiness.find(a => a.reservationId === r.id) && <div className="mt-1 flex flex-wrap gap-1">{['roomAssigned','housekeepingReady','depositReceived','operationalTasksComplete'].map(key => <span key={key} className={'rounded px-1.5 py-0.5 text-[10px] ' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'checks.' : 'checksMissing.') + key)}</span>)}</div>}
                         {r.guestId && hasPermission('guests.read') && <button className="mt-1 text-xs text-telivity-teal" onClick={e => { e.stopPropagation(); openGuest(r.guestId!, propertyId); }}>{t('guestQuickView.title')}</button>}
                       </td>
                       <td className="px-4 py-3 text-sm text-telivity-slate">{r.confirmationNumber}</td>
@@ -1165,8 +1177,7 @@ export default function FrontDesk() {
 
               {/* Document Identity Section */}
               <div className="p-4 bg-gray-50/70 rounded-xl border border-gray-100 space-y-3">
-                <h3 className="text-xs font-bold text-telivity-navy uppercase tracking-wider flex items-center gap-1.5">
-                  Identificação & Registro FNRH
+                <h3 className="text-xs font-bold text-telivity-navy uppercase tracking-wider flex items-center gap-1.5">{t('legacy.identificaORegistroFnrh')}
                 </h3>
                 <div className="grid grid-cols-2 gap-3">
                   <div>

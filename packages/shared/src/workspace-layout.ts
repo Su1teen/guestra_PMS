@@ -1,17 +1,17 @@
-export const WORKSPACE_WIDGETS = ['operations', 'rooms', 'metrics', 'drr', 'revenue', 'activity', 'arrivals', 'departures', 'inhouse', 'unassigned', 'availability', 'tasks', 'maintenance', 'requests'] as const;
+export const WORKSPACE_WIDGETS = ['operations', 'rooms', 'metrics', 'drr', 'revenue', 'activity', 'arrivals', 'departures', 'inhouse', 'unassigned', 'availability', 'tasks', 'maintenance', 'requests', 'occupancy', 'adr', 'revpar', 'pickup', 'bookingPace'] as const;
 export type WorkspaceWidgetType = typeof WORKSPACE_WIDGETS[number];
 export const WORKSPACE_PRESETS = ['frontdesk', 'reservations', 'operations', 'revenue', 'management'] as const;
 export type WorkspacePreset = typeof WORKSPACE_PRESETS[number];
 export interface WorkspaceWidget { id: string; type: WorkspaceWidgetType; width: 1 | 2 | 3; height: 1 | 2 | 3;
-  settings: { propertyId?: string; period: 'today' | 'next7' | 'next28'; density: 'comfortable' | 'compact' } }
+  settings: { propertyId?: string; period: 'today' | 'next7' | 'next28' | 'past7' | 'past28'; density: 'comfortable' | 'compact' } }
 export interface WorkspacePage { id: string; name: string; preset: WorkspacePreset; widgets: WorkspaceWidget[] }
 export interface WorkspaceLayout { version: 2; startPageId: string; pages: WorkspacePage[] }
 export const WORKSPACE_TEMPLATE_WIDGETS: Record<WorkspacePreset, WorkspaceWidgetType[]> = {
   frontdesk: ['arrivals', 'departures', 'inhouse', 'rooms', 'operations', 'tasks'],
   reservations: ['arrivals', 'availability', 'unassigned', 'operations', 'activity'],
   operations: ['rooms', 'maintenance', 'tasks', 'requests', 'arrivals', 'operations'],
-  revenue: ['metrics', 'drr', 'revenue', 'availability', 'activity'],
-  management: ['metrics', 'drr', 'operations', 'rooms', 'revenue', 'activity'],
+  revenue: ['occupancy', 'adr', 'revpar', 'pickup', 'bookingPace', 'revenue', 'availability', 'activity'],
+  management: ['occupancy', 'adr', 'revpar', 'operations', 'rooms', 'pickup', 'bookingPace', 'activity'],
 };
 const plain = (v: unknown): v is Record<string, any> => !!v && typeof v === 'object' && !Array.isArray(v);
 const only = (v: Record<string, any>, keys: string[]) => Object.keys(v).every(k => keys.includes(k));
@@ -28,7 +28,7 @@ export function isWorkspaceLayout(v: unknown): v is WorkspaceLayout {
       if (!plain(widget) || !only(widget, ['id', 'type', 'width', 'height', 'settings']) || !identifier(widget['id']) || widgetIds.has(widget['id']) || !WORKSPACE_WIDGETS.includes(widget['type']) || types.has(widget['type']) || ![1,2,3].includes(widget['width']) || ![1,2,3].includes(widget['height'])) return false;
       widgetIds.add(widget['id']); types.add(widget['type']);
       const s = widget['settings'];
-      if (!plain(s) || !only(s, ['propertyId', 'period', 'density']) || !['today', 'next7', 'next28'].includes(s['period']) || !['comfortable', 'compact'].includes(s['density']) || (s['propertyId'] !== undefined && (typeof s['propertyId'] !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s['propertyId'])))) return false;
+      if (!plain(s) || !only(s, ['propertyId', 'period', 'density']) || !['today', 'next7', 'next28', 'past7', 'past28'].includes(s['period']) || !['comfortable', 'compact'].includes(s['density']) || (s['propertyId'] !== undefined && (typeof s['propertyId'] !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s['propertyId'])))) return false;
     }
   }
   return ids.has(v['startPageId']);

@@ -8,7 +8,7 @@ describe('workspace preferences', () => {
   });
   it('recovers from malformed or unsupported persisted data', () => {
     for (const raw of ['{', null, JSON.stringify({ version: 2, preset: 'management', widgets: [] })]) {
-      expect(parseLayout(raw).pages[0].widgets.map(w => w.type)).toContain('metrics');
+      expect(parseLayout(raw).pages[0].widgets.map(w => w.type)).toContain('occupancy');
     }
   });
   it('rejects unknown widgets and duplicates while preserving order and an empty selection', () => {

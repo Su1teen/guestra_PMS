@@ -949,7 +949,8 @@ export class ReportsService {
           coversStayDate,
           sql`${reservations.createdAt}::date < ${from}`,
           sql`(${reservations.cancelledAt} is null or ${reservations.cancelledAt}::date >= ${from})`,
-          sql`${reservations.status} not in ('cancelled', 'no_show')`,
+          // A later cancellation must still count in the earlier baseline.
+          sql`${reservations.status} not in ('no_show')`,
         ),
       );
 
@@ -972,7 +973,8 @@ export class ReportsService {
           coversStayDate,
           sql`${reservations.createdAt}::date >= ${from}`,
           sql`${reservations.createdAt}::date <= ${to}`,
-          sql`${reservations.status} not in ('cancelled', 'no_show')`,
+          // Count additions even if cancelled later within the same window.
+          sql`${reservations.status} not in ('no_show')`,
         ),
       )
       .groupBy(sql`${reservations.createdAt}::date`)

@@ -398,7 +398,7 @@ function GuestDetail() {
           <div className="flex items-center justify-between border-b border-gray-100 pb-4">
             <div>
               <h2 className="text-base font-bold text-telivity-navy">{t('guests.profile')}</h2>
-              <p className="text-xs text-telivity-mid-grey">Guest details & registration profile</p>
+              <p className="text-xs text-telivity-mid-grey">{t('legacy.guestDetailsRegistrationProfile')}</p>
             </div>
             {!editing ? (
               <button onClick={startEdit} className="px-4 py-1.5 bg-telivity-teal text-white text-xs font-semibold rounded-lg hover:bg-telivity-light-teal transition-all">
@@ -516,9 +516,9 @@ function GuestDetail() {
                 <div className="grid grid-cols-2 gap-3">
                   <select value={vipLevel} onChange={(e) => setVipLevel(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal bg-white">
                     <option value="none">{t('guests.none')}</option>
-                    <option value="gold">Gold</option>
-                    <option value="platinum">Platinum</option>
-                    <option value="diamond">Diamond</option>
+                    <option value="gold">{t('legacy.gold')}</option>
+                    <option value="platinum">{t('legacy.platinum')}</option>
+                    <option value="diamond">{t('legacy.diamond')}</option>
                   </select>
                   <input type="text" value={loyaltyNumber} onChange={(e) => setLoyaltyNumber(e.target.value)} placeholder={t('guests.loyaltyNumber')} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal bg-white" />
                 </div>

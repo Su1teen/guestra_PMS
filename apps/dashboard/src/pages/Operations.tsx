@@ -79,11 +79,11 @@ export default function Operations() {
     ['attention', ru ? 'Требует внимания' : 'Requires attention', AlertTriangle],
     ['pre-arrival', ru ? 'Подготовка к заезду' : 'Pre-arrival', ClipboardCheck],
     ['tasks', ru ? 'Запросы и задачи' : 'Requests & tasks', CheckCircle2],
-    ['maintenance', 'Maintenance', Wrench],
+    ['maintenance', ru ? 'Техническая служба' : 'Maintenance', Wrench],
   ] as const;
 
   return <div>
-    <div className="flex flex-wrap items-center gap-3 mb-5"><Settings size={24} className="text-telivity-teal"/><div><h1 className="text-2xl font-semibold text-telivity-navy">{ru ? 'Операции' : 'Operations'}</h1><p className="text-xs text-telivity-mid-grey">{ru ? 'Единая очередь работы служб отеля' : 'One workspace for cross-department hotel operations'}</p></div><div className="ml-auto flex gap-2"><button onClick={() => setCreateKind('task')} className="border border-telivity-teal text-telivity-teal rounded-lg px-3 py-2 text-xs font-semibold flex gap-1"><Plus size={14}/>{ru ? 'Задача' : 'Task'}</button><button onClick={() => setCreateKind('maintenance')} className="bg-telivity-teal text-white rounded-lg px-3 py-2 text-xs font-semibold flex gap-1"><Plus size={14}/>Maintenance</button></div></div>
+    <div className="flex flex-wrap items-center gap-3 mb-5"><Settings size={24} className="text-telivity-teal"/><div><h1 className="text-2xl font-semibold text-telivity-navy">{ru ? 'Операции' : 'Operations'}</h1><p className="text-xs text-telivity-mid-grey">{ru ? 'Единая очередь работы служб отеля' : 'One workspace for cross-department hotel operations'}</p></div><div className="ml-auto flex gap-2"><button onClick={() => setCreateKind('task')} className="border border-telivity-teal text-telivity-teal rounded-lg px-3 py-2 text-xs font-semibold flex gap-1"><Plus size={14}/>{ru ? 'Задача' : 'Task'}</button><button onClick={() => setCreateKind('maintenance')} className="bg-telivity-teal text-white rounded-lg px-3 py-2 text-xs font-semibold flex gap-1"><Plus size={14}/>{ru ? 'Техническая служба' : 'Maintenance'}</button></div></div>
     <div className="flex gap-2 overflow-x-auto mb-5">{tabs.map(([key, label, Icon]) => <button key={key} onClick={() => setParams({ tab: key })} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm whitespace-nowrap ${tab === key ? 'bg-telivity-navy text-white' : 'bg-white text-telivity-slate border border-gray-100'}`}><Icon size={15}/>{label}</button>)}</div>
 
     {tab !== 'pre-arrival' && <OperationsFilters value={filters} onChange={setFilters} assignees={assignees} ru={ru} />}

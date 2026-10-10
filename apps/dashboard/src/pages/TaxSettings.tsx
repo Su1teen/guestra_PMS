@@ -138,10 +138,10 @@ function TaxCalculator() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
         <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="Amount" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
         <select value={chargeType} onChange={(e) => setChargeType(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm">
-          <option value="room">Room</option>
-          <option value="food_beverage">Food & Beverage</option>
-          <option value="tax">Tax</option>
-          <option value="incidental">Incidental</option>
+          <option value="room">{t('legacy.room')}</option>
+          <option value="food_beverage">{t('legacy.foodBeverage')}</option>
+          <option value="tax">{t('legacy.tax')}</option>
+          <option value="incidental">{t('legacy.incidental')}</option>
         </select>
         <input type="date" value={serviceDate} onChange={(e) => setServiceDate(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
       </div>

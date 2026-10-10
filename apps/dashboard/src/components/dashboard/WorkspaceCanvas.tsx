@@ -1,11 +1,12 @@
 import { Children, isValidElement, useState, type ReactNode } from 'react';
 import { ArrowLeft, ArrowRight, GripVertical, Settings2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { CONFIGURABLE_WIDGETS, WIDGET_PERMISSIONS, type DashboardLayout, type WorkspaceWidget } from '../../lib/dashboard-layout';
+import { CONFIGURABLE_WIDGETS, REPORT_WIDGETS, WIDGET_PERMISSIONS, type DashboardLayout, type WorkspaceWidget } from '../../lib/dashboard-layout';
 import { useAuth } from '../../context/AuthContext';
 import { useProperty } from '../../context/PropertyContext';
 import { QueryError } from '../ui/ErrorBoundary';
 import WorkspaceDataWidget from './WorkspaceDataWidget';
+import WorkspaceReportWidget from './WorkspaceReportWidget';
 export default function WorkspaceCanvas({ children, layout, pageId, onChange, queryStates = {} }: { queryStates?: Partial<Record<string, Array<{ isError: boolean; isPending: boolean; refetch: () => Promise<unknown> }>>>; children: ReactNode; layout: DashboardLayout; pageId: string; onChange: (next: DashboardLayout) => void }) {
   const { t } = useTranslation(); const { hasPermission } = useAuth(); const { properties } = useProperty();
   const [dragged, setDragged] = useState<string | null>(null); const [editing, setEditing] = useState<string | null>(null);
@@ -32,10 +33,10 @@ export default function WorkspaceCanvas({ children, layout, pageId, onChange, qu
       <label>{t('workspace.height')}<input type="range" min={1} max={3} value={widget.height} onChange={e => patch(widget.id, { height: Number(e.target.value) as 1|2|3 })}/></label>
       {CONFIGURABLE_WIDGETS.includes(widget.type) ? <>
         <label>{t('workspace.property')}<select className="mt-1 w-full rounded border p-1" value={widget.settings.propertyId ?? ''} onChange={e => patch(widget.id, { settings: { ...widget.settings, propertyId: e.target.value || undefined } })}><option value="">{t('workspace.currentProperty')}</option>{properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-        {!['tasks','maintenance','requests','inhouse'].includes(widget.type) ? <label>{t('workspace.period')}<select className="mt-1 w-full rounded border p-1" value={widget.settings.period} onChange={e => patch(widget.id, { settings: { ...widget.settings, period: e.target.value as WorkspaceWidget['settings']['period'] } })}>{['today','next7','next28'].map(p => <option key={p} value={p}>{t('workspace.periods.' + p)}</option>)}</select></label> : <p>{t('workspace.fixedPeriod')}</p>}
+        {!['tasks','maintenance','requests','inhouse'].includes(widget.type) ? <label>{t('workspace.period')}<select className="mt-1 w-full rounded border p-1" value={widget.settings.period} onChange={e => patch(widget.id, { settings: { ...widget.settings, period: e.target.value as WorkspaceWidget['settings']['period'] } })}>{(REPORT_WIDGETS.includes(widget.type) ? widget.type === 'bookingPace' ? ['today','next7','next28','past7','past28'] : ['today','past7','past28'] : ['today','next7','next28']).map(p => <option key={p} value={p}>{t('workspace.periods.' + p)}</option>)}</select></label> : <p>{t('workspace.fixedPeriod')}</p>}
         <label>{t('workspace.density')}<select className="mt-1 w-full rounded border p-1" value={widget.settings.density} onChange={e => patch(widget.id, { settings: { ...widget.settings, density: e.target.value as 'compact'|'comfortable' } })}>{['compact','comfortable'].map(d => <option key={d} value={d}>{t('workspace.' + d)}</option>)}</select></label>
       </> : <p className="col-span-2 text-gray-500">{t('workspace.fixedPeriod')}</p>}
     </div>}
-    <div className="min-h-0 flex-1 overflow-auto">{CONFIGURABLE_WIDGETS.includes(widget.type) ? <WorkspaceDataWidget widget={widget}/> : queryStates[widget.type]?.some(q => q.isError) ? <QueryError onRetry={() => { queryStates[widget.type]?.forEach(q => { void q.refetch(); }); }}/> : queryStates[widget.type]?.some(q => q.isPending) ? <p role="status" className="p-5 text-sm text-gray-500">{t('common.loading')}</p> : content.get(widget.type) ?? <p className="p-5 text-sm text-gray-500">{t('workspace.noData')}</p>}</div>
+    <div className="min-h-0 flex-1 overflow-auto">{REPORT_WIDGETS.includes(widget.type) ? <WorkspaceReportWidget widget={widget}/> : CONFIGURABLE_WIDGETS.includes(widget.type) ? <WorkspaceDataWidget widget={widget}/> : queryStates[widget.type]?.some(q => q.isError) ? <QueryError onRetry={() => { queryStates[widget.type]?.forEach(q => { void q.refetch(); }); }}/> : queryStates[widget.type]?.some(q => q.isPending) ? <p role="status" className="p-5 text-sm text-gray-500">{t('common.loading')}</p> : content.get(widget.type) ?? <p className="p-5 text-sm text-gray-500">{t('workspace.noData')}</p>}</div>
   </section>)}</div>;
 }

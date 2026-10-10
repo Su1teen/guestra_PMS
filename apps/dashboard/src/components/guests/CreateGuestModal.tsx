@@ -757,9 +757,9 @@ export default function CreateGuestModal({
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal bg-white"
               >
                 <option value="none">{t('guests.none')}</option>
-                <option value="gold">Gold</option>
-                <option value="platinum">Platinum</option>
-                <option value="diamond">Diamond</option>
+                <option value="gold">{t('legacy.gold')}</option>
+                <option value="platinum">{t('legacy.platinum')}</option>
+                <option value="diamond">{t('legacy.diamond')}</option>
               </select>
             </div>
             <div>

@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CardElement, useStripe, useElements } from '@stripe/react-stripe-js';
 
 /**
@@ -33,8 +34,9 @@ export function CardInput({
   onPaymentMethod,
   onError,
   disabled = false,
-  submitLabel = 'Save Card',
+  submitLabel,
 }: CardInputProps) {
+  const { t } = useTranslation();
   const stripe = useStripe();
   const elements = useElements();
   const [loading, setLoading] = useState(false);
@@ -63,7 +65,7 @@ export function CardInput({
       setLoading(false);
 
       if (error) {
-        const message = error.message ?? 'Card validation failed';
+        const message = t('legacy.cardInvalid');
         setCardError(message);
         onError?.(message);
         return;
@@ -81,14 +83,14 @@ export function CardInput({
         });
       }
     },
-    [stripe, elements, onPaymentMethod, onError],
+    [stripe, elements, onPaymentMethod, onError, t],
   );
 
   // If Stripe is not available (mock mode), show a placeholder
   if (!stripe) {
     return (
       <div className="rounded-md border border-gray-300 bg-gray-50 p-3 text-sm text-gray-500">
-        Card input unavailable — Stripe not configured (STRIPE_MODE=mock)
+        {t('legacy.cardUnavailable')}
       </div>
     );
   }
@@ -120,7 +122,7 @@ export function CardInput({
         disabled={disabled || loading || !stripe}
         className="w-full rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
       >
-        {loading ? 'Processing...' : submitLabel}
+        {loading ? t('legacy.processing') : submitLabel ?? t('legacy.saveCard')}
       </button>
     </form>
   );

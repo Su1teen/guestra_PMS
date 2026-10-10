@@ -7,9 +7,12 @@ import { requireCurrency, requirePropertyId } from '../../lib/api-helpers';
 import { getDateLocale } from '../../lib/date-locale';
 import { formatMoney } from '../../lib/money';
 import { useProperty } from '../../context/PropertyContext';
+import { useAuth } from '../../context/AuthContext';
+import { staffRecoveryKey, saveStaffRequest, clearStaffRequest, usePendingStaffRequest } from '../../lib/staff-booking-recovery';
 import Modal from '../ui/Modal';
 import { useToast } from '../ui/Toast';
 import FindGuest from '../guests/FindGuest';
+import GuestContextSummary from '../guests/GuestContextSummary';
 import { errorMessage } from '../../lib/error-message';
 import type { Guest } from '../../types/guest';
 
@@ -56,6 +59,9 @@ export default function CreateReservationModal({
 }: CreateReservationModalProps) {
   const { t, i18n } = useTranslation();
   const { propertyId, currencyCode } = useProperty();
+  const { user } = useAuth();
+  const recoveryKey = staffRecoveryKey(user?.sub ?? 'demo', propertyId ?? '');
+  const pendingRequest = usePendingStaffRequest(recoveryKey);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const dateLocale = getDateLocale(i18n.resolvedLanguage);
@@ -68,6 +74,7 @@ export default function CreateReservationModal({
   const [adults, setAdults] = useState(1);
   const [children, setChildren] = useState(0);
   const [specialRequests, setSpecialRequests] = useState('');
+  const blockedByRecovery = !!pendingRequest && !submitted.current;
 
   const { data: ratePlanData } = useQuery({
     queryKey: ['rate-plans', propertyId],
@@ -101,9 +108,9 @@ export default function CreateReservationModal({
     if (open) { setAdults(prefill?.adults ?? 1); setChildren(prefill?.children ?? 0); }
   }, [open, prefill?.adults, prefill?.children]);
 
-  const quoteBody = { propertyId, roomTypeId: prefill?.roomTypeId, ratePlanId, checkIn: prefill?.checkInDate, checkOut: prefill?.checkOutDate };
+  const quoteBody = { propertyId, roomTypeId: prefill?.roomTypeId, ratePlanId, checkIn: prefill?.checkInDate, checkOut: prefill?.checkOutDate, ...(guest?.id ? { guestId: guest.id } : {}) };
   const quoteQuery = useQuery<ServerQuote>({
-    queryKey: ['reservation-quote', propertyId, prefill?.roomTypeId, ratePlanId, prefill?.checkInDate, prefill?.checkOutDate],
+    queryKey: ['reservation-quote', propertyId, prefill?.roomTypeId, ratePlanId, prefill?.checkInDate, prefill?.checkOutDate, guest?.id],
     queryFn: () => api.post('/v1/reservations/quote', quoteBody, { skipErrorToast: true }).then((r) => r.data?.data ?? r.data),
     enabled: open && !!propertyId && !!prefill && !!ratePlanId,
     staleTime: 0,
@@ -112,6 +119,7 @@ export default function CreateReservationModal({
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (blockedByRecovery) throw new Error(t('staffRecovery.pending'));
       requirePropertyId(propertyId);
       requireCurrency(currencyCode);
       if (!prefill) throw new Error(t('reservationWorkspace.quoteError'));
@@ -127,12 +135,17 @@ export default function CreateReservationModal({
           requestId: requestId.current, expectedTotal: fresh.data.totalAmount, currencyCode, adults, children,
           ...(specialRequests.trim() ? { specialRequests: specialRequests.trim() } : {}) };
       }
+      if (!saveStaffRequest(recoveryKey, requestId.current)) {
+        submitted.current = null;
+        throw new Error(t('staffRecovery.storageError'));
+      }
       const res = await api.post('/v1/reservations/staff-create', submitted.current, { skipErrorToast: true });
       const id: string | undefined = res.data?.id ?? res.data?.data?.id;
       if (!id) throw new Error(t('reservationWorkspace.quoteError'));
       return { id };
     },
     onSuccess: ({ id }) => {
+      clearStaffRequest(recoveryKey, requestId.current);
       queryClient.invalidateQueries({ queryKey: ['reservations'] });
       queryClient.invalidateQueries({ queryKey: ['rooms'] });
       toast('success', t('reservations.tape.created', { room: prefill?.roomNumber ?? '' }));
@@ -142,8 +155,9 @@ export default function CreateReservationModal({
     onError: (error: unknown) => {
       const status = (error as { response?: { status?: number } })?.response?.status;
       // A lost response can mean the transaction committed. Keep the exact request/key for retry.
-      if (submitted.current && (!status || status >= 500)) setUncertain(true);
-      else { submitted.current = null; requestId.current = crypto.randomUUID(); setUncertain(false); void quoteQuery.refetch(); }
+      const code = (error as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      if (submitted.current && (!status || status >= 500 || code === 'REQUEST_CHANGED')) setUncertain(true);
+      else { clearStaffRequest(recoveryKey, requestId.current); submitted.current = null; requestId.current = crypto.randomUUID(); setUncertain(false); void quoteQuery.refetch(); }
       toast('error', errorMessage(error));
     },
   });
@@ -251,6 +265,7 @@ export default function CreateReservationModal({
           </div>
 
           <FindGuest selectedGuest={guest} onSelectGuest={setGuest} />
+          {guest && propertyId && <GuestContextSummary key={propertyId + guest.id} guest={guest} propertyId={propertyId}/>}
 
           <label className="block">
             <span className="block text-xs font-medium text-telivity-mid-grey mb-1">
@@ -278,7 +293,7 @@ export default function CreateReservationModal({
             <button
               type="button"
               onClick={() => createMutation.mutate()}
-              disabled={!guest || !ratePlanId || createMutation.isPending || (!uncertain && (!quote || quoteQuery.isFetching || quoteQuery.isError || quote.currency !== currencyCode))}
+              disabled={blockedByRecovery || !guest || !ratePlanId || createMutation.isPending || (!uncertain && (!quote || quoteQuery.isFetching || quoteQuery.isError || quote.currency !== currencyCode))}
               className="flex-1 bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-telivity-light-teal disabled:opacity-50"
             >
               {createMutation.isPending
