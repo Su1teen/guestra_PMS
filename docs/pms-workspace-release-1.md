@@ -59,6 +59,7 @@ Calendar iCal blocks now have separate category/date rows. Reservation and avail
 
 - Actual Keycloak login/JWT verification and persistence across devices; HTTP guard tests inject a test identity but execute real property membership and PostgreSQL RBAC.
 - Redis-backed full release smoke and the published-head CI result, until GitHub Actions executes. The workflow now explicitly runs the core PostgreSQL tests before optional-package migrations, then financial mutex checks and the existing release smoke.
+  Repository Actions is enabled and the CI workflow is active, but the initial follow-up PR check query returned no workflow runs. This is not a successful CI result; the trigger must be verified on the published revision.
 - Live CRM/n8n/channel sandbox delivery, process-kill recovery and the complete legacy event delivery surface. Passing contract tests are not proof of live provider certification.
 - Terminal recovery after a reload when the original request never committed.
 - Date-scoped planned OOO/OOS, virtualized large-hotel performance and concurrency between room moves and check-in/other moves. Existing OOO/OOS remains blocked until explicit manual return; resolved maintenance does not reopen it automatically.
