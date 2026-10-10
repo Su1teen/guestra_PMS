@@ -21,6 +21,7 @@ export default function Modal({
 }: ModalProps) {
   const { t } = useTranslation();
   const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   const closeDisabledRef = useRef(closeDisabled);
 
@@ -31,8 +32,19 @@ export default function Modal({
 
   useEffect(() => {
     if (!open) return undefined;
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
+    panelRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.target as HTMLElement)?.closest('[role="dialog"]') !== panelRef.current) return;
+      if (event.key === 'Tab') {
+        const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]') ?? []).filter(el => el.getClientRects().length > 0);
+        const first = controls[0]; const last = controls[controls.length - 1];
+        if (!first) event.preventDefault();
+        else if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panelRef.current)) { event.preventDefault(); first.focus(); }
+      }
       if (event.key === 'Escape' && !closeDisabledRef.current) {
         event.preventDefault();
         onCloseRef.current();
@@ -40,7 +52,8 @@ export default function Modal({
     };
     document.addEventListener('keydown', onKeyDown);
     return () => {
-      document.body.style.overflow = '';
+      document.body.style.overflow = overflow;
+      previous?.focus();
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [open]);
@@ -58,6 +71,8 @@ export default function Modal({
         onClick={closeDisabled ? undefined : onClose}
       />
       <div
+        ref={panelRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, pgEnum, index, uniqueIndex } from 'drizzle-orm/pg-core';
 import { properties } from './property.js';
 
 export const staffNotificationSeverityEnum = pgEnum('staff_notification_severity', [
@@ -26,12 +26,15 @@ export const staffNotifications = pgTable(
     title: varchar('title', { length: 255 }).notNull(),
     message: text('message').notNull(),
     severity: staffNotificationSeverityEnum('severity').notNull().default('info'),
+    deduplicationKey: varchar('deduplication_key', { length: 200 }),
+    requiredPermission: varchar('required_permission', { length: 100 }),
     sourceEvent: varchar('source_event', { length: 100 }),
     sourceEntityType: varchar('source_entity_type', { length: 50 }),
     sourceEntityId: uuid('source_entity_id'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
+    deduplicationUnique: uniqueIndex('staff_notifications_property_dedup_unique').on(t.propertyId, t.deduplicationKey),
     propertyCreatedIdx: index('staff_notifications_property_created_idx').on(
       t.propertyId,
       t.createdAt,
@@ -50,6 +53,6 @@ export const staffNotificationReads = pgTable(
     readAt: timestamp('read_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
-    uniqueRead: index('staff_notification_reads_unique').on(t.notificationId, t.userId),
+    uniqueRead: uniqueIndex('staff_notification_reads_unique').on(t.notificationId, t.userId),
   }),
 );

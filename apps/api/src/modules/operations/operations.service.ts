@@ -183,7 +183,7 @@ export class OperationsService {
         id: `arrival-unassigned-${arrival.reservationId}`,
         type: 'arrival_unassigned', priority: 'high',
         title: arrival.guestName,
-        description: 'Arrival today without an assigned room',
+        description: 'Заезд сегодня: номер не назначен',
         entityType: 'reservation', entityId: arrival.reservationId,
         href: arrival.actions.reservation,
       });
@@ -191,7 +191,7 @@ export class OperationsService {
         id: `arrival-room-${arrival.reservationId}`,
         type: 'arrival_room_not_ready', priority: 'critical',
         title: `${arrival.guestName} · ${arrival.roomNumber}`,
-        description: `Arrival today; room status: ${arrival.roomStatus}`,
+        description: 'Заезд сегодня: назначенный номер ещё не готов',
         entityType: 'reservation', entityId: arrival.reservationId,
         href: arrival.actions.reservation,
       });
@@ -199,7 +199,7 @@ export class OperationsService {
         id: `arrival-deposit-${arrival.reservationId}`,
         type: 'deposit_missing', priority: 'normal',
         title: arrival.guestName,
-        description: 'Arrival without a recorded deposit',
+        description: 'Предоплата за заезд не зарегистрирована',
         entityType: 'reservation', entityId: arrival.reservationId,
         href: `/accounting?reservationId=${arrival.reservationId}`,
       });
@@ -231,7 +231,7 @@ export class OperationsService {
     }
     for (const row of overdueHk as any[]) items.push({
       id: row.task.id, type: 'housekeeping_overdue', priority: 'high',
-      title: `Room ${row.roomNumber}`, description: 'Housekeeping task is overdue',
+      title: `Номер ${row.roomNumber}`, description: 'Срок уборки истёк',
       entityType: 'housekeeping_task', entityId: row.task.id,
       href: `/housekeeping?taskId=${row.task.id}`,
       dueAt: row.task.serviceDate,

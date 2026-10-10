@@ -1,4 +1,8 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { hotelDate } from '../lib/hotel-date';
+import { useGuestQuickView } from '../components/guests/GuestQuickView';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ConciergeBell, LogIn, Users, LogOut, UserPlus, UsersRound, ArrowRightLeft, StickyNote, UserRound, Plus, X } from 'lucide-react';
@@ -126,10 +130,13 @@ function emptyWalkInExtraRoom(defaults?: {
 
 export default function FrontDesk() {
   const { t } = useTranslation();
-  const { propertyId, currencyCode } = useProperty();
+  const { propertyId, currencyCode, properties } = useProperty();
+  const { hasPermission } = useAuth();
+  const { openGuest } = useGuestQuickView();
+  const [routeParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const tomorrow = format(addDays(new Date(), 1), 'yyyy-MM-dd');
+  const today = hotelDate(properties.find(p => p.id === propertyId)?.timezone);
+  const tomorrow = format(addDays(parseISO(today), 1), 'yyyy-MM-dd');
 
   const [tab, setTab] = useState<Tab>('arrivals');
   const [checkInModal, setCheckInModal] = useState<Reservation | null>(null);
@@ -199,6 +206,18 @@ export default function FrontDesk() {
 
   // Notes
   const [noteBody, setNoteBody] = useState('');
+
+  const { data: readiness = [] } = useQuery<any[]>({ queryKey: ['operations', 'pre-arrivals', propertyId, today],
+    queryFn: () => api.get('/v1/operations/pre-arrivals', { params: { propertyId, startDate: today, endDate: today } }).then(r => r.data?.data ?? r.data),
+    enabled: !!propertyId && hasPermission('ops.read') });
+  const focusId = routeParams.get('reservationId');
+  const focusedQuery = useQuery({ queryKey: ['reservations', 'detail', propertyId, focusId], enabled: !!focusId && !!propertyId && hasPermission('reservations.read'),
+    queryFn: () => api.get('/v1/reservations/' + focusId, { params: { propertyId } }).then(r => r.data?.data ?? r.data) });
+  useEffect(() => {
+    const e = focusedQuery.data;
+    if (!e?.reservation) return;
+    setDetailsModal({ ...e.reservation, confirmationNumber: e.confirmationNumber, guest: e.guest, roomNumber: e.room?.number, roomTypeName: e.roomType?.name });
+  }, [focusedQuery.data]);
 
   const { data: arrivals } = useQuery({
     queryKey: ['reservations', 'arrivals', propertyId, today],
@@ -980,6 +999,8 @@ export default function FrontDesk() {
                       <td className="px-4 py-3 text-sm font-medium text-telivity-navy">
                         <div>{guestName(r)}</div>
                         {(tab === 'arrivals' || tab === 'in-house') && guestRecognition(r)}
+                        {tab === 'arrivals' && readiness.find(a => a.reservationId === r.id) && <div className="mt-1 flex flex-wrap gap-1">{['roomAssigned','housekeepingReady','depositReceived','operationalTasksComplete'].map(key => <span key={key} className={'rounded px-1.5 py-0.5 text-[10px] ' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.checks.' + key)}</span>)}</div>}
+                        {r.guestId && hasPermission('guests.read') && <button className="mt-1 text-xs text-telivity-teal" onClick={e => { e.stopPropagation(); openGuest(r.guestId!, propertyId); }}>{t('guestQuickView.title')}</button>}
                       </td>
                       <td className="px-4 py-3 text-sm text-telivity-slate">{r.confirmationNumber}</td>
                       {tab === 'arrivals' && (

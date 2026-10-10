@@ -62,7 +62,7 @@ describe('canonical creation transaction seams', () => {
 
   it('FolioService.createAutoFolio uses the caller transaction and emits no pre-commit webhook', async () => {
     const mainDb = {
-      select: vi.fn(() => {
+      select: vi.fn((fields?: Record<string, unknown>) => {
         throw new Error('main database used');
       }),
       insert: vi.fn(() => {
@@ -71,7 +71,7 @@ describe('canonical creation transaction seams', () => {
     };
     const webhook = { emit: vi.fn() };
     const tx = {
-      select: vi.fn(() => {
+      select: vi.fn((fields?: Record<string, unknown>) => {
         let table: unknown;
         const chain: Record<string, unknown> & PromiseLike<unknown> = {
           from: vi.fn((value: unknown) => {
@@ -83,7 +83,7 @@ describe('canonical creation transaction seams', () => {
             table === roomTypes ? [{ id: ROOM_TYPE_ID }] : [],
           )),
           then: (resolve, reject) => Promise.resolve(
-            table === folios ? [{ maxNumber: null }] : [{ id: 'exists' }],
+            table === folios ? fields ? [{ maxNumber: null }] : [] : [{ id: 'exists' }],
           ).then(resolve, reject),
         };
         return chain;
@@ -171,7 +171,10 @@ describe('canonical creation transaction seams', () => {
     const service = new ReservationService(
       mainDb as any,
       availability as any,
-      {} as any,
+      { createAutoFolio: vi.fn(async (_reservation: unknown, callerTx: unknown) => {
+        expect(callerTx).toBe(tx);
+        return { id: FOLIO_ID };
+      }) } as any,
       {} as any,
       {} as any,
       webhook as any,

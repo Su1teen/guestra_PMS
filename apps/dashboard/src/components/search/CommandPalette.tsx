@@ -4,6 +4,8 @@ import { Search, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
+import { useGuestQuickView } from '../guests/GuestQuickView';
+import { useAuth } from '../../context/AuthContext';
 import { useProperty } from '../../context/PropertyContext';
 
 interface SearchResult {
@@ -24,6 +26,7 @@ interface CommandPaletteProps {
 export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const { openGuest } = useGuestQuickView(); const { hasPermission } = useAuth();
   const { propertyId, isPortfolioMode } = useProperty();
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -107,12 +110,13 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
           ) : (
             <ul>
               {results.map((r) => (
-                <li key={`${r.type}-${r.id}-${r.propertyId}`}>
+                <li key={`${t('search.types.' + r.type, { defaultValue: t('search.title') })}-${r.id}-${r.propertyId}`}>
                   <button
                     className="w-full text-left px-4 py-2.5 hover:bg-telivity-light-grey transition-colors border-b border-gray-50 last:border-0"
                     onClick={() => {
-                      navigate(r.href);
                       onClose();
+                      if (r.type === 'guest' && hasPermission('guests.read')) openGuest(r.id, r.propertyId);
+                      else navigate(r.href);
                     }}
                   >
                     <div className="flex items-center gap-2">

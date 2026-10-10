@@ -5,12 +5,14 @@ import {
   BadRequestException,
   ConflictException,
 } from '@nestjs/common';
-import { and, eq, or, isNull, inArray } from 'drizzle-orm';
+import { and, eq, or, isNull, inArray, sql } from 'drizzle-orm';
 import { users, roles, userRoles, auditLogs } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { PermissionsService } from '../auth/permissions.service';
 import { actorFields, type AuditActor } from '../../common/audit/audit-actor';
 import { CreateUserDto } from './dto/create-user.dto';
+import { isWorkspaceLayout } from '@telivityhaip/shared';
+import { UpdateWorkspaceDto } from './dto/update-workspace.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 
 /**
@@ -203,6 +205,25 @@ export class UsersService {
     return { userId, propertyId, permissions };
   }
 
+  async getWorkspace(userId: string, propertyId: string) {
+    const prefs = await this.getPreferences(userId);
+    return { ...(prefs.workspaces?.[propertyId] ?? { revision: 0, layout: null }), persistent: true };
+  }
+
+  async updateWorkspace(userId: string, dto: UpdateWorkspaceDto) {
+    if (!isWorkspaceLayout(dto.layout)) throw new BadRequestException({ code: 'INVALID_WORKSPACE', message: 'Invalid workspace configuration' });
+    return this.db.transaction(async (tx: any) => {
+      const [user] = await tx.select({ preferences: users.preferences }).from(users).where(eq(users.id, userId)).for('update');
+      if (!user) throw new NotFoundException('User not found');
+      const preferences = user.preferences ?? {};
+      const current = preferences.workspaces?.[dto.propertyId];
+      if ((current?.revision ?? 0) !== dto.expectedRevision) throw new ConflictException({ code: 'WORKSPACE_CONFLICT', message: 'Workspace was changed in another session' });
+      const next = { revision: dto.expectedRevision + 1, layout: dto.layout };
+      await tx.update(users).set({ preferences: { ...preferences, workspaces: { ...preferences.workspaces, [dto.propertyId]: next } }, updatedAt: new Date() }).where(eq(users.id, userId));
+      return { ...next, persistent: true };
+    });
+  }
+
   async getPreferences(userId: string) {
     const [row] = await this.db
       .select({ preferences: users.preferences })
@@ -233,7 +254,7 @@ export class UsersService {
     };
     const [user] = await this.db
       .update(users)
-      .set({ preferences: next, updatedAt: new Date() })
+      .set({ preferences: sql`${users.preferences} || ${JSON.stringify(prefs)}::jsonb`, updatedAt: new Date() })
       .where(eq(users.id, userId))
       .returning({ preferences: users.preferences });
     return user?.preferences ?? next;

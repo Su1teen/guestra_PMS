@@ -2,6 +2,8 @@ import { BadRequestException, Injectable, Inject, NotFoundException } from '@nes
 import { eq, ilike, or, and, sql, inArray, isNull, ne, desc } from 'drizzle-orm';
 import {
   guests,
+  guestPropertyLinks,
+  integrationLinks,
   reservations,
   reservationGuests,
   auditLogs,
@@ -13,6 +15,8 @@ import {
   charges,
   bookings,
   serviceRequests,
+  serviceBookings,
+  services,
   maintenanceTickets,
 } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
@@ -27,8 +31,8 @@ import { SearchGuestsDto } from './dto/search-guests.dto';
  * Multi-tenancy note: guests are cross-property by design (one person may stay
  * at multiple hotels), but API access MUST verify a reservation link at the
  * requesting property — otherwise staff at hotel A can read/modify guest PII
- * belonging to hotel B's customers. Every read/update/delete is scoped by
- * "has this guest at least one reservation at `propertyId`?".
+ * belonging to hotel B's customers. Every read/update/delete requires a primary/roster stay link or an existing
+ * guest_property_links membership at the requesting property.
  *
  * The one exception is `create()`: a brand-new walk-in has no reservation yet,
  * so creation is NOT scoped by an existing link. The caller still passes its
@@ -41,13 +45,13 @@ export class GuestService {
   constructor(@Inject(DRIZZLE) private readonly db: any) {}
 
   /**
-   * Verify that a guest has at least one reservation at the given property.
+   * Verify a stay or explicit guest-property membership at the given property.
    * Throws NotFoundException if they don't — identical response to "no such
    * guest" to avoid leaking cross-property existence.
    */
   private async assertGuestAtProperty(guestId: string, propertyId: string): Promise<void> {
     // Primary guest on a reservation OR named accompanying occupant.
-    const [asPrimary, asOccupant] = await Promise.all([
+    const [asPrimary, asOccupant, asServiceGuest] = await Promise.all([
       this.db
         .select({ id: reservations.id })
         .from(reservations)
@@ -68,10 +72,20 @@ export class GuestService {
           ),
         )
         .limit(1),
+      this.db.select({ id: guestPropertyLinks.id }).from(guestPropertyLinks).where(and(eq(guestPropertyLinks.guestId, guestId), eq(guestPropertyLinks.propertyId, propertyId))).limit(1),
     ]);
-    if (!asPrimary.length && !asOccupant.length) {
+    if (!asPrimary.length && !asOccupant.length && !asServiceGuest.length) {
       throw new NotFoundException(`Guest ${guestId} not found`);
     }
+  }
+
+  async createAtProperty(dto: CreateGuestDto, propertyId: string, actor?: AuditActor) {
+    return this.db.transaction(async (tx: any) => {
+      const guest = await this.create(dto, tx);
+      await tx.insert(guestPropertyLinks).values({ guestId: guest.id, propertyId, source: 'pms' });
+      await tx.insert(auditLogs).values({ propertyId, action: 'create', entityType: 'guest', entityId: guest.id, description: 'guest_profile_created', ...actorFields(actor) });
+      return guest;
+    });
   }
 
   async create(dto: CreateGuestDto, tx?: any) {
@@ -216,6 +230,7 @@ export class GuestService {
       eq(guests.isDeleted, false),
       isNull(guests.mergedIntoGuestId),
       or(
+        inArray(guests.id, this.db.select({ guestId: guestPropertyLinks.guestId }).from(guestPropertyLinks).where(eq(guestPropertyLinks.propertyId, propertyId))),
         inArray(
           guests.id,
           this.db
@@ -323,12 +338,17 @@ export class GuestService {
       )).orderBy(desc(reservations.arrivalDate));
 
     const reservationIds = stayRows.map((s: any) => s.reservation.id);
-    const folioRows = reservationIds.length
-      ? await this.db.select().from(folios).where(and(
-          inArray(folios.propertyId, scope),
-          inArray(folios.reservationId, reservationIds),
-        ))
-      : [];
+    const folioRows = await this.db.select().from(folios).where(and(
+      inArray(folios.propertyId, scope),
+      reservationIds.length ? or(eq(folios.guestId, id), inArray(folios.reservationId, reservationIds)) : eq(folios.guestId, id),
+    ));
+    const bookedServices = await this.db.select({ id: serviceBookings.id, propertyId: serviceBookings.propertyId,
+      propertyName: properties.name, serviceName: services.name, status: serviceBookings.status,
+      scheduledAt: serviceBookings.startAt, reservationId: serviceBookings.reservationId,
+    }).from(serviceBookings)
+      .innerJoin(services, and(eq(services.id, serviceBookings.serviceId), eq(services.propertyId, serviceBookings.propertyId)))
+      .innerJoin(properties, eq(properties.id, serviceBookings.propertyId))
+      .where(and(eq(serviceBookings.guestId, id), inArray(serviceBookings.propertyId, scope))).orderBy(desc(serviceBookings.startAt));
     const folioIds = folioRows.map((f: any) => f.id);
     const chargeRows = folioIds.length
       ? await this.db.select().from(charges).where(and(
@@ -443,6 +463,7 @@ export class GuestService {
       },
       stays,
       services: serviceHistory,
+      bookedServices,
       timeline,
     };
   }
@@ -491,6 +512,10 @@ export class GuestService {
         inArray(reservations.guestId, [sourceId, targetId]),
         inArray(reservationGuests.guestId, [sourceId, targetId]),
       ));
+    const serviceLinks = await this.db.select({ propertyId: guestPropertyLinks.propertyId }).from(guestPropertyLinks).where(inArray(guestPropertyLinks.guestId, [sourceId, targetId]));
+    const serviceStays = await this.db.select({ propertyId: serviceBookings.propertyId }).from(serviceBookings).where(inArray(serviceBookings.guestId, [sourceId, targetId]));
+    const directFolios = await this.db.select({ propertyId: folios.propertyId }).from(folios).where(inArray(folios.guestId, [sourceId, targetId]));
+    linkedProperties.push(...serviceLinks, ...serviceStays, ...directFolios);
     if (linkedProperties.some((row: { propertyId: string }) => row.propertyId !== propertyId)) {
       throw new BadRequestException(
         'These profiles contain history at another property; merge requires access to every linked property',
@@ -529,6 +554,12 @@ export class GuestService {
       }
       await tx.update(reservationGuests).set({ guestId: targetId, updatedAt: now }).where(eq(reservationGuests.guestId, sourceId));
       await tx.update(folios).set({ guestId: targetId, updatedAt: now }).where(eq(folios.guestId, sourceId));
+      const targetLinks = await tx.select({ propertyId: guestPropertyLinks.propertyId }).from(guestPropertyLinks).where(eq(guestPropertyLinks.guestId, targetId));
+      const duplicateProperties = targetLinks.map((row: any) => row.propertyId);
+      if (duplicateProperties.length) await tx.delete(guestPropertyLinks).where(and(eq(guestPropertyLinks.guestId, sourceId), inArray(guestPropertyLinks.propertyId, duplicateProperties)));
+      await tx.update(guestPropertyLinks).set({ guestId: targetId, updatedAt: now }).where(eq(guestPropertyLinks.guestId, sourceId));
+      await tx.update(serviceBookings).set({ guestId: targetId, updatedAt: now }).where(eq(serviceBookings.guestId, sourceId));
+      await tx.update(integrationLinks).set({ localEntityId: targetId, updatedAt: now }).where(and(eq(integrationLinks.localEntityType, 'guest'), eq(integrationLinks.localEntityId, sourceId)));
       await tx.update(serviceRequests).set({ guestId: targetId, updatedAt: now }).where(eq(serviceRequests.guestId, sourceId));
       await tx.update(maintenanceTickets).set({ guestId: targetId, updatedAt: now }).where(eq(maintenanceTickets.guestId, sourceId));
       await tx.update(guests).set({ mergedIntoGuestId: targetId, mergedAt: now, updatedAt: now })

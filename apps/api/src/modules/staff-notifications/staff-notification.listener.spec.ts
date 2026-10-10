@@ -35,9 +35,10 @@ describe('StaffNotificationListener — webhook.delivery_failed', () => {
       }),
     );
     const arg = staffNotifications.create.mock.calls[0]![0];
-    expect(arg.title).toContain('reservation.checked_in');
+    expect(arg.title).toBe('Не удалось доставить событие интеграции');
+    expect(arg.message).toContain('reservation.checked_in');
     expect(arg.message).toContain('BR Compliance Service');
-    expect(arg.message).toContain('5 attempts');
+    expect(arg.message).toContain('Число попыток: 5');
   });
 
   it('falls back to the subscription id when subscriberName is missing', async () => {

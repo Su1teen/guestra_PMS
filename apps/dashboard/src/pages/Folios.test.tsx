@@ -50,6 +50,7 @@ function mockGet(overrides: Record<string, unknown> = {}) {
   (api.get as any).mockImplementation((url: string) => {
     if (url in overrides) return Promise.resolve({ data: overrides[url] });
     if (url === '/v1/folios/folio-1') return Promise.resolve({ data: FOLIO });
+    if (url === '/v1/folios/folio-1/context') return Promise.resolve({ data: null });
     if (url === '/v1/folios/folio-1/charges') return Promise.resolve({ data: [CHARGE] });
     if (url === '/v1/payments') return Promise.resolve({ data: [PAYMENT] });
     if (url === '/v1/folios') return Promise.resolve({ data: [FOLIO, SIBLING] });

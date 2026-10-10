@@ -55,7 +55,9 @@ export default function ReservationPartyPanel({
   ratePlanId,
   totalAmount,
   currencyCode,
+  readOnly = false,
 }: {
+  readOnly?: boolean;
   reservationId: string;
   propertyId: string;
   roomTypeId?: string;
@@ -234,7 +236,7 @@ export default function ReservationPartyPanel({
         <div className="flex gap-1">
           <button
             type="button"
-            onClick={() => setAddOpen(true)}
+            disabled={readOnly} onClick={() => setAddOpen(true)}
             className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-telivity-slate hover:bg-telivity-light-grey"
             title={t('reservations.addGuest')}
           >
@@ -248,7 +250,7 @@ export default function ReservationPartyPanel({
               setSplitRatePlanId(ratePlanId ?? '');
               setSplitOpen(true);
             }}
-            disabled={occupants.length < 2}
+            disabled={readOnly || occupants.length < 2}
             className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-telivity-slate hover:bg-telivity-light-grey disabled:opacity-40"
             title={t('reservations.splitToRoom')}
           >
@@ -275,17 +277,17 @@ export default function ReservationPartyPanel({
                     : t('reservations.accompanyingGuest')}
                 </p>
                 <Link
-                  to={`/guests/${o.guestId}`}
+                  to={`/guests/${o.guestId}?propertyId=${propertyId}`}
                   className="text-xs font-semibold text-telivity-teal hover:underline"
                 >
                   {t('frontDesk.viewProfile', { defaultValue: 'View profile' })}
                 </Link>
               </div>
               <div className="flex items-center gap-1">
-                {occupants.length > 1 && otherSiblings.length > 0 && (
+                {!readOnly && occupants.length > 1 && otherSiblings.length > 0 && (
                   <button
                     type="button"
-                    onClick={() => {
+                    disabled={readOnly} onClick={() => {
                       setMoveGuestId(o.guestId);
                       setMoveTargetId(otherSiblings[0]?.id ?? '');
                     }}
@@ -295,7 +297,7 @@ export default function ReservationPartyPanel({
                     <ArrowRightLeft size={14} />
                   </button>
                 )}
-                {o.role !== 'primary' && (
+                {!readOnly && o.role !== 'primary' && (
                   <button
                     type="button"
                     onClick={() => removeMutation.mutate(o.guestId)}

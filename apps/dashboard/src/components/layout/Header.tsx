@@ -104,7 +104,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
             <kbd className="text-[10px] bg-telivity-light-grey px-1.5 py-0.5 rounded">⌘K</kbd>
           </button>
 
-          <span className="text-sm text-telivity-mid-grey hidden md:inline">
+          <span className="whitespace-nowrap text-sm text-telivity-mid-grey hidden xl:inline">
             {formattedToday}
           </span>
         </div>

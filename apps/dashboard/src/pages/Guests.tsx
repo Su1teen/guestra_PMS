@@ -26,6 +26,7 @@ import { useProperty } from '../context/PropertyContext';
 import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import CreateGuestModal from '../components/guests/CreateGuestModal';
+import { useGuestQuickView } from '../components/guests/GuestQuickView';
 import Guest360Panel from '../components/guests/Guest360Panel';
 import type { Guest } from '../types/guest';
 
@@ -40,6 +41,7 @@ function guestListSearchParams(term: string): { search?: string; loyaltyNumber?:
 
 // ---- Guest List ----
 function GuestList() {
+  const { openGuest } = useGuestQuickView();
   const { t } = useTranslation();
   const { propertyId } = useProperty();
   const navigate = useNavigate();
@@ -127,7 +129,7 @@ function GuestList() {
                 <tr
                   key={g.id}
                   className={`border-b border-gray-50 ${i % 2 === 1 ? 'bg-gray-50/50' : ''} hover:bg-telivity-light-grey/50 transition-colors cursor-pointer`}
-                  onClick={() => navigate(`/guests/${g.id}`)}
+                  onClick={() => openGuest(g.id, propertyId)}
                 >
                   <td className="px-4 py-3 text-sm font-medium text-telivity-navy flex items-center gap-2">
                     {g.firstName} {g.lastName}

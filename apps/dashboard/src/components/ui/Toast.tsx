@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { CheckCircle, AlertTriangle, Info, X } from 'lucide-react';
 
+import { errorMessage } from '../../lib/error-message';
+import i18n from '../../i18n';
+
 type ToastType = 'success' | 'error' | 'info';
 
 interface Toast {
@@ -22,7 +25,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const toast = useCallback((type: ToastType, message: string) => {
     const id = nextId++;
-    setToasts((prev) => [...prev, { id, type, message }]);
+    setToasts((prev) => [...prev, { id, type, message: type === 'error' ? errorMessage(message) : message }]);
   }, []);
 
   const dismiss = useCallback((id: number) => {

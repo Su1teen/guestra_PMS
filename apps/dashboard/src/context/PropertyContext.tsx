@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api, setPropertyId as setApiPropertyId } from '../lib/api';
+import { errorMessage } from '../lib/error-message';
 import { joinPropertyRoom, leavePropertyRoom } from '../lib/socket';
 import {
   PORTFOLIO_MODE_ID,
@@ -82,7 +83,7 @@ export function PropertyProvider({ children }: { children: ReactNode }) {
         }
       })
       .catch((err) => {
-        setPropertiesError(err?.message ?? 'Failed to load properties');
+        setPropertiesError(errorMessage(err));
       })
       .finally(() => setPropertiesLoading(false));
     // Bootstrap once; propertyId auto-select handled inside the effect.

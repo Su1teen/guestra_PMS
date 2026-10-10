@@ -11,11 +11,14 @@ import { AncillaryService } from '../ancillary/ancillary.service';
 import { PolicyService } from '../policy/policy.service';
 import { DepositSettlementService } from '../accounting/deposit-settlement.service';
 import { RatePlanService } from '../rate-plan/rate-plan.service';
+import { rooms } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 
 describe('ReservationService.moveRoom', () => {
   let svc: ReservationService;
   let db: any;
+  let current: any;
+  let overlaps: any[];
   const roomStatus = {
     markOccupied: vi.fn().mockResolvedValue({}),
     markVacantDirty: vi.fn().mockResolvedValue({}),
@@ -36,15 +39,20 @@ describe('ReservationService.moveRoom', () => {
     propertyId: 'prop-001',
     roomTypeId: 'rt-001',
     status: 'guest_ready',
+    isActive: true,
   };
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    current = { ...reservation }; overlaps = [];
     db = {
-      select: vi.fn().mockReturnValue({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([targetRoom]),
-        }),
+      transaction: async (fn: any) => fn(db),
+      select: vi.fn((fields?: any) => {
+        let table: any;
+        const chain: any = { from: (value: any) => { table = value; return chain; }, where: () => chain, orderBy: () => chain,
+          for: async () => table === rooms ? [targetRoom, { id: 'room-old', status: 'occupied' }] : [current],
+          limit: async () => fields ? overlaps : [] };
+        return chain;
       }),
       update: vi.fn().mockReturnValue({
         set: vi.fn().mockReturnValue({
@@ -86,14 +94,14 @@ describe('ReservationService.moveRoom', () => {
     }).compile();
 
     svc = module.get(ReservationService);
-    vi.spyOn(svc as any, 'findByIdRaw').mockResolvedValue({ ...reservation });
+
   });
 
   it('moves in-house guest and flips room statuses', async () => {
     const updated = await svc.moveRoom('res-001', 'prop-001', { roomId: 'room-new' });
     expect(updated.roomId).toBe('room-new');
-    expect(roomStatus.markVacantDirty).toHaveBeenCalledWith('room-old', 'prop-001');
-    expect(roomStatus.markOccupied).toHaveBeenCalledWith('room-new', 'prop-001');
+    expect(roomStatus.markVacantDirty).toHaveBeenCalledWith('room-old', 'prop-001', db);
+    expect(roomStatus.markOccupied).toHaveBeenCalledWith('room-new', 'prop-001', db);
     expect(webhook.emit).toHaveBeenCalledWith(
       'reservation.room_moved',
       'reservation',
@@ -104,10 +112,7 @@ describe('ReservationService.moveRoom', () => {
   });
 
   it('blocks do-not-move without override', async () => {
-    vi.spyOn(svc as any, 'findByIdRaw').mockResolvedValue({
-      ...reservation,
-      doNotMove: true,
-    });
+    current.doNotMove = true;
     await expect(
       svc.moveRoom('res-001', 'prop-001', { roomId: 'room-new' }),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -123,5 +128,15 @@ describe('ReservationService.moveRoom', () => {
       overrideDoNotMove: true,
     });
     expect(roomStatus.markOccupied).toHaveBeenCalled();
+  });
+  it('rejects a physical overlap before changing either room or stay', async () => {
+    overlaps = [{ id: 'other-stay' }];
+    await expect(svc.moveRoom('res-001','prop-001',{ roomId: 'room-new' })).rejects.toThrow('already reserved');
+    expect(db.update).not.toHaveBeenCalled(); expect(roomStatus.markOccupied).not.toHaveBeenCalled(); expect(webhook.emit).not.toHaveBeenCalled();
+  });
+  it('propagates a room transition failure through the shared transaction before emitting consequences', async () => {
+    roomStatus.markOccupied.mockRejectedValueOnce(new Error('room changed'));
+    await expect(svc.moveRoom('res-001','prop-001',{ roomId: 'room-new' })).rejects.toThrow('room changed');
+    expect(webhook.emit).not.toHaveBeenCalled();
   });
 });

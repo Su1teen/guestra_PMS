@@ -1,41 +1,34 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
-import { moneyString, requireCurrency, requirePropertyId } from '../../lib/api-helpers';
+import { requireCurrency, requirePropertyId } from '../../lib/api-helpers';
 import { getDateLocale } from '../../lib/date-locale';
 import { formatMoney } from '../../lib/money';
 import { useProperty } from '../../context/PropertyContext';
 import Modal from '../ui/Modal';
 import { useToast } from '../ui/Toast';
 import FindGuest from '../guests/FindGuest';
-import {
-  DEFAULT_PRICING_SETTINGS,
-  categoryFromRoomTypeName,
-  computeStayQuote,
-  propertyClock,
-  stayNightKeys,
-  type NightDemand,
-} from '../../lib/dynamic-pricing';
+import { errorMessage } from '../../lib/error-message';
 import type { Guest } from '../../types/guest';
 
 /** What the tape chart knows the moment the drag ends. */
 export interface CreateReservationPrefill {
-  roomId: string;
+  roomId?: string;
   roomNumber: string;
   roomTypeId: string;
   roomTypeName?: string;
   checkInDate: string;
   checkOutDate: string;
+  ratePlanId?: string;
+  adults?: number;
+  children?: number;
 }
 
 interface CreateReservationModalProps {
   open: boolean;
   prefill: CreateReservationPrefill | null;
-  /** Per-night demand for the visible window, so the quote is priced from what
-   *  the chart is already showing rather than a second round trip. */
-  demandByDate: Map<string, NightDemand>;
   onClose: () => void;
   onCreated?: (reservationId: string) => void;
 }
@@ -47,29 +40,29 @@ interface RatePlanOption {
   baseAmount?: string | number;
 }
 
+interface ServerQuote { currency: string; totalAmount: string; taxTotal: string; lineItems: Array<{ date: string; rate: string; tax: string }> }
+
 /**
  * Create a reservation from a tape-chart drag.
  *
- * The stay total is the SUM OF PER-NIGHT dynamic prices, never a nightly rate
- * times a night count: the arrival night can carry a same-day discount and a
- * mid-stay night can carry an event premium, and a single multiplication would
- * quote both wrongly. The breakdown is shown so the agent can see the number
- * they are about to commit the hotel to.
+ * Room and tax amounts come from the canonical PMS quote endpoint.
+ * Creation, confirmation and assignment share one idempotent transaction.
  */
 export default function CreateReservationModal({
   open,
   prefill,
-  demandByDate,
   onClose,
   onCreated,
 }: CreateReservationModalProps) {
   const { t, i18n } = useTranslation();
-  const { propertyId, currencyCode, properties } = useProperty();
+  const { propertyId, currencyCode } = useProperty();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const dateLocale = getDateLocale(i18n.resolvedLanguage);
-  const timezone = properties.find((p) => p.id === propertyId)?.timezone;
 
+  const requestId = useRef(crypto.randomUUID());
+  const submitted = useRef<Record<string, unknown> | null>(null);
+  const [uncertain, setUncertain] = useState(false);
   const [guest, setGuest] = useState<Guest | null>(null);
   const [ratePlanId, setRatePlanId] = useState('');
   const [adults, setAdults] = useState(1);
@@ -84,12 +77,15 @@ export default function CreateReservationModal({
 
   const ratePlans: RatePlanOption[] = useMemo(() => {
     const all: RatePlanOption[] = ratePlanData?.data ?? ratePlanData ?? [];
-    const forType = all.filter((rp) => !rp.roomTypeId || rp.roomTypeId === prefill?.roomTypeId);
-    return forType.length ? forType : all;
+    const forType = all.filter((rp) => rp.roomTypeId === prefill?.roomTypeId);
+    return forType;
   }, [ratePlanData, prefill?.roomTypeId]);
 
   useEffect(() => {
     if (!open) {
+      requestId.current = crypto.randomUUID();
+      submitted.current = null;
+      setUncertain(false);
       setGuest(null);
       setRatePlanId('');
       setAdults(1);
@@ -99,54 +95,41 @@ export default function CreateReservationModal({
   }, [open]);
 
   useEffect(() => {
-    if (open && !ratePlanId && ratePlans.length) setRatePlanId(ratePlans[0].id);
-  }, [open, ratePlanId, ratePlans]);
+    if (open && !ratePlanId && ratePlans.length) setRatePlanId(ratePlans.find(plan => plan.id === prefill?.ratePlanId)?.id ?? ratePlans[0].id);
+  }, [open, ratePlanId, ratePlans, prefill?.ratePlanId]);
+  useEffect(() => {
+    if (open) { setAdults(prefill?.adults ?? 1); setChildren(prefill?.children ?? 0); }
+  }, [open, prefill?.adults, prefill?.children]);
 
-  const quote = useMemo(() => {
-    if (!prefill) return null;
-    const nights = stayNightKeys(prefill.checkInDate, prefill.checkOutDate);
-    return computeStayQuote(
-      nights,
-      categoryFromRoomTypeName(prefill.roomTypeName),
-      DEFAULT_PRICING_SETTINGS,
-      propertyClock(new Date(), timezone),
-      demandByDate,
-    );
-  }, [prefill, demandByDate, timezone]);
+  const quoteBody = { propertyId, roomTypeId: prefill?.roomTypeId, ratePlanId, checkIn: prefill?.checkInDate, checkOut: prefill?.checkOutDate };
+  const quoteQuery = useQuery<ServerQuote>({
+    queryKey: ['reservation-quote', propertyId, prefill?.roomTypeId, ratePlanId, prefill?.checkInDate, prefill?.checkOutDate],
+    queryFn: () => api.post('/v1/reservations/quote', quoteBody, { skipErrorToast: true }).then((r) => r.data?.data ?? r.data),
+    enabled: open && !!propertyId && !!prefill && !!ratePlanId,
+    staleTime: 0,
+  });
+  const quote = quoteQuery.data;
 
   const createMutation = useMutation({
     mutationFn: async () => {
       requirePropertyId(propertyId);
       requireCurrency(currencyCode);
-      if (!prefill) throw new Error('Nothing selected');
+      if (!prefill) throw new Error(t('reservationWorkspace.quoteError'));
       if (!guest?.id) throw new Error(t('reservations.tape.guestRequired'));
       if (!ratePlanId) throw new Error(t('reservations.tape.ratePlanRequired'));
 
-      const res = await api.post('/v1/reservations', {
-        propertyId,
-        guestId: guest.id,
-        roomTypeId: prefill.roomTypeId,
-        ratePlanId,
-        arrivalDate: prefill.checkInDate,
-        departureDate: prefill.checkOutDate,
-        adults,
-        children,
-        totalAmount: moneyString(quote?.total ?? 0),
-        currencyCode,
-        source: 'direct',
-        ...(specialRequests.trim() ? { specialRequests: specialRequests.trim() } : {}),
-      });
+      if (!submitted.current) {
+        const fresh = await quoteQuery.refetch();
+        if (!fresh.data || fresh.error) throw new Error(t('reservationWorkspace.quoteError'));
+        if (fresh.data.currency !== currencyCode) throw new Error(t('reservationWorkspace.currencyMismatch'));
+        if (fresh.data.totalAmount !== quote?.totalAmount) throw new Error(t('reservationWorkspace.quoteChanged'));
+        submitted.current = { ...quoteBody, guestId: guest.id, roomId: prefill.roomId,
+          requestId: requestId.current, expectedTotal: fresh.data.totalAmount, currencyCode, adults, children,
+          ...(specialRequests.trim() ? { specialRequests: specialRequests.trim() } : {}) };
+      }
+      const res = await api.post('/v1/reservations/staff-create', submitted.current, { skipErrorToast: true });
       const id: string | undefined = res.data?.id ?? res.data?.data?.id;
-      if (!id) return { id: undefined };
-
-      await api.patch(`/v1/reservations/${id}/confirm`, {}, { params: { propertyId } });
-      // The room came from the row the user dragged on, so honour it rather
-      // than leaving the booking for the unassigned queue to place.
-      await api.patch(
-        `/v1/reservations/${id}/assign-room`,
-        { roomId: prefill.roomId },
-        { params: { propertyId } },
-      );
+      if (!id) throw new Error(t('reservationWorkspace.quoteError'));
       return { id };
     },
     onSuccess: ({ id }) => {
@@ -157,21 +140,26 @@ export default function CreateReservationModal({
       onClose();
     },
     onError: (error: unknown) => {
-      toast('error', error instanceof Error ? error.message : t('errors.Request failed'));
+      const status = (error as { response?: { status?: number } })?.response?.status;
+      // A lost response can mean the transaction committed. Keep the exact request/key for retry.
+      if (submitted.current && (!status || status >= 500)) setUncertain(true);
+      else { submitted.current = null; requestId.current = crypto.randomUUID(); setUncertain(false); void quoteQuery.refetch(); }
+      toast('error', errorMessage(error));
     },
   });
 
-  const nightCount = quote?.nights.length ?? 0;
+  const nightCount = quote?.lineItems.length ?? 0;
 
   return (
     <Modal
       open={open && !!prefill}
       onClose={onClose}
+      closeDisabled={createMutation.isPending || uncertain}
       title={t('reservations.tape.createTitle', { room: prefill?.roomNumber ?? '' })}
       wide
     >
       {prefill && (
-        <div className="space-y-4">
+        <div><fieldset disabled={uncertain || createMutation.isPending} className="space-y-4">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-telivity-light-grey rounded-lg p-3 text-sm">
             <Field label={t('reservations.room')} value={prefill.roomNumber} />
             <Field label={t('reservations.roomType')} value={prefill.roomTypeName ?? '—'} />
@@ -195,22 +183,20 @@ export default function CreateReservationModal({
                 {t('reservations.tape.quoteTitle', { count: nightCount })}
               </span>
               <span className="text-base font-semibold text-telivity-teal">
-                {formatMoney(quote?.total, currencyCode)}
+                {formatMoney(quote?.totalAmount, quote?.currency ?? currencyCode)}
               </span>
             </div>
+            {quoteQuery.isFetching && <p role="status" className="p-3 text-xs">{t('reservationWorkspace.quoteLoading')}</p>}
+            {quoteQuery.isError && <p role="alert" className="p-3 text-xs text-red-700">{errorMessage(quoteQuery.error)}</p>}
+            {quote && <p className="px-3 py-2 text-xs text-telivity-mid-grey">{t('reservationWorkspace.tax')}: {formatMoney(quote.taxTotal, quote.currency)}</p>}
             <ul className="max-h-40 overflow-y-auto divide-y divide-gray-50">
-              {quote?.nights.map((night) => (
+              {quote?.lineItems.map((night) => (
                 <li key={night.date} className="flex items-center justify-between px-3 py-1.5 text-xs">
                   <span className="text-telivity-slate">
                     {format(new Date(`${night.date}T00:00:00`), 'EEE, d MMM', { locale: dateLocale })}
-                    {night.intradayApplied && (
-                      <span className="ml-2 font-semibold text-telivity-orange">
-                        {t('reservations.tape.eveningDiscount')}
-                      </span>
-                    )}
                   </span>
                   <span className="font-medium text-telivity-navy">
-                    {formatMoney(night.finalPrice, currencyCode)}
+                    {formatMoney(night.rate, quote?.currency ?? currencyCode)}
                   </span>
                 </li>
               ))}
@@ -278,9 +264,12 @@ export default function CreateReservationModal({
             />
           </label>
 
+          {uncertain && <p role="alert" className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">{t('reservationWorkspace.retrySame')}</p>}
+        </fieldset>
           <div className="flex gap-3">
             <button
               type="button"
+              disabled={createMutation.isPending || uncertain}
               onClick={onClose}
               className="flex-1 border border-gray-200 text-telivity-slate rounded-lg px-4 py-2 text-sm font-semibold"
             >
@@ -289,13 +278,13 @@ export default function CreateReservationModal({
             <button
               type="button"
               onClick={() => createMutation.mutate()}
-              disabled={!guest || !ratePlanId || createMutation.isPending}
+              disabled={!guest || !ratePlanId || createMutation.isPending || (!uncertain && (!quote || quoteQuery.isFetching || quoteQuery.isError || quote.currency !== currencyCode))}
               className="flex-1 bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold hover:bg-telivity-light-teal disabled:opacity-50"
             >
               {createMutation.isPending
                 ? t('common.creating')
-                : t('reservations.tape.confirmCreate', {
-                    total: formatMoney(quote?.total, currencyCode),
+                : uncertain ? t('reservationWorkspace.continue') : t('reservations.tape.confirmCreate', {
+                    total: formatMoney(quote?.totalAmount, currencyCode),
                   })}
             </button>
           </div>

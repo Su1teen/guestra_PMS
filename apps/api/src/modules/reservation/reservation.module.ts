@@ -1,4 +1,8 @@
 import { Module, forwardRef } from '@nestjs/common';
+import { TaxModule } from '../tax/tax.module';
+import { ReservationCalendarService } from './reservation-calendar.service';
+import { StaffReservationService } from './staff-reservation.service';
+import { ReservationQuoteService } from './reservation-quote.service';
 import { ReservationController } from './reservation.controller';
 import { ReservationService } from './reservation.service';
 import { ReservationPartyService } from './reservation-party.service';
@@ -28,6 +32,7 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     AccountingModule,
     PolicyModule,
     RatePlanModule,
+    TaxModule,
     NotificationsModule,
     EmailModule,
     MigrationLegacyIdMapModule,
@@ -35,6 +40,9 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
   controllers: [ReservationController],
   providers: [
     ReservationService,
+    ReservationQuoteService,
+    ReservationCalendarService,
+    StaffReservationService,
     ReservationPartyService,
     AvailabilityService,
     ReservationNotesService,

@@ -28,8 +28,8 @@ describe('ErrorBoundary', () => {
         <ThrowingComponent shouldThrow={true} />
       </ErrorBoundary>,
     );
-    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
-    expect(screen.getByText('Test error')).toBeInTheDocument();
+    expect(screen.getByText('This section could not be displayed.')).toBeInTheDocument();
+    expect(screen.queryByText('Test error')).not.toBeInTheDocument();
     expect(screen.getByText('Try Again')).toBeInTheDocument();
   });
 
@@ -50,13 +50,13 @@ describe('QueryError', () => {
     const onRetry = vi.fn();
     render(<QueryError onRetry={onRetry} />);
     expect(screen.getByText('Failed to load data')).toBeInTheDocument();
-    expect(screen.getByText('Retry')).toBeInTheDocument();
+    expect(screen.getByText('Try Again')).toBeInTheDocument();
   });
 
   it('calls onRetry when retry button clicked', async () => {
     const onRetry = vi.fn();
     render(<QueryError onRetry={onRetry} />);
-    await userEvent.click(screen.getByText('Retry'));
+    await userEvent.click(screen.getByText('Try Again'));
     expect(onRetry).toHaveBeenCalledOnce();
   });
 });

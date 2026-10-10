@@ -87,11 +87,11 @@ export class GuestController {
   @RequirePermissions('guests.write')
   @ApiOperation({ summary: 'Create new guest profile' })
   @ApiResponse({ status: 201, description: 'Guest created' })
-  createGuest(@Body() dto: CreateGuestDto) {
+  createGuest(@Body() dto: CreateGuestDto, @Query('propertyId', new ParseUUIDPipe({ optional: true })) propertyId?: string, @AuditActorCtx() actor?: AuditActor) {
     // Creation is intentionally NOT scoped by existing reservation — a new
     // walk-in/booking does not yet have one. The linking reservation is
     // created by the reservation flow immediately after.
-    return this.guestService.create(dto);
+    return propertyId ? this.guestService.createAtProperty(dto, propertyId, actor) : this.guestService.create(dto);
   }
 
   @Patch(':id')

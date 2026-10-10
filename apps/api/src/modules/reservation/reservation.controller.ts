@@ -11,6 +11,13 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { RequirePermissions } from '../auth/permissions.decorator';
+import { CalendarPricesDto } from './dto/calendar-prices.dto';
+import { CalendarRangeDto } from './dto/calendar-range.dto';
+import { ReservationCalendarService } from './reservation-calendar.service';
+import { StaffCreateReservationDto } from './dto/staff-create-reservation.dto';
+import { StaffReservationService } from './staff-reservation.service';
+import { ReservationQuoteDto } from './dto/reservation-quote.dto';
+import { ReservationQuoteService } from './reservation-quote.service';
 import { ReservationService } from './reservation.service';
 import { ReservationPartyService } from './reservation-party.service';
 import { AvailabilityService } from './availability.service';
@@ -49,9 +56,38 @@ export class ReservationController {
     private readonly notesService: ReservationNotesService,
     private readonly messagingService: ReservationMessagingService,
     private readonly importService: ReservationImportService,
+    private readonly quoteService: ReservationQuoteService,
+    private readonly calendarService: ReservationCalendarService,
+    private readonly staffReservationService: StaffReservationService,
   ) {}
 
   // --- Action routes BEFORE :id to avoid conflicts ---
+
+  @Get('calendar-ledger')
+  @RequirePermissions('reservations.read', 'folios.read')
+  @ApiOperation({ summary: 'Permission-scoped posted-payment and ledger-balance indicators' })
+  calendarLedger(@Query() dto: CalendarRangeDto) { return this.calendarService.ledgerIndicators(dto); }
+
+  @Get('calendar-prices')
+  @RequirePermissions('reservations.read', 'rateplans.read')
+  @ApiOperation({ summary: 'Canonical one-night tariff preview for a calendar window' })
+  calendarPrices(@Query() dto: CalendarPricesDto) { return this.quoteService.calendarPrices(dto); }
+
+  @Get('calendar')
+  @RequirePermissions('reservations.read', 'rooms.read')
+  @ApiOperation({ summary: 'Complete reservation calendar window, up to 31 nights' })
+  calendar(@Query() dto: CalendarRangeDto) { return this.calendarService.range(dto); }
+
+  @Post('staff-create')
+  @RequirePermissions('reservations.write', 'rateplans.read')
+  @ApiOperation({ summary: 'Atomically price, create, confirm and optionally assign a staff reservation' })
+  staffCreate(@Body() dto: StaffCreateReservationDto) { return this.staffReservationService.create(dto); }
+
+  @Post('quote')
+  @RequirePermissions('reservations.read', 'rateplans.read')
+  @ApiOperation({ summary: 'Calculate the canonical room price for a staff reservation' })
+  @ApiResponse({ status: 200, description: 'Per-night room and tax amounts in decimal strings' })
+  quote(@Body() dto: ReservationQuoteDto) { return this.quoteService.quote(dto); }
 
   @Post('search-availability')
   // A QUERY, not a mutation. POST only because it takes a body; it

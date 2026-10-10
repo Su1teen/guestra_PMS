@@ -23,7 +23,7 @@ export default {
           navy: '#23273d',
           slate: '#444863',
           'light-grey': '#f0f0f6',
-          'mid-grey': '#bbbbc4',
+          'mid-grey': '#667085',
         },
       },
       fontFamily: {

@@ -54,6 +54,8 @@ const UNTRANSLATED_BY_DESIGN = new Set([
   'bookingRequests.methods.pix',
   'folios.paymentMethods.pix',
   'frontDesk.dnm',
+  'reservationWorkspace.sources.ota',
+  'reservationWorkspace.sources.gds',
   'guests.placeholders.email',
   'houseAccounts.paymentMethods.pix',
   'reservations.messageChannelSms',
