@@ -220,6 +220,7 @@ export default function MaintenanceWorkspace(props: Props) {
     <label className="space-y-1 text-xs text-telivity-slate">
       {label}
       <select
+        aria-label={label}
         value={String(form[key])}
         onChange={(e) => setForm({ ...form, [key]: e.target.value })}
         className={inputClass}

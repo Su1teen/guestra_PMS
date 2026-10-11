@@ -39,6 +39,10 @@ import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service
 import { LocalDriver } from './storage/local.driver';
 import { OperationalAttachmentsService } from './operational-attachments.service';
 import { OperationalAttachmentsController } from './operational-attachments.controller';
+import { MaintenanceController } from '../maintenance/maintenance.controller';
+import { ConfigService } from '@nestjs/config';
+import { PermissionsService } from '../auth/permissions.service';
+import { PermissionsGuard } from '../auth/permissions.guard';
 
 // This principal is a test fixture, not a verification of Keycloak/JWKS.
 class TestIdentityGuard {
@@ -181,10 +185,14 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         { get: () => 'true' } as any,
       );
       const module = await Test.createTestingModule({
-        controllers: [OperationalAttachmentsController],
+        controllers: [OperationalAttachmentsController, MaintenanceController],
         providers: [
           { provide: OperationalAttachmentsService, useValue: service },
+          { provide: MaintenanceService, useValue: maintenance },
+          { provide: ConfigService, useValue: { get: () => 'true' } },
+          { provide: PermissionsService, useValue: permissions },
           { provide: APP_GUARD, useClass: TestIdentityGuard },
+          { provide: APP_GUARD, useClass: PermissionsGuard },
         ],
       }).compile();
       app = module.createNestApplication();
@@ -253,6 +261,20 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
       expect(
         (await maintenance.findById(ticketId, ids.property)).ticket.attachments,
       ).toHaveLength(0);
+    });
+    it('serializes populated maintenance history through HTTP without internal bigint fields and enforces the read gate', async () => {
+      const path = '/maintenance/' + ticketId;
+      await request(app.getHttpServer()).get(path).query({propertyId:ids.property}).expect(401);
+      principal = 'none';
+      await request(app.getHttpServer()).get(path).query({propertyId:ids.property}).set('x-test-user','none').expect(403);
+      principal = 'manager';
+      await request(app.getHttpServer()).get(path).query({propertyId:ids.other}).set('x-test-user','manager').expect(403);
+      const response = await request(app.getHttpServer()).get(path).query({propertyId:ids.property}).set('x-test-user','manager').expect(200);
+      expect(response.body.ticket.id).toBe(ticketId);
+      expect(response.body.history).toHaveLength(1);
+      expect(response.body.history[0]).toMatchObject({action:'create',entityId:ticketId});
+      expect(response.body.history[0]).not.toHaveProperty('timelineSequence');
+      expect(response.body.history[0].newValue.title).toBe('Фото');
     });
     it('serves a private photo only via scoped authenticated HTTP with non-cacheable headers', async () => {
       const response = await upload(randomUUID()).expect(201);

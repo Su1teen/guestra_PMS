@@ -235,6 +235,7 @@ export class MaintenanceService {
     action: string,
     events: string[],
     event?: string,
+    eventData?: Record<string, unknown>,
   ) {
     await tx
       .insert(auditLogs)
@@ -263,7 +264,8 @@ export class MaintenanceService {
           previousStatus: previous?.status ?? null,
           status: next.status,
           revision: next.revision,
-          action,
+          action: ({ comment: 'comment_added', attachment: 'attachment_added', return_to_service: 'returned_to_service' } as Record<string, string>)[action] ?? action,
+          ...eventData,
         },
       },
       eventId,
@@ -641,6 +643,8 @@ export class MaintenanceService {
           actor,
           'return_to_service',
           events,
+          undefined,
+          { roomStatus: roomReturned ? 'vacant_dirty' : room.status, roomReturned },
         );
         return {
           ...next,
@@ -724,8 +728,14 @@ export class MaintenanceService {
         ),
       );
     if (!row) throw new NotFoundException('Заявка не найдена в этом объекте.');
+    // Public timeline projection mirrors the guest workspace: internal bigint sequence is not an API field.
     const history = await this.db
-      .select()
+      .select({
+        id: auditLogs.id, action: auditLogs.action, entityType: auditLogs.entityType,
+        entityId: auditLogs.entityId, description: auditLogs.description,
+        occurredAt: auditLogs.occurredAt, userEmail: auditLogs.userEmail,
+        previousValue: auditLogs.previousValue, newValue: auditLogs.newValue,
+      })
       .from(auditLogs)
       .where(
         and(

@@ -205,6 +205,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
       expect(a.roomReturned).toBe(false);
       expect(a.remainingBlockingTicketIds).toEqual([second.id]);
       expect((await room()).status).toBe('out_of_order');
+      const firstReturn = (await rows(domainEventOutbox)).find((event:any) => event.payload.entityId === first.id && event.payload.data.action === 'returned_to_service');
+      expect(firstReturn.payload.data).toMatchObject({roomStatus:'out_of_order',roomReturned:false});
       const b = await service.confirmReturnToService(
         second.id,
         ids.property,
@@ -212,6 +214,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
       );
       expect(b.roomReturned).toBe(true);
       expect((await room()).status).toBe('vacant_dirty');
+      const lastReturn = (await rows(domainEventOutbox)).find((event:any) => event.payload.entityId === second.id && event.payload.data.action === 'returned_to_service');
+      expect(lastReturn.payload.data).toMatchObject({roomStatus:'vacant_dirty',roomReturned:true});
     });
     it('serializes concurrent acknowledgements so exactly the final one returns the room', async () => {
       const first = await service.create(dto({ blocksInventory: true }));
@@ -242,6 +246,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         'Первый',
       ]);
       expect(ticket.revision).toBe(3);
+      expect((await rows(domainEventOutbox)).filter((event:any) => event.payload.data.action === 'comment_added')).toHaveLength(2);
     });
     it('accepts one of two stale-revision updates and audits only the winning change', async () => {
       const t = await service.create(dto());
