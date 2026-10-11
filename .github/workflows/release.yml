@@ -1,11 +1,10 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 permissions:
   contents: write
@@ -14,6 +13,7 @@ permissions:
 jobs:
   ci:
     name: CI
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -75,6 +75,7 @@ jobs:
 
   ci-booking-requests:
     name: CI (booking-requests)
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -254,6 +255,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Resolve repository-owned image namespace
+        id: image
+        env:
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: echo "name=ghcr.io/${REPOSITORY_OWNER,,}/haip-api" >> "$GITHUB_OUTPUT"
+
       - name: Build and push API image (amd64)
         uses: docker/build-push-action@v6
         with:
@@ -269,5 +276,5 @@ jobs:
             VITE_KEYCLOAK_CLIENT_ID=haip-dashboard
             VITE_HAIP_BOOKING_REQUESTS=false
           tags: |
-            ghcr.io/telivityai/haip-api:${{ needs.release.outputs.next }}
-            ghcr.io/telivityai/haip-api:latest
+            ${{ steps.image.outputs.name }}:${{ needs.release.outputs.next }}
+            ${{ steps.image.outputs.name }}:latest
