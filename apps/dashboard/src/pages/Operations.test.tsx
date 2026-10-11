@@ -5,13 +5,13 @@ import { renderWithProviders } from '../test/helpers';
 import { api } from '../lib/api';
 import Operations from './Operations';
 import i18n from '../i18n';
-const access = vi.hoisted(() => ({ manage: true }));
+const access = vi.hoisted(() => ({ manage: true, propertyId: 'hotel-a' as string | null }));
 vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ hasPermission: () => access.manage }) }));
-vi.mock('../context/PropertyContext', () => ({ useProperty: () => ({ propertyId: 'hotel-a', currencyCode: 'KZT' }) }));
+vi.mock('../context/PropertyContext', () => ({ useProperty: () => ({ propertyId: access.propertyId, currencyCode: 'KZT' }) }));
 vi.mock('../lib/api', () => ({ api: { get: vi.fn(), post: vi.fn() } }));
 beforeEach(async () => {
   await i18n.changeLanguage('en');
-  vi.clearAllMocks(); access.manage = true;
+  vi.clearAllMocks(); access.manage = true; access.propertyId = 'hotel-a';
   window.history.replaceState({}, '', '/operations?tab=tasks&action=create-task&reservationId=stay-a&propertyId=hotel-a');
   vi.mocked(api.get).mockResolvedValue({ data: [] });
   vi.mocked(api.post).mockResolvedValue({ data: { id: 'task-a' } });
@@ -33,6 +33,14 @@ it('uses the existing task form with the reservation context and consumes the ac
 it('does not open a task editor or show creation controls without ops.manage', async () => {
   access.manage = false; renderWithProviders(<Operations/>);
   await screen.findByText('Operations');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Task' })).not.toBeInTheDocument();
+  expect(api.post).not.toHaveBeenCalled();
+});
+
+it('keeps creation disabled until a concrete hotel is selected', async () => {
+  access.propertyId = 'portfolio'; renderWithProviders(<Operations/>);
+  await screen.findByText(/Select a property/);
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'Task' })).not.toBeInTheDocument();
   expect(api.post).not.toHaveBeenCalled();

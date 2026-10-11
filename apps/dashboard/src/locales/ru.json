@@ -1091,6 +1091,7 @@
     "vipLevel": "Уровень VIP"
   },
   "header": {
+    "allProperties": "Все объекты",
     "language": "Язык",
     "logout": "Выйти",
     "notifications": "Уведомления",
