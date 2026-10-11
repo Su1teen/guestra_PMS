@@ -3,6 +3,9 @@ import { realtimeQueryKeys } from './useRealtimeInvalidation';
 
 describe('booking request realtime invalidation', () => {
   const timestamp = '2026-08-25T09:00:00.000Z';
+  it('refreshes shift coverage, own tasks and Front Desk after a schedule change',()=>{
+    expect(realtimeQueryKeys('property-1',{event:'staff_shift.updated',data:{},timestamp})).toEqual(expect.arrayContaining([['housekeeping'],['rooms'],['front-desk']]));
+  });
   it('refreshes the shared service calendar and guest context after a lifecycle event', () => {
     expect(realtimeQueryKeys('property-1', { event: 'service_booking.rescheduled', data: {}, timestamp })).toEqual(expect.arrayContaining([['service-calendar','property-1'], ['service-bookings','property-1'], ['guest-360']]));
   });

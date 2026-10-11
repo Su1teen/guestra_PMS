@@ -129,8 +129,8 @@ export function realtimeQueryKeys(
   if (payload.event.startsWith('service_booking.') || payload.event.startsWith('service_resource.')) {
     return [['service-calendar', propertyId], ['service-bookings', propertyId], ['service-booking-history', propertyId], ['reservation-service-bookings', propertyId], ['service-calendar', 'slots', propertyId], ['guest-360'], ['folios']];
   }
-  if (payload.event.startsWith('housekeeping.')) {
-    return [['housekeeping'], ['housekeeping', propertyId], ['rooms'], ['rooms', propertyId]];
+  if (payload.event.startsWith('housekeeping.') || payload.event.startsWith('staff_shift.')) {
+    return [['housekeeping'], ['housekeeping', propertyId], ['rooms'], ['rooms', propertyId], ['front-desk']];
   }
   if (payload.event.startsWith('channel.')) return [['channels'], ['channels', propertyId]];
   if (payload.event.startsWith('agent.')) {
