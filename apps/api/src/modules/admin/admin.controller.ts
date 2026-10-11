@@ -82,7 +82,7 @@ export class AdminController {
   async myWorkspace(@Query('propertyId', ParseUUIDPipe) propertyId: string, @CurrentUser() authUser: AuthUser | undefined) {
     if (!authUser) return { revision: 0, layout: null, persistent: false };
     const user = await this.permissionsService.findLocalUser(authUser.sub, authUser.email);
-    if (!user) throw new ForbiddenException('Local staff profile is required');
+    if (!user) throw new ForbiddenException('Не найден профиль сотрудника');
     return this.usersService.getWorkspace(user.id, propertyId);
   }
 
@@ -91,13 +91,13 @@ export class AdminController {
   @RequirePermissions('dashboard.view')
   @ApiOperation({ summary: 'Save current user workspace with optimistic revision protection' })
   async saveMyWorkspace(@Body() dto: UpdateWorkspaceDto, @CurrentUser() authUser: AuthUser | undefined) {
-    if (!authUser) throw new BadRequestException({ code: 'WORKSPACE_DEMO', message: 'Server workspace saving requires authentication' });
-    if (!isWorkspaceLayout(dto.layout)) throw new BadRequestException('Invalid workspace configuration');
+    if (!authUser) throw new BadRequestException({ code: 'WORKSPACE_DEMO', message: 'Для сохранения рабочего стола требуется вход в систему' });
+    if (!isWorkspaceLayout(dto.layout)) throw new BadRequestException('Некорректная конфигурация рабочего стола');
     for (const page of dto.layout.pages) for (const widget of page.widgets) {
-      if (widget.settings.propertyId && !userCanAccessProperty(authUser, widget.settings.propertyId)) throw new ForbiddenException('You do not have access to this property');
+      if (widget.settings.propertyId && !userCanAccessProperty(authUser, widget.settings.propertyId)) throw new ForbiddenException('Нет доступа к этому отелю');
     }
     const user = await this.permissionsService.findLocalUser(authUser.sub, authUser.email);
-    if (!user) throw new ForbiddenException('Local staff profile is required');
+    if (!user) throw new ForbiddenException('Не найден профиль сотрудника');
     return this.usersService.updateWorkspace(user.id, dto);
   }
 

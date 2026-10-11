@@ -1,3 +1,4 @@
+import { reservations as reservationTable, guests, rooms, properties } from '@telivityhaip/database';
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { ReservationService } from './reservation.service';
@@ -55,62 +56,30 @@ const mockWebhookService = { emit: vi.fn() };
 const mockAvailabilityService = { searchAvailability: vi.fn() };
 
 // Creates a DB mock that handles multiple sequential check-ins
-function createGroupDb(reservations: any[], failOnIds: string[] = []) {
-  let callCount = 0;
-  const resMap = new Map(reservations.map(r => [r.id, r]));
-
-  return {
-    select: vi.fn().mockImplementation(() => ({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          then: (resolve: any) => {
-            callCount++;
-            // Pattern per check-in: 1=reservation, 2=guest, 3=property
-            // For group validation: first N calls return reservations
-            const cycleLength = 3; // calls per checkIn
-            const totalValidation = reservations.length; // validation calls first
-            if (callCount <= totalValidation) {
-              // Group validation phase - return matching reservation
-              const idx = callCount - 1;
-              resolve([reservations[idx]]);
-            } else {
-              // Check-in phase - cycles of (reservation, guest, property)
-              const adjustedCall = callCount - totalValidation;
-              const phase = ((adjustedCall - 1) % cycleLength) + 1;
-              if (phase === 1) resolve([reservations[Math.floor((adjustedCall - 1) / cycleLength)]]);
-              else if (phase === 2) resolve([mockGuest]);
-              else resolve([mockProperty]);
-            }
-          },
-        }),
-        leftJoin: vi.fn().mockReturnValue({
-          leftJoin: vi.fn().mockReturnValue({
-            leftJoin: vi.fn().mockReturnValue({
-              leftJoin: vi.fn().mockReturnValue({
-                where: vi.fn().mockResolvedValue([{}]),
-              }),
-            }),
-          }),
-        }),
-      }),
-    })),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([{}]),
-      }),
-    }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockImplementation(() => {
-            const res = reservations[0]; // simplified
-            return Promise.resolve([{ ...res, status: 'checked_in', checkedInAt: new Date(), actualArrivalTime: new Date() }]);
-          }),
-        }),
-      }),
-    }),
-    delete: vi.fn(),
+function createGroupDb(reservationRows: any[]) {
+  let rawRead = 0, transactionIndex = 0, current: any, inTransaction = false;
+  const db: any = {
+    select: vi.fn((fields?: any) => ({ from: (table: any) => {
+      const query: any = { where() { return this; }, for() { return this; }, limit() { return this; },
+        then(resolve: any) {
+          if (table === reservationTable) {
+            if (fields) return resolve([]);
+            return resolve([inTransaction ? current : reservationRows[(rawRead++) % reservationRows.length]]);
+          }
+          if (table === guests) return resolve([mockGuest]);
+          if (table === rooms) return resolve([{ id: current.roomId, roomTypeId: current.roomTypeId, status: 'guest_ready', isActive: true }]);
+          if (table === properties) return resolve([mockProperty]);
+          return resolve([]);
+        } };
+      return query;
+    } })),
+    update: vi.fn(() => ({ set: () => ({ where: () => ({ returning: async () => [{ ...current, status: 'checked_in', checkedInAt: new Date(), actualArrivalTime: new Date() }] }) }) })),
+    transaction: async (fn: any) => {
+      current = reservationRows[transactionIndex++]; inTransaction = true;
+      try { return await fn(db); } finally { inTransaction = false; }
+    },
   };
+  return db;
 }
 
 async function createService(db: any) {
@@ -152,7 +121,7 @@ describe('ReservationService — groupCheckIn', () => {
     });
 
     expect(result.total).toBe(2);
-    expect(result.succeeded).toBeGreaterThanOrEqual(1);
+    expect(result.succeeded).toBe(2);
   });
 
   it('should return correct success/failure counts', async () => {

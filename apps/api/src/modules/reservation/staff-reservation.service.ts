@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Inject, Injectable } from '@nes
 import { and, eq, sql, or, inArray, isNull } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import Decimal from 'decimal.js';
-import { bookings, reservations, roomTypes, guests, guestPropertyLinks, reservationGuests, serviceBookings } from '@telivityhaip/database';
+import { bookings, reservations, roomTypes, guests, guestPropertyLinks, reservationGuests, serviceBookings, staffRequestFences, auditLogs } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { ReservationService } from './reservation.service';
 import { RatePlanService } from '../rate-plan/rate-plan.service';
@@ -23,15 +23,24 @@ export class StaffReservationService {
   constructor(@Inject(DRIZZLE) private readonly db: any, private readonly reservationsService: ReservationService,
     private readonly rates: RatePlanService, private readonly taxes: TaxService, private readonly outbox: DomainEventOutboxService) {}
   /** Recover a committed staff request without repricing or creating another stay. */
-  async result(propertyId: string, requestId: string) {
+  async result(propertyId: string, requestId: string, closeUncommitted = false) {
     return this.db.transaction(async (tx: any) => {
       const key = 'staff:' + requestId;
       await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${propertyId + ':' + key}, 0))`);
       const [row] = await tx.select({ id: reservations.id, status: reservations.status }).from(bookings)
         .innerJoin(reservations, and(eq(reservations.bookingId, bookings.id), eq(reservations.propertyId, propertyId)))
         .where(and(eq(bookings.propertyId, propertyId), eq(bookings.idempotencyKey, key)));
-      return row ? { state: 'committed' as const, reservationId: row.id, status: row.status }
-        : { state: 'unconfirmed' as const };
+      if (row) return { state: 'committed' as const, reservationId: row.id, status: row.status };
+      const [fence] = await tx.select().from(staffRequestFences)
+        .where(and(eq(staffRequestFences.propertyId, propertyId), eq(staffRequestFences.requestId, requestId)));
+      if (fence) return { state: 'closed' as const };
+      if (!closeUncommitted) return { state: 'unconfirmed' as const };
+      // The same lock as create fences a POST that has not yet reached the server.
+      // A committed stay is returned above and is never cancelled by recovery.
+      await tx.insert(staffRequestFences).values({ propertyId, requestId });
+      await tx.insert(auditLogs).values({ propertyId, entityType: 'staff_request', entityId: requestId,
+        action: 'close', description: 'Закрыта неподтверждённая попытка создания брони' });
+      return { state: 'closed' as const };
     });
   }
   async create(dto: StaffCreateReservationDto) {
@@ -50,6 +59,9 @@ export class StaffReservationService {
         if (previous.booking.integrationContext?.staffRequestFingerprint !== fingerprint) throw new ConflictException({ code: 'REQUEST_CHANGED', message: 'Request key was already used for different booking details' });
         return { reservation: previous.reservation, replayed: true };
       }
+      const [fence] = await tx.select().from(staffRequestFences)
+        .where(and(eq(staffRequestFences.propertyId, dto.propertyId), eq(staffRequestFences.requestId, dto.requestId)));
+      if (fence) throw new ConflictException({ code: 'REQUEST_CLOSED', message: 'Попытка бронирования закрыта. Создайте новый запрос.' });
       const [guest] = await tx.select({ id: guests.id }).from(guests).where(and(eq(guests.id, dto.guestId), eq(guests.isDeleted, false), isNull(guests.mergedIntoGuestId),
         or(inArray(guests.id, tx.select({ guestId: reservations.guestId }).from(reservations).where(eq(reservations.propertyId, dto.propertyId))),
           inArray(guests.id, tx.select({ guestId: reservationGuests.guestId }).from(reservationGuests).where(eq(reservationGuests.propertyId, dto.propertyId))),

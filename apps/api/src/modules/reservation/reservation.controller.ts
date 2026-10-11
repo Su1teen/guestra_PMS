@@ -69,6 +69,13 @@ export class ReservationController {
     return this.staffReservationService.result(propertyId, requestId);
   }
 
+  @Post('staff-create/:requestId/close')
+  @RequirePermissions('reservations.read', 'reservations.write')
+  @ApiOperation({ summary: 'Fence an uncommitted staff request or return its already committed stay' })
+  staffCreateClose(@Param('requestId', ParseUUIDPipe) requestId: string, @Query('propertyId', ParseUUIDPipe) propertyId: string) {
+    return this.staffReservationService.result(propertyId, requestId, true);
+  }
+
   @Get('calendar-ledger')
   @RequirePermissions('reservations.read', 'folios.read')
   @ApiOperation({ summary: 'Permission-scoped posted-payment and ledger-balance indicators' })

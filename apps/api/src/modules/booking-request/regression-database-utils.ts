@@ -82,7 +82,11 @@ export function createRegressionDatabaseHelpers(connectionTemplate: string) {
     },
   ): Buffer | undefined {
     try {
-      return execFileSync(command, args, {
+      // Windows environment names are case-insensitive; copying process.env loses that lookup behavior.
+      const pnpmPath = options.env['npm_execpath'] ?? options.env['NPM_EXECPATH'] ?? process.env['npm_execpath'];
+      const useNodePnpm = command === 'pnpm' && process.platform === 'win32' && pnpmPath;
+      return execFileSync(useNodePnpm ? process.execPath : command,
+        useNodePnpm ? [pnpmPath!, ...args] : args, {
         env: options.env,
         cwd: options.cwd,
         stdio: 'pipe',

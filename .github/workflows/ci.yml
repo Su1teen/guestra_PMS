@@ -1,13 +1,18 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, codex/pms-release-candidate]
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
   lint-and-typecheck:
@@ -90,11 +95,19 @@ jobs:
           CI: 'true'
 
   release-smoke:
-    name: Release smoke (PMS contract)
+    name: Release smoke (PG${{ matrix.postgres }} / Redis${{ matrix.redis }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - postgres: 16
+            redis: 7
+          - postgres: 18
+            redis: 8.2
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:${{ matrix.postgres }}-alpine
         env:
           POSTGRES_USER: haip
           POSTGRES_PASSWORD: haip
@@ -107,7 +120,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: redis:${{ matrix.redis }}-alpine
         ports:
           - 6379:6379
         options: >-

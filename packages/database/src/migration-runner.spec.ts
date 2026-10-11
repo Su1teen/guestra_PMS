@@ -154,8 +154,8 @@ describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
         await sql`
           INSERT INTO properties (id, name, code, country_code, timezone, currency_code, total_rooms, settings)
           VALUES
-            (${demoId}, 'Demo', 'LES', 'KZ', 'Asia/Almaty', 'KZT', 10, ${JSON.stringify({ taxRate: 0.13 })}::jsonb),
-            (${otherId}, 'Other', 'OTHER', 'KZ', 'Asia/Almaty', 'KZT', 10, ${JSON.stringify({ taxRate: 0.2 })}::jsonb)
+            (${demoId}, 'Demo', 'LES', 'KZ', 'Asia/Almaty', 'KZT', 10, ${sql.json({ taxRate: 0.13 })}::jsonb),
+            (${otherId}, 'Other', 'OTHER', 'KZ', 'Asia/Almaty', 'KZT', 10, ${sql.json({ taxRate: 0.2 })}::jsonb)
         `;
         await sql`
           INSERT INTO tax_profiles (id, property_id, name, jurisdiction_code, is_active, effective_from)
@@ -258,6 +258,29 @@ describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
       } finally {
         await sql.end();
       }
+    });
+  });
+  it('upgrades JSON null demo settings without touching another tenant and retains terminal request fences', async () => {
+    await withEphemeralDatabase(async databaseUrl => {
+      await pushSchema(databaseUrl);
+      const sql = postgres(databaseUrl, postgresOptionsFromEnv());
+      const demoId = 'a0000001-0000-4000-a000-000000000001';
+      const otherId = 'f3600001-0000-4000-a000-000000000001';
+      const requestId = 'f3600002-0000-4000-a000-000000000002';
+      try {
+        await sql`INSERT INTO properties (id, name, code, country_code, timezone, currency_code, total_rooms, settings) VALUES
+          (${demoId}, 'Demo', 'LES', 'KZ', 'Asia/Almaty', 'KZT', 1, 'null'::jsonb),
+          (${otherId}, 'Other', 'OTHER', 'KZ', 'Asia/Almaty', 'KZT', 1, '{"custom":"retain"}'::jsonb)`;
+        await sql`INSERT INTO staff_request_fences (property_id, request_id) VALUES (${otherId}, ${requestId})`;
+        await runAllMigrations(databaseUrl, { migrationsDir: MIGRATIONS_DIR });
+        const [demo] = await sql`SELECT settings FROM properties WHERE id = ${demoId}`;
+        expect(demo!['settings'].guestInfo.wifi).toContain('Wi-Fi');
+        expect(demo!['settings'].earlyCheckInFee).toBe(22500);
+        expect(await runPendingSqlMigrations(sql, MIGRATIONS_DIR)).toEqual([]);
+        const [other] = await sql`SELECT settings FROM properties WHERE id = ${otherId}`;
+        expect(other!['settings']).toEqual({ custom: 'retain' });
+        expect(await sql`SELECT request_id FROM staff_request_fences WHERE property_id = ${otherId}`).toHaveLength(1);
+      } finally { await sql.end(); }
     });
   });
 

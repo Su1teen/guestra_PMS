@@ -21,6 +21,9 @@ const readmePath = join(root, 'README.md');
 const statsPath = join(root, 'docs/test-stats.json');
 const countDir = join(root, '.vitest-count');
 
+// pnpm provides its executable path for scripts; invoking Node avoids .cmd spawning issues on Windows.
+const pnpmCommand = process.env.npm_execpath ? process.execPath : 'pnpm';
+const pnpmPrefix = process.env.npm_execpath ? [process.env.npm_execpath] : [];
 const args = process.argv.slice(2);
 const checkOnly = args.includes('--check');
 
@@ -71,8 +74,8 @@ export function selectTestPackagePaths(
 
 function discoverTestPackagePaths() {
   const result = spawnSync(
-    'pnpm',
-    ['-r', 'list', '--depth', '-1', '--json'],
+    pnpmCommand,
+    [...pnpmPrefix, '-r', 'list', '--depth', '-1', '--json'],
     { cwd: root, env: testEnv(), encoding: 'utf8' },
   );
   if (result.status !== 0) {
@@ -94,8 +97,8 @@ function runTestsAndCollectCounts() {
     const outFile = join(countDir, `${workspacePath.replaceAll(/[\\/]/g, '-')}.json`);
 
     const result = spawnSync(
-      'pnpm',
-      ['exec', 'vitest', 'run', '--reporter=json', `--outputFile=${outFile}`],
+      pnpmCommand,
+      [...pnpmPrefix, 'exec', 'vitest', 'run', '--reporter=json', `--outputFile=${outFile}`],
       { cwd, env, encoding: 'utf8' },
     );
 

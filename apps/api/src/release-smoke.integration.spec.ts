@@ -13,7 +13,10 @@ import request from 'supertest';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { randomUUID } from 'node:crypto';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
+import { Queue } from 'bullmq';
+import { agentWebhookSubscriptions, webhookDeliveries } from '@telivityhaip/database';
+import { WebhookDeliveryService } from './modules/webhook/webhook-delivery.service';
 import { DRIZZLE } from './database/database.module';
 
 const runSmoke = process.env.RELEASE_SMOKE === '1';
@@ -208,4 +211,48 @@ describe.runIf(runSmoke)('release smoke (migrate → reservation lifecycle)', ()
     expect(bookingCount[0].count).toBe(0);
     expect(eventCount[0].count).toBe(0);
   });
+  it('persists one webhook job in Redis across queue client recreation', async () => {
+    const db = app.get(DRIZZLE);
+    const subscriptionId = randomUUID();
+    const logicalEventId = randomUUID();
+    const delivery = app.get(WebhookDeliveryService);
+    const redis = new URL(process.env.REDIS_URL!);
+    const reader = new Queue('haip-webhook-deliveries', { connection: {
+      host: redis.hostname, port: Number(redis.port || 6379),
+      username: redis.username ? decodeURIComponent(redis.username) : undefined,
+      password: redis.password ? decodeURIComponent(redis.password) : undefined,
+      db: Number(redis.pathname.slice(1) || 0),
+      tls: redis.protocol === 'rediss:' ? {} : undefined,
+      connectTimeout: 5000, maxRetriesPerRequest: 1,
+    } });
+    let jobId: string | undefined;
+    try {
+      await db.insert(agentWebhookSubscriptions).values({ id: subscriptionId, propertyId: PROPERTY_ID,
+        subscriberId: 'release-smoke', callbackUrl: 'https://example.com/not-called',
+        events: ['reservation.created'], isActive: false });
+      const payload = { propertyId: PROPERTY_ID, eventType: 'reservation.created',
+        entityType: 'reservation', entityId: randomUUID(), data: {}, timestamp: new Date().toISOString() };
+      const first = await delivery.enqueue(payload, subscriptionId, logicalEventId);
+      jobId = first.id;
+      const replay = await delivery.enqueue(payload, subscriptionId, logicalEventId);
+      expect(replay.id).toBe(first.id);
+      // Close the actual producer; an independent client must still see the persisted job.
+      await delivery.onModuleDestroy();
+      const client = await reader.client;
+      expect(await client.ping()).toBe('PONG');
+      const job = await reader.getJob(first.id);
+      expect(job?.data).toEqual({ deliveryId: first.id, propertyId: PROPERTY_ID });
+      expect(await job!.getState()).toBe('waiting');
+      const persisted = await db.select().from(webhookDeliveries).where(eq(webhookDeliveries.subscriptionId, subscriptionId));
+      expect(persisted).toHaveLength(1);
+      expect(persisted[0].status).toBe('pending');
+      await job!.remove();
+    } finally {
+      if (jobId) await (await reader.getJob(jobId))?.remove();
+      await reader.close();
+      await db.delete(webhookDeliveries).where(eq(webhookDeliveries.subscriptionId, subscriptionId));
+      await db.delete(agentWebhookSubscriptions).where(eq(agentWebhookSubscriptions.id, subscriptionId));
+    }
+  }, 30_000);
+
 });

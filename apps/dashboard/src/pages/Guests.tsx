@@ -132,7 +132,10 @@ function GuestList() {
                   onClick={() => openGuest(g.id, propertyId)}
                 >
                   <td className="px-4 py-3 text-sm font-medium text-telivity-navy flex items-center gap-2">
-                    {g.firstName} {g.lastName}
+                    <button type="button" className="text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-telivity-teal rounded"
+                      onClick={event => { event.stopPropagation(); openGuest(g.id, propertyId); }}>
+                      {g.firstName} {g.lastName}
+                    </button>
                     {gIsMinor && (
                       <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
                         {t('guests.minorBadge', { age: guestAge ?? '?' })}

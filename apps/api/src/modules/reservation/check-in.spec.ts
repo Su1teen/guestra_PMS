@@ -37,6 +37,7 @@ const mockRoom = {
   id: 'room-001',
   roomTypeId: 'rt-001',
   status: 'guest_ready',
+  isActive: true,
   propertyId: 'prop-001',
 };
 
@@ -101,15 +102,19 @@ function createCheckInDb(options: {
   let callCount = 0;
   // Call sequence when no dto.roomId: 1=reservation, 2=guest, 3=property
   // Room override tests use custom inline mocks
-  return {
+  const db: any = {
     select: vi.fn().mockImplementation(() => ({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
+          for() { return this; },
+          limit() { return this; },
           then: (resolve: any) => {
             callCount++;
             if (callCount === 1) resolve([res]);
             else if (callCount === 2) resolve([guest]);
-            else if (callCount === 3) resolve([property]);
+            else if (callCount === 3) resolve([room]);
+            else if (callCount === 4) resolve([]);
+            else if (callCount === 5) resolve([property]);
             else resolve([]);
           },
         }),
@@ -138,6 +143,8 @@ function createCheckInDb(options: {
     }),
     delete: vi.fn(),
   };
+  db.transaction = async (fn: any) => fn(db);
+  return db;
 }
 
 async function createService(db: any) {
@@ -192,7 +199,7 @@ describe('ReservationService — checkIn', () => {
     const db = createCheckInDb();
     const svc = await createService(db);
     await svc.checkIn('res-001', 'prop-001');
-    expect(mockRoomStatusService.markOccupied).toHaveBeenCalledWith('room-001', 'prop-001');
+    expect(mockRoomStatusService.markOccupied).toHaveBeenCalledWith('room-001', 'prop-001', db);
   });
 
   it('should emit reservation.checked_in webhook', async () => {
@@ -228,30 +235,7 @@ describe('ReservationService — checkIn', () => {
 
   it('should validate room type when roomId override provided', async () => {
     const wrongRoom = { ...mockRoom, id: 'room-002', roomTypeId: 'rt-999' };
-    // Need: 1=reservation, 2=guest, 3=wrong room (for override lookup)
-    let callCount = 0;
-    const db = {
-      select: vi.fn().mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            then: (resolve: any) => {
-              callCount++;
-              if (callCount === 1) resolve([mockReservation]);
-              else if (callCount === 2) resolve([mockGuest]);
-              else if (callCount === 3) resolve([wrongRoom]);
-              else resolve([mockProperty]);
-            },
-          }),
-        }),
-      })),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            returning: vi.fn().mockResolvedValue([mockUpdatedReservation]),
-          }),
-        }),
-      }),
-    };
+    const db = createCheckInDb({ room: wrongRoom });
     const svc = await createService(db);
     await expect(svc.checkIn('res-001', 'prop-001', { roomId: 'room-002' })).rejects.toThrow(
       BadRequestException,
@@ -260,29 +244,7 @@ describe('ReservationService — checkIn', () => {
 
   it('should validate room status when roomId override provided', async () => {
     const occupiedRoom = { ...mockRoom, id: 'room-002', status: 'occupied' };
-    let callCount = 0;
-    const db = {
-      select: vi.fn().mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            then: (resolve: any) => {
-              callCount++;
-              if (callCount === 1) resolve([mockReservation]);
-              else if (callCount === 2) resolve([mockGuest]);
-              else if (callCount === 3) resolve([occupiedRoom]);
-              else resolve([mockProperty]);
-            },
-          }),
-        }),
-      })),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            returning: vi.fn().mockResolvedValue([mockUpdatedReservation]),
-          }),
-        }),
-      }),
-    };
+    const db = createCheckInDb({ room: occupiedRoom });
     const svc = await createService(db);
     await expect(svc.checkIn('res-001', 'prop-001', { roomId: 'room-002' })).rejects.toThrow(
       BadRequestException,
@@ -291,29 +253,7 @@ describe('ReservationService — checkIn', () => {
 
   it('should throw when no room assigned and no roomId provided', async () => {
     const noRoomRes = { ...mockReservation, roomId: null };
-    // 1=reservation (no room), 2=guest, 3=property
-    let callCount = 0;
-    const db = {
-      select: vi.fn().mockImplementation(() => ({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            then: (resolve: any) => {
-              callCount++;
-              if (callCount === 1) resolve([noRoomRes]);
-              else if (callCount === 2) resolve([mockGuest]);
-              else resolve([mockProperty]);
-            },
-          }),
-        }),
-      })),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            returning: vi.fn().mockResolvedValue([mockUpdatedReservation]),
-          }),
-        }),
-      }),
-    };
+    const db = createCheckInDb({ reservation: noRoomRes });
     const svc = await createService(db);
     await expect(svc.checkIn('res-001', 'prop-001')).rejects.toThrow(BadRequestException);
   });
@@ -386,6 +326,7 @@ describe('ReservationService — checkIn', () => {
         description: 'Early check-in fee',
         amount: '50',
       }),
+      db,
     );
   });
 });

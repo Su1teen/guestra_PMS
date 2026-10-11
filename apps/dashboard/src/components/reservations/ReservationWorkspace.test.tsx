@@ -15,12 +15,13 @@ const reservation = { id: 'stay-a', guestId: guest.id, status: 'cancelled', arri
 const guest360 = { guest, summary: { totalStays: 0, propertiesVisited: [], currencyCode: 'KZT', roomRevenue: 0, ancillaryRevenue: 0, totalRevenue: 0, averageSpendPerStay: 0 }, stays: [], services: [], timeline: [] };
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(api.get).mockImplementation(async url => ({ data: url.includes('/360') ? guest360 : url.endsWith('/notes') ? { notes: [{ id: 'note-a', body: 'Подготовить детскую кровать' }] } : { reservation, guest, confirmationNumber: 'TEST' } }));
+  vi.mocked(api.get).mockImplementation(async url => ({ data: url.includes('/360') ? guest360 : url.endsWith('/notes') ? { notes: [{ id: 'note-a', body: 'Подготовить детскую кровать' }] } : { reservation, guest, confirmationNumber: 'TEST', source: 'ota' } }));
 });
 it('shows all four existing kinds of notes without opening a tab or another dialog', async () => {
   renderWithProviders(<GuestQuickViewProvider><ReservationWorkspace reservationId="stay-a" onClose={vi.fn()}/></GuestQuickViewProvider>);
   await screen.findByText(guest.notes);
   expect(screen.getByText(reservation.notes)).toBeInTheDocument();
+  expect(screen.getByText('OTA')).toBeInTheDocument();
   expect(screen.getByText(reservation.specialRequests)).toBeInTheDocument();
   expect(await screen.findByText('Подготовить детскую кровать')).toBeInTheDocument();
   expect(screen.queryByRole('textbox')).not.toBeInTheDocument();

@@ -297,3 +297,4 @@ export {
 } from './migration.js';
 
 export * from './domain-event-outbox.js';
+export * from './staff-request-fence.js';

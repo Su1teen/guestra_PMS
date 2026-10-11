@@ -4,6 +4,8 @@
     "back": "Back without changes"
   },
   "staffRecovery": {
+    "close": "Close attempt and create a new booking",
+    "new": "Create a new booking",
     "pending": "A booking request has no confirmed response. Check its result first.",
     "committed": "The booking was saved. No second booking is needed.",
     "unconfirmed": "No saved booking was found yet. The request may still be running. Check again; the request is never resubmitted automatically after reload.",
@@ -713,6 +715,7 @@
     "voidSuccess": "Authorization voided"
   },
   "frontDesk": {
+    "viewProfile": "View profile",
     "activeNotes": "{{count}} active notes",
     "addNote": "Add note",
     "addNotePlaceholder": "Front-desk handover note…",
@@ -1087,6 +1090,7 @@
     "vipLevel": "VIP Level"
   },
   "header": {
+    "allProperties": "All Properties",
     "language": "Language",
     "logout": "Logout",
     "notifications": "Notifications",
