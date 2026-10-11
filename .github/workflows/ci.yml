@@ -95,11 +95,19 @@ jobs:
           CI: 'true'
 
   release-smoke:
-    name: Release smoke (PMS contract)
+    name: Release smoke (PG${{ matrix.postgres }} / Redis${{ matrix.redis }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - postgres: 16
+            redis: 7
+          - postgres: 18
+            redis: 8.2
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:${{ matrix.postgres }}-alpine
         env:
           POSTGRES_USER: haip
           POSTGRES_PASSWORD: haip
@@ -112,7 +120,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
       redis:
-        image: redis:7-alpine
+        image: redis:${{ matrix.redis }}-alpine
         ports:
           - 6379:6379
         options: >-

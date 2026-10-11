@@ -274,11 +274,11 @@ describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
         await sql`INSERT INTO staff_request_fences (property_id, request_id) VALUES (${otherId}, ${requestId})`;
         await runAllMigrations(databaseUrl, { migrationsDir: MIGRATIONS_DIR });
         const [demo] = await sql`SELECT settings FROM properties WHERE id = ${demoId}`;
-        expect(demo!.settings.guestInfo.wifi).toContain('Wi-Fi');
-        expect(demo!.settings.earlyCheckInFee).toBe(22500);
+        expect(demo!['settings'].guestInfo.wifi).toContain('Wi-Fi');
+        expect(demo!['settings'].earlyCheckInFee).toBe(22500);
         expect(await runPendingSqlMigrations(sql, MIGRATIONS_DIR)).toEqual([]);
         const [other] = await sql`SELECT settings FROM properties WHERE id = ${otherId}`;
-        expect(other!.settings).toEqual({ custom: 'retain' });
+        expect(other!['settings']).toEqual({ custom: 'retain' });
         expect(await sql`SELECT request_id FROM staff_request_fences WHERE property_id = ${otherId}`).toHaveLength(1);
       } finally { await sql.end(); }
     });
