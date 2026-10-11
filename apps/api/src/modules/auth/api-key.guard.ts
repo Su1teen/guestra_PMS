@@ -37,6 +37,7 @@ export interface ConnectPrincipal {
   scope: 'property' | 'platform';
   propertyId?: string;
   credentialId?: string;
+  scopes?: string[];
 }
 
 /**
@@ -104,6 +105,7 @@ export class ApiKeyGuard implements CanActivate {
           scope: 'property',
           propertyId: cred.propertyId,
           credentialId: cred.id,
+          ...(Array.isArray(cred.scopes) && cred.scopes.length ? { scopes: cred.scopes } : {}),
         };
         return true;
       }
