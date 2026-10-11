@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ServiceOperationsController } from './service-operations.controller';
 import { ConnectController } from './connect.controller';
 import { ConnectSearchService } from './connect-search.service';
 import { ConnectContentService } from './connect-content.service';
@@ -19,7 +20,7 @@ import { ConnectServiceBookingService } from './connect-service-booking.service'
 
 @Module({
   imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule],
-  controllers: [ConnectController, ConnectCredentialsController],
+  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController],
   providers: [
     ConnectSearchService,
     ConnectContentService,

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 const eventName = 'guestra:staff-request';
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const staffRecoveryKey = (actor: string, propertyId: string) => `guestra.staff-request.v1:${encodeURIComponent(actor)}:${propertyId}`;
+export const serviceRecoveryKey = (actor: string, propertyId: string) => `guestra.service-request.v1:${encodeURIComponent(actor)}:${propertyId}`;
 /** Session recovery stores a random request token only, never guest details or a booking payload. */
 export function readStaffRequest(key: string): string | null {
   try { const value = sessionStorage.getItem(key); return value && uuid.test(value) ? value : null; } catch { return null; }

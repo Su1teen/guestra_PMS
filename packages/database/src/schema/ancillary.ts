@@ -62,6 +62,8 @@ export const services = pgTable(
     price: numeric('price', { precision: 12, scale: 2 }).notNull(),
     currencyCode: varchar('currency_code', { length: 3 }).notNull(),
     taxCode: varchar('tax_code', { length: 20 }),
+    /** Null preserves legacy facts; scheduling requires an explicit policy. */
+    taxMode: varchar('tax_mode', { length: 20 }).$type<'none' | 'exclusive' | 'inclusive'>(),
 
     postingRule: servicePostingRuleEnum('posting_rule').notNull().default('once'),
     /** Channels that may sell this service: booking_engine | front_desk | pre_arrival */
@@ -97,6 +99,8 @@ export const serviceBookings = pgTable('service_bookings', {
   unitPrice: numeric('unit_price', { precision: 12, scale: 2 }).notNull(),
   totalAmount: numeric('total_amount', { precision: 12, scale: 2 }).notNull(),
   currencyCode: varchar('currency_code', { length: 3 }).notNull(),
+  revision: integer('revision').notNull().default(1),
+  pricingSnapshot: jsonb('pricing_snapshot').$type<Record<string, unknown>>(),
   notes: text('notes'),
   sourceChannel: varchar('source_channel', { length: 40 }).notNull().default('front_desk'),
   idempotencyKey: varchar('idempotency_key', { length: 200 }),
@@ -117,6 +121,9 @@ export const serviceResources = pgTable('service_resources', {
   code: varchar('code', { length: 60 }).notNull(),
   name: varchar('name', { length: 120 }).notNull(),
   capacity: integer('capacity').notNull().default(1),
+  bufferBeforeMinutes: integer('buffer_before_minutes').notNull().default(0),
+  bufferAfterMinutes: integer('buffer_after_minutes').notNull().default(0),
+  schedule: jsonb('schedule').$type<{ timeZone: string; windows: Array<{ day: number; start: string; end: string }> }>(),
   isActive: boolean('is_active').notNull().default(true),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -128,6 +135,8 @@ export const serviceResourceAllocations = pgTable('service_resource_allocations'
   serviceBookingId: uuid('service_booking_id').notNull().references(() => serviceBookings.id),
   resourceId: uuid('resource_id').notNull().references(() => serviceResources.id),
   units: integer('units').notNull().default(1),
+  startAt: timestamp('start_at', { withTimezone: true }),
+  endAt: timestamp('end_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => [
   uniqueIndex('service_resource_allocations_booking_resource_unique').on(t.serviceBookingId, t.resourceId),
@@ -206,3 +215,24 @@ export const reservationServices = pgTable(
     index('reservation_services_reservation_idx').on(t.propertyId, t.reservationId),
   ],
 );
+
+/** Temporary unavailability of an existing operational resource, not another inventory. */
+export const serviceResourceBlocks = pgTable('service_resource_blocks', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  propertyId: uuid('property_id').notNull().references(() => properties.id),
+  resourceId: uuid('resource_id').notNull().references(() => serviceResources.id),
+  startAt: timestamp('start_at', { withTimezone: true }).notNull(),
+  endAt: timestamp('end_at', { withTimezone: true }).notNull(),
+  reason: text('reason'),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [index('service_resource_blocks_property_resource_time_idx').on(t.propertyId, t.resourceId, t.startAt)]);
+
+/** Durable receipts for retry-safe scheduling mutations; bookings remain authoritative. */
+export const serviceOperations = pgTable('service_operations', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  propertyId: uuid('property_id').notNull().references(() => properties.id),
+  idempotencyKey: varchar('idempotency_key', { length: 200 }).notNull(),
+  fingerprint: text('fingerprint').notNull(),
+  response: jsonb('response').$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, t => [uniqueIndex('service_operations_property_key_unique').on(t.propertyId, t.idempotencyKey)]);

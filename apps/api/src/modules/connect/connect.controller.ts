@@ -30,6 +30,8 @@ import { ConnectServiceBookingService } from './connect-service-booking.service'
 import { AgentServiceAvailabilityDto, AgentServiceBookDto } from './dto/agent-service.dto';
 import { AgentServiceRequestDto } from './dto/agent-service-request.dto';
 import { ServiceRequestsService } from '../service-requests/service-requests.service';
+import { ServiceChangeDto, ServiceStatusDto } from './dto/service-operations.dto';
+import { ServiceCapability } from './service-capability.decorator';
 
 @ApiTags('Connect — OTAIP Agent API')
 @ApiSecurity('api-key')
@@ -134,6 +136,7 @@ export class ConnectController {
   // --- Operational services ---
 
   @Get('services')
+  @ServiceCapability('services.read')
   @ApiOperation({ summary: 'List agent-visible service options and booking policy' })
   @ApiQuery({ name: 'propertyId', required: true })
   async serviceOptions(@Query('propertyId', ParseUUIDPipe) propertyId: string) {
@@ -141,16 +144,35 @@ export class ConnectController {
   }
 
   @Post('services/availability')
+  @ServiceCapability('services.read')
   @ApiOperation({ summary: 'Check live service capacity without exposing resources' })
   async serviceAvailability(@Body() dto: AgentServiceAvailabilityDto) {
     return this.serviceBookingService.availability(dto);
   }
 
   @Post('services/book')
+  @ServiceCapability('services.write')
   @ApiOperation({ summary: 'Create a retry-safe operational service booking' })
   async bookService(@Body() dto: AgentServiceBookDto) {
     return this.serviceBookingService.book(dto);
   }
+  @Get('services/bookings/:id')
+  @ServiceCapability('services.read')
+  @ApiOperation({ summary: 'Read a service booking without internal resources, notes or integration context' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  getServiceBooking(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string) { return this.serviceBookingService.publicDetail(id, propertyId); }
+  @Patch('services/bookings/:id')
+  @ServiceCapability('services.write')
+  @ApiOperation({ summary: 'Move service time and participants with accepted price preservation' })
+  modifyServiceBooking(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ServiceChangeDto) {
+    // Resource selection belongs to staff; external callers cannot name internal resources.
+    if (dto.resourceId) throw new ForbiddenException('Выбор внутреннего ресурса недоступен.');
+    return this.serviceBookingService.change(id, dto);
+  }
+  @Post('services/bookings/:id/cancel')
+  @ServiceCapability('services.write')
+  @ApiOperation({ summary: 'Cancel capacity; refunds require the existing manual financial workflow' })
+  cancelServiceBooking(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ServiceStatusDto) { return this.serviceBookingService.transition(id, dto, 'cancelled'); }
 
   @Post('guest-requests')
   @ApiOperation({ summary: 'Create a retry-safe operational guest request' })
@@ -164,8 +186,8 @@ export class ConnectController {
     return {
       contractVersion: 'v1', integrationContextSupported: true, idempotencySupported: true,
       supportedBookingModes: ['live_booking', 'request_only', 'info_only', 'disabled'],
-      supportedTools: ['search_accommodation', 'book_accommodation', 'get_booking', 'modify_booking', 'cancel_booking', 'get_service_options', 'check_service_availability', 'book_service'],
-      webhookEventTypes: ['reservation.created', 'reservation.checked_in', 'reservation.checked_out', 'service_booking.created', 'service_request.created'],
+      supportedTools: ['search_accommodation', 'book_accommodation', 'get_booking', 'modify_booking', 'cancel_booking', 'get_service_options', 'check_service_availability', 'book_service', 'get_service_booking', 'modify_service_booking', 'cancel_service_booking'],
+      webhookEventTypes: ['reservation.created', 'reservation.checked_in', 'reservation.checked_out', 'service_booking.created', 'service_booking.rescheduled', 'service_booking.cancelled', 'service_booking.completed', 'service_request.created'],
     };
   }
 

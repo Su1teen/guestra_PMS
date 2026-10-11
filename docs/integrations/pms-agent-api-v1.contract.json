@@ -3,7 +3,7 @@
   "basePath": "/api/v1/connect",
   "authentication": "x-api-key",
   "integrationContextSupported": true,
-  "idempotency": { "requiredFor": ["book_accommodation", "book_service", "create_guest_request"], "conflictCode": "IDEMPOTENCY_CONFLICT" },
+  "idempotency": { "requiredFor": ["book_accommodation", "book_service", "modify_service_booking", "cancel_service_booking", "create_guest_request"], "conflictCode": "IDEMPOTENCY_CONFLICT" },
   "tools": [
     { "toolName": "search_accommodation", "method": "POST", "path": "/search", "write": false },
     { "toolName": "get_property", "method": "GET", "path": "/properties/:id", "write": false },
@@ -14,6 +14,9 @@
     { "toolName": "get_service_options", "method": "GET", "path": "/services", "write": false },
     { "toolName": "check_service_availability", "method": "POST", "path": "/services/availability", "write": false },
     { "toolName": "book_service", "method": "POST", "path": "/services/book", "write": true, "confirmationExpected": true, "outputs": ["serviceBookingId", "folioId"] },
+    { "toolName": "get_service_booking", "method": "GET", "path": "/services/bookings/:id", "write": false, "requiredQuery": ["propertyId"] },
+    { "toolName": "modify_service_booking", "method": "PATCH", "path": "/services/bookings/:id", "write": true, "requiredBody": ["propertyId", "expectedRevision", "idempotencyKey"] },
+    { "toolName": "cancel_service_booking", "method": "POST", "path": "/services/bookings/:id/cancel", "write": true, "requiredBody": ["propertyId", "expectedRevision", "idempotencyKey"] },
     { "toolName": "create_guest_request", "method": "POST", "path": "/guest-requests", "write": true, "outputs": ["serviceRequestId"] },
     { "toolName": "capabilities", "method": "GET", "path": "/capabilities", "write": false }
   ]

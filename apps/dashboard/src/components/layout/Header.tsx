@@ -43,7 +43,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
   return (
     <>
       <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-3 sm:px-6">
-        <div className="flex items-center gap-2 sm:gap-4">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <button
             onClick={onMenuClick}
             className="lg:hidden p-2 -ml-1 rounded-lg hover:bg-telivity-light-grey"
@@ -55,7 +55,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           <div className="relative">
             <button
               onClick={() => setOpen(!open)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-telivity-teal text-sm font-medium transition-colors"
+              className="flex max-w-[108px] sm:max-w-none items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-telivity-teal text-sm font-medium transition-colors"
               aria-haspopup="listbox"
               aria-expanded={open}
             >
@@ -109,7 +109,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           </span>
         </div>
 
-        <div className="flex items-center gap-3 sm:gap-4">
+        <div className="flex flex-shrink-0 items-center gap-1.5 sm:gap-4">
           <div className="flex items-center gap-1.5">
             <div className={`w-2 h-2 rounded-full ${connected ? 'bg-telivity-dark-teal' : 'bg-telivity-orange'}`} aria-hidden="true" />
             <span className="text-xs text-telivity-mid-grey hidden sm:inline">{connected ? t('header.statusLive') : t('header.statusOffline')}</span>

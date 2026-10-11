@@ -435,7 +435,7 @@ function SplitFolioPanel({
                 <option value="">{t('folios.selectCharge')}</option>
                 {movableCharges.map((c) => (
                   <option key={c.id} value={c.id}>
-                    {c.serviceDate} · {c.description} · {formatMoney(c.amount, folio.currencyCode)}
+                    {c.serviceDate.slice(0, 10)} · {c.description} · {formatMoney(c.amount, folio.currencyCode)}
                   </option>
                 ))}
               </select>
@@ -740,7 +740,7 @@ function FolioDetail() {
             <tbody>
               {charges.map((c) => (
                 <tr key={c.id} className={`border-b border-gray-50 ${reversedIds.has(c.id) ? 'opacity-50 line-through' : ''}`}>
-                  <td className="py-2 text-sm text-telivity-slate">{c.serviceDate}</td>
+                  <td className="py-2 text-sm text-telivity-slate">{c.serviceDate.slice(0, 10)}</td>
                   <td className="py-2 text-sm text-telivity-navy">{c.description} {c.isLocked && <Lock size={12} className="inline text-telivity-mid-grey" />}</td>
                   <td className="py-2 text-sm text-telivity-slate">{t(`folios.chargeTypes.${c.type}`, { defaultValue: c.type })}</td>
                   <td className="py-2 text-sm text-right font-medium">{formatMoney(c.amount, folio.currencyCode)}</td>

@@ -12,6 +12,7 @@ import { eq } from 'drizzle-orm';
 import { bookings } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import type { ConnectPrincipal } from './api-key.guard';
+import { CONNECT_SERVICE_CAPABILITY } from '../connect/service-capability.decorator';
 
 /**
  * Enforces tenant isolation for the Connect API once `ApiKeyGuard` has attached
@@ -52,6 +53,14 @@ export class ConnectScopeGuard implements CanActivate {
       throw new UnauthorizedException('Connect principal not resolved');
     }
     if (principal.scope === 'platform') return true;
+    const handler = context.getHandler?.();
+    const capability = handler ? Reflect.getMetadata(CONNECT_SERVICE_CAPABILITY, handler) as string | undefined : undefined;
+    // Empty historical scope metadata keeps the v1 contract. Explicit scope lists
+    // enforce least privilege on the service API, including its new lifecycle.
+    const scopedServices = principal.scopes?.some(s => ['services.read', 'services.write', 'pms:scoped:v1'].includes(s));
+    if (capability && scopedServices && !principal.scopes?.includes(capability)) {
+      throw new ForbiddenException('Ключ интеграции не разрешает это действие с услугами.');
+    }
 
     const scopedPropertyId = principal.propertyId;
     if (!scopedPropertyId) {

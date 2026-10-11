@@ -269,6 +269,8 @@ export {
   serviceBookings,
   serviceResources,
   serviceResourceAllocations,
+  serviceResourceBlocks,
+  serviceOperations,
 } from './ancillary.js';
 
 export { integrationLinks } from './integration.js';

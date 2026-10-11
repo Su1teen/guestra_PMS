@@ -77,6 +77,17 @@ export class CreateServiceDto {
   @MaxLength(20)
   taxCode?: string;
 
+  @ApiPropertyOptional({ enum: ['none','exclusive','inclusive'] })
+  @IsOptional() @IsEnum(['none','exclusive','inclusive'])
+  taxMode?: 'none' | 'exclusive' | 'inclusive';
+
+  @ApiPropertyOptional({ enum: ['live_booking','request_only','info_only','disabled'] })
+  @IsOptional() @IsEnum(['live_booking','request_only','info_only','disabled'])
+  agentBookingMode?: 'live_booking' | 'request_only' | 'info_only' | 'disabled';
+
+  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  durationMinutes?: number;
+
   @ApiProperty({ enum: SERVICE_POSTING_RULES })
   @IsEnum(SERVICE_POSTING_RULES)
   postingRule!: (typeof SERVICE_POSTING_RULES)[number];

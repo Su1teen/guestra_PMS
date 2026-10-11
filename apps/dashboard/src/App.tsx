@@ -34,6 +34,7 @@ const Accounting = lazy(() => import('./pages/Accounting'));
 const TaxSettings = lazy(() => import('./pages/TaxSettings'));
 const BookingRequests = lazy(() => import('./pages/BookingRequests'));
 const Operations = lazy(() => import('./pages/Operations'));
+const Services = lazy(() => import('./pages/Services'));
 
 export default function App() {
   useRealtimeInvalidation();
@@ -53,6 +54,7 @@ export default function App() {
             <Route path="/rooms/*" element={<Rooms />} />
             <Route path="/housekeeping/*" element={<Housekeeping />} />
             <Route path="/operations/*" element={<Operations />} />
+            <Route path="/services" element={<Services />} />
             <Route path="/folios/*" element={<Folios />} />
             <Route path="/groups/*" element={<Groups />} />
             <Route path="/commercial/*" element={<Commercial />} />

@@ -99,6 +99,7 @@ export function realtimeQueryKeys(
   }
   if (payload.event.startsWith('folio.')) {
     return uniqueKeys([
+      ['guest-360'],
       ['folios'],
       ['folios', propertyId],
       ['payments'],
@@ -124,6 +125,9 @@ export function realtimeQueryKeys(
   }
   if (payload.event.startsWith('room.')) {
     return [['rooms'], ['rooms', propertyId], ['housekeeping'], ['housekeeping', propertyId]];
+  }
+  if (payload.event.startsWith('service_booking.') || payload.event.startsWith('service_resource.')) {
+    return [['service-calendar', propertyId], ['service-bookings', propertyId], ['service-booking-history', propertyId], ['reservation-service-bookings', propertyId], ['service-calendar', 'slots', propertyId], ['guest-360'], ['folios']];
   }
   if (payload.event.startsWith('housekeeping.')) {
     return [['housekeeping'], ['housekeeping', propertyId], ['rooms'], ['rooms', propertyId]];
