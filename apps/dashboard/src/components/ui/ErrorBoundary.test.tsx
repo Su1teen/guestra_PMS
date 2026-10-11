@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ErrorBoundary, QueryError, EmptyState } from './ErrorBoundary';
@@ -11,7 +11,8 @@ function ThrowingComponent({ shouldThrow }: { shouldThrow: boolean }) {
 
 describe('ErrorBoundary', () => {
   // Suppress React error boundary console.error
-  const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  beforeEach(() => { vi.spyOn(console, 'error').mockImplementation(() => {}); });
+  afterEach(() => vi.restoreAllMocks());
 
   it('renders children when no error', () => {
     render(
@@ -42,7 +43,6 @@ describe('ErrorBoundary', () => {
     expect(screen.getByText('Custom error')).toBeInTheDocument();
   });
 
-  spy.mockRestore();
 });
 
 describe('QueryError', () => {

@@ -1,8 +1,10 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import axios from 'axios';
 import { useSearchParams } from 'react-router-dom';
 import { api, setPropertyId as setApiPropertyId } from '../lib/api';
 import { errorMessage } from '../lib/error-message';
 import { joinPropertyRoom, leavePropertyRoom } from '../lib/socket';
+import { logRuntimeFailure } from '../lib/runtime-errors';
 import {
   PORTFOLIO_MODE_ID,
   type PropertySummary,
@@ -35,9 +37,11 @@ const PropertyContext = createContext<PropertyContextValue>({
 
 export function PropertyProvider({ children }: { children: ReactNode }) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [propertyId, setPropertyIdState] = useState<string | null>(
-    searchParams.get('propertyId'),
-  );
+  const [defaultPropertyId, setPropertyIdState] = useState<string | null>(null);
+  // URL scope is authoritative for direct links and browser Back/Forward.
+  const propertyId = searchParams.get('propertyId') ?? defaultPropertyId;
+  const latestPropertyId = useRef(propertyId);
+  latestPropertyId.current = propertyId;
   const [properties, setProperties] = useState<PropertySummary[]>([]);
   const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
   const [propertiesLoading, setPropertiesLoading] = useState(true);
@@ -55,47 +59,52 @@ export function PropertyProvider({ children }: { children: ReactNode }) {
     null;
 
   function setPropertyId(id: string) {
+    setApiPropertyId(id === PORTFOLIO_MODE_ID ? null : id);
     setPropertyIdState(id);
     setSearchParams((prev) => {
-      prev.set('propertyId', id);
-      return prev;
+      const next = new URLSearchParams(prev);
+      next.set('propertyId', id);
+      return next;
     });
   }
 
   useEffect(() => {
+    const controller = new AbortController();
     setPropertiesLoading(true);
     setPropertiesError(null);
     Promise.all([
-      api.get('/v1/properties'),
-      api.get('/v1/organizations', { skipErrorToast: true }).catch((err) => {
-        console.error('Failed to load organizations:', err);
+      api.get('/v1/properties', { signal: controller.signal }),
+      api.get('/v1/organizations', { skipErrorToast: true, signal: controller.signal }).catch((err) => {
+        if (!axios.isCancel(err)) logRuntimeFailure('request', err);
         return { data: [] };
       }),
     ])
       .then(([propRes, orgRes]) => {
+        if (controller.signal.aborted) return;
         const list: PropertySummary[] = propRes.data?.data ?? propRes.data ?? [];
         const orgList: OrganizationSummary[] = orgRes.data?.data ?? orgRes.data ?? [];
+        if (!Array.isArray(list) || !Array.isArray(orgList)) throw new Error('Invalid property bootstrap response');
         setProperties(list);
         setOrganizations(orgList);
-        if (!propertyId && list.length > 0) {
+        if (!latestPropertyId.current && list.length > 0) {
           // Default to portfolio when user has multiple properties
           setPropertyId(list.length > 1 ? PORTFOLIO_MODE_ID : list[0].id);
         }
       })
       .catch((err) => {
-        setPropertiesError(errorMessage(err));
+        if (!controller.signal.aborted) setPropertiesError(errorMessage(err));
       })
-      .finally(() => setPropertiesLoading(false));
+      .finally(() => { if (!controller.signal.aborted) setPropertiesLoading(false); });
+    return () => controller.abort();
     // Bootstrap once; propertyId auto-select handled inside the effect.
   }, []);
 
+  useLayoutEffect(() => {
+    setApiPropertyId(isPortfolioMode ? null : propertyId);
+  }, [propertyId, isPortfolioMode]);
+
   useEffect(() => {
-    if (isPortfolioMode) {
-      setApiPropertyId(null);
-      return;
-    }
-    setApiPropertyId(propertyId);
-    if (propertyId) {
+    if (propertyId && !isPortfolioMode) {
       joinPropertyRoom(propertyId);
       return () => leavePropertyRoom(propertyId);
     }

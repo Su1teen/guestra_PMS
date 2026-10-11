@@ -1,210 +1,96 @@
-import { NavLink } from 'react-router-dom';
-import {
-  LayoutDashboard,
-  ConciergeBell,
-  CalendarDays,
-  Users,
-  DoorOpen,
-  Sparkles,
-  Receipt,
-  BadgeDollarSign,
-  Gauge,
-  TrendingUp,
-  Moon,
-  BarChart3,
-  Radio,
-  Plug,
-  Mail,
-  MessageSquare,
-  Settings,
-  ShieldCheck,
-  Upload,
-  UsersRound,
-  Briefcase,
-  Banknote,
-  Building2,
-  Calculator,
-  ReceiptText,
-  ClipboardList,
-  ClipboardCheck,
-  X,
-} from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import { ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, Settings2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../../context/AuthContext';
 import { useProperty } from '../../context/PropertyContext';
-import { isBookingRequestsUiEnabled } from '../../lib/bookingRequestsFeature';
-
-type NavItem = {
-  to: string;
-  icon: typeof LayoutDashboard;
-  labelKey: string;
-  permission?: string;
-  roles?: string[];
-};
-
-type NavSection = {
-  sectionKey?: string;
-  items: NavItem[];
-};
-
-const NAV_SECTIONS: NavSection[] = [
-  {
-    items: [
-      { to: '/', icon: LayoutDashboard, labelKey: 'nav.dashboard', permission: 'dashboard.view' },
-      { to: '/front-desk', icon: ConciergeBell, labelKey: 'nav.frontDesk', permission: 'frontdesk.access' },
-      { to: '/booking-requests', icon: ClipboardList, labelKey: 'nav.bookingRequests', permission: 'reservations.read' },
-      { to: '/reservations', icon: CalendarDays, labelKey: 'nav.reservations', permission: 'reservations.read' },
-      { to: '/guests', icon: Users, labelKey: 'nav.guests', permission: 'guests.read' },
-      { to: '/rooms', icon: DoorOpen, labelKey: 'nav.rooms', permission: 'rooms.read' },
-      { to: '/housekeeping', icon: Sparkles, labelKey: 'nav.housekeeping', permission: 'housekeeping.read' },
-      { to: '/operations', icon: ClipboardCheck, labelKey: 'nav.operations', permission: 'ops.read' },
-      { to: '/services', icon: CalendarDays, labelKey: 'nav.services', permission: 'services.read' },
-      { to: '/folios', icon: Receipt, labelKey: 'nav.foliosBilling', permission: 'folios.read' },
-    ],
-  },
-  {
-    sectionKey: 'nav.backOffice',
-    items: [
-      { to: '/groups', icon: UsersRound, labelKey: 'nav.groups', permission: 'groups.read' },
-      { to: '/commercial', icon: Briefcase, labelKey: 'nav.commercial', permission: 'commercial.read' },
-      { to: '/cashier', icon: Banknote, labelKey: 'nav.cashier', permission: 'cashier.access' },
-      { to: '/house-accounts', icon: Building2, labelKey: 'nav.houseAccounts', permission: 'houseaccounts.read' },
-      { to: '/accounting', icon: Calculator, labelKey: 'nav.accounting', permission: 'accounting.view' },
-      { to: '/tax', icon: ReceiptText, labelKey: 'nav.tax', permission: 'tax.manage' },
-    ],
-  },
-  {
-    items: [
-      { to: '/rate-plans', icon: BadgeDollarSign, labelKey: 'nav.ratePlans', permission: 'rateplans.read' },
-      { to: '/dynamic-pricing', icon: Gauge, labelKey: 'nav.dynamicPricing', permission: 'revenue.manage' },
-      { to: '/revenue', icon: TrendingUp, labelKey: 'nav.revenueManagement', permission: 'revenue.manage' },
-      { to: '/night-audit', icon: Moon, labelKey: 'nav.nightAudit', permission: 'nightaudit.run' },
-      { to: '/reports', icon: BarChart3, labelKey: 'nav.reports', permission: 'reports.view' },
-      { to: '/reports/management', icon: TrendingUp, labelKey: 'nav.managementReport', permission: 'reports.view' },
-      { to: '/channels', icon: Radio, labelKey: 'nav.channels', permission: 'channels.manage' },
-      { to: '/integrations', icon: Plug, labelKey: 'nav.integrations', permission: 'settings.manage' },
-      { to: '/communications', icon: Mail, labelKey: 'nav.communications', permission: 'communications.manage' },
-      { to: '/reviews', icon: MessageSquare, labelKey: 'nav.reviews', permission: 'reviews.manage' },
-      { to: '/settings?tab=users', icon: ShieldCheck, labelKey: 'nav.usersRoles', permission: 'admin.users.manage' },
-      { to: '/import', icon: Upload, labelKey: 'nav.import', permission: 'settings.manage' },
-      { to: '/settings', icon: Settings, labelKey: 'nav.settings', permission: 'settings.manage' },
-    ],
-  },
-];
+import { useStoredPreference } from '../../hooks/useStoredPreference';
+import { activeNavigationItem, propertyHref, visibleNavigation } from '../../lib/navigation';
 
 interface SidebarProps {
   mobileOpen: boolean;
   onClose: () => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }
 
-function isItemVisible(
-  item: NavItem,
-  hasPermission: (key: string) => boolean,
-  hasRole: (...roles: string[]) => boolean,
-) {
-  if (item.to === '/booking-requests' && !isBookingRequestsUiEnabled()) return false;
-  if (item.permission) return hasPermission(item.permission);
-  if (item.roles) return hasRole(...item.roles);
-  return true;
-}
-
-export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
-  const { hasRole, hasPermission } = useAuth();
+export default function Sidebar({ mobileOpen, onClose, collapsed, onToggleCollapsed }: SidebarProps) {
+  const { hasPermission } = useAuth();
   const { t } = useTranslation();
+  const { pathname, search } = useLocation();
   const { propertyId, isPortfolioMode, properties } = useProperty();
+  const [advancedOpen, setAdvancedOpen] = useStoredPreference('guestra.navigation.advanced');
+  const sidebar = useRef<HTMLElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const activeProperty = isPortfolioMode ? null : properties.find(p => p.id === propertyId);
+  const brandName = isPortfolioMode ? 'Guestra' : (activeProperty?.staffDisplayName || activeProperty?.name || 'Guestra');
+  const brandLogo = activeProperty?.staffLogoUrl;
+  const tagline = isPortfolioMode ? t('header.allProperties') : t('nav.tagline');
+  const sections = visibleNavigation(hasPermission);
+  const active = activeNavigationItem(pathname, search, sections.flatMap(s => s.items));
+  const advancedActive = sections.some(s => s.advanced && s.items.some(item => item.to === active));
+  const showAdvanced = advancedOpen;
+  useEffect(() => { if (advancedActive) setAdvancedOpen(true); }, [active, advancedActive, setAdvancedOpen]);
 
-  const activeProperty = isPortfolioMode
-    ? null
-    : properties.find((p) => p.id === propertyId);
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    closeButton.current?.focus();
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); onClose(); }
+      if (event.key !== 'Tab') return;
+      const targets = [...(sidebar.current?.querySelectorAll<HTMLElement>('a[href], button:not([disabled])') ?? [])]
+        .filter(element => element.getClientRects().length > 0);
+      const first = targets[0], last = targets.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', keydown);
+    const resize = () => { if (window.matchMedia('(min-width: 1024px)').matches) onClose(); };
+    window.addEventListener('resize', resize);
+    return () => { document.body.style.overflow = previousOverflow; document.removeEventListener('keydown', keydown); window.removeEventListener('resize', resize); previous?.focus(); };
+  }, [mobileOpen, onClose]);
 
-  const brandName = isPortfolioMode
-    ? 'HAIP'
-    : (activeProperty?.staffDisplayName || activeProperty?.name || 'HAIP');
-  const brandLogo = !isPortfolioMode ? activeProperty?.staffLogoUrl : null;
-  const tagline = isPortfolioMode
-    ? t('header.allProperties', { defaultValue: 'All Properties' })
-    : t('nav.tagline');
-
-  const visibleSections = NAV_SECTIONS.map((section) => ({
-    ...section,
-    items: section.items.filter((item) => isItemVisible(item, hasPermission, hasRole)),
-  })).filter((section) => section.items.length > 0);
-
-  return (
-    <>
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 bg-black/40 z-40 lg:hidden"
-          onClick={onClose}
-        />
-      )}
-
-      <aside
-        className={`
-          w-60 bg-telivity-navy text-white flex flex-col h-screen fixed left-0 top-0 z-50
-          transition-transform duration-200
-          ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}
-          lg:translate-x-0
-        `}
-        style={
-          !isPortfolioMode && activeProperty?.staffPrimaryColor
-            ? { backgroundColor: activeProperty.staffPrimaryColor }
-            : undefined
-        }
-      >
-        <div className="px-6 py-5 border-b border-white/10 flex items-center justify-between">
-          <div className="flex items-center gap-3 min-w-0">
-            {brandLogo ? (
-              <img src={brandLogo} alt="" className="h-8 w-8 rounded object-cover flex-shrink-0 bg-white/10" />
-            ) : null}
-            <div className="min-w-0">
-              <h1 className="text-xl font-semibold tracking-wide truncate">{brandName}</h1>
-              <p className="text-xs text-white/60 mt-0.5 truncate">{tagline}</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="lg:hidden p-1 rounded hover:bg-white/10 flex-shrink-0"
-            aria-label={t('nav.closeMenu')}
-          >
-            <X size={18} />
-          </button>
+  return <>
+    {mobileOpen && <button type="button" tabIndex={-1} aria-label={t('nav.closeMenu')}
+      className="fixed inset-0 bg-black/40 z-40 lg:hidden" onClick={onClose} />}
+    <aside ref={sidebar} id="main-sidebar" aria-label={t('nav.mainNavigation')}
+      className={`guestra-sidebar ${collapsed ? 'sidebar-collapsed' : ''} bg-telivity-navy text-white flex flex-col h-screen fixed left-0 top-0 z-50 transition-[width,transform] duration-200 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}
+      style={activeProperty?.staffPrimaryColor ? { backgroundColor: activeProperty.staffPrimaryColor } : undefined}>
+      <div className="px-4 py-4 border-b border-white/10 flex items-center justify-between gap-2 min-h-20">
+        <div className="sidebar-brand min-w-0 flex items-center gap-2">
+          {brandLogo && <img src={brandLogo} alt="" className="h-8 w-8 rounded object-cover flex-shrink-0 bg-white/10" />}
+          <div className="min-w-0"><h1 className="text-lg font-semibold tracking-wide truncate">{brandName}</h1>
+            <p className="text-xs text-white/60 mt-0.5 truncate">{tagline}</p></div>
         </div>
-
-        <nav className="flex-1 overflow-y-auto py-3" role="navigation" aria-label={t('nav.mainNavigation')}>
-          {visibleSections.map((section, sectionIdx) => (
-            <div key={section.sectionKey ?? `section-${sectionIdx}`}>
-              {section.sectionKey && (
-                <p className="px-6 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">
-                  {t(section.sectionKey)}
-                </p>
-              )}
-              {section.items.map(({ to, icon: Icon, labelKey }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={to === '/' || to === '/reports'}
-                  onClick={onClose}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 px-6 py-2.5 text-sm font-medium transition-colors ${
-                      isActive
-                        ? 'bg-telivity-teal/15 text-telivity-teal border-r-3 border-telivity-teal'
-                        : 'text-white/70 hover:text-white hover:bg-white/5'
-                    }`
-                  }
-                >
-                  <Icon size={18} aria-hidden="true" />
-                  {t(labelKey)}
-                </NavLink>
-              ))}
-            </div>
-          ))}
-        </nav>
-
-        <div className="px-6 py-4 border-t border-white/10 text-xs text-telivity-mid-grey">
-          v0.1.0
-        </div>
-      </aside>
-    </>
-  );
+        <button type="button" onClick={onToggleCollapsed} className="hidden lg:block p-2 rounded hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-telivity-teal"
+          aria-label={t(collapsed ? 'navigation.expand' : 'navigation.collapse')} title={t(collapsed ? 'navigation.expand' : 'navigation.collapse')} aria-controls="main-sidebar" aria-expanded={!collapsed}>
+          {collapsed ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
+        </button>
+        <button ref={closeButton} type="button" onClick={onClose} className="lg:hidden p-1 rounded hover:bg-white/10" aria-label={t('nav.closeMenu')}><X size={18} /></button>
+      </div>
+      <nav className="flex-1 overflow-y-auto py-3" aria-label={t('nav.mainNavigation')}>
+        {sections.map(section => <div key={section.labelKey}>
+          {section.advanced ? <button type="button" onClick={() => setAdvancedOpen(!showAdvanced)}
+            aria-expanded={showAdvanced} aria-controls="advanced-navigation" title={t(section.labelKey)}
+            className={`sidebar-link flex items-center gap-3 w-full px-4 py-3 text-xs font-semibold text-white/70 hover:bg-white/5 ${advancedActive ? 'text-telivity-teal' : ''}`}>
+            <Settings2 size={18} className="shrink-0" aria-hidden="true" />
+            <span className="sidebar-label flex-1 text-left">{t(section.labelKey)}</span>
+            <span className="sidebar-label">{showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+          </button> : <p className="sidebar-section px-4 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">{t(section.labelKey)}</p>}
+          {(!section.advanced || showAdvanced) && <div id={section.advanced ? 'advanced-navigation' : undefined}>
+            {section.items.map(({ to, icon: Icon, labelKey }) => <NavLink key={to} to={propertyHref(to, propertyId)}
+              onClick={onClose} title={t(labelKey)} aria-label={t(labelKey)} aria-current={active === to ? 'page' : false}
+              className={`sidebar-link flex items-center gap-3 px-4 py-2.5 text-sm font-medium border-r-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-telivity-teal ${active === to ? 'bg-telivity-teal/15 text-telivity-teal border-telivity-teal' : 'text-white/70 hover:text-white hover:bg-white/5 border-transparent'}`}>
+              <Icon size={18} className="shrink-0" aria-hidden="true" /><span className="sidebar-label truncate">{t(labelKey)}</span>
+            </NavLink>)}
+          </div>}
+        </div>)}
+      </nav>
+      <div className="sidebar-footer px-4 py-3 border-t border-white/10 text-xs text-white/50">Guestra PMS</div>
+    </aside>
+  </>;
 }
