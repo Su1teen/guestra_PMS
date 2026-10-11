@@ -21,7 +21,7 @@ it('uses the existing task form with the reservation context and consumes the ac
   expect(new URLSearchParams(window.location.search).get('reservationId')).toBe('stay-a');
   await userEvent.type(screen.getByPlaceholderText('What needs to be done?'), 'Prepare cot');
   await userEvent.type(screen.getByPlaceholderText('Description and context'), 'Guest request');
-  await userEvent.click(screen.getByRole('button', { name: 'Create', exact: true }));
+  await userEvent.click(screen.getByRole('button', { name: 'Create' }));
   await waitFor(() => expect(api.post).toHaveBeenCalledWith('/v1/service-requests', expect.objectContaining({ propertyId: 'hotel-a', reservationId: 'stay-a', title: 'Prepare cot' })));
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 });
@@ -29,6 +29,6 @@ it('does not open a task editor or show creation controls without ops.manage', a
   access.manage = false; renderWithProviders(<Operations/>);
   await screen.findByText('Operations');
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Task', exact: true })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Task' })).not.toBeInTheDocument();
   expect(api.post).not.toHaveBeenCalled();
 });
