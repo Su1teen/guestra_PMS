@@ -145,21 +145,34 @@ The `init` service is idempotent — safe to re-run on every deploy.
 
 ## Container images (GHCR)
 
-On each release, GitHub Actions publishes a **multi-platform** image (`linux/amd64` and `linux/arm64`):
+The Release workflow is manually dispatched on `main`; merging code does not
+publish an image or create a release. It runs its existing test gates before
+creating a version tag and publishing a `linux/amd64` image to the repository
+owner's GHCR namespace (owner normalized to lowercase):
 
 ```
-ghcr.io/telivityai/haip-api:<tag>
-ghcr.io/telivityai/haip-api:latest
+ghcr.io/su1teen/haip-api:<tag>
+ghcr.io/su1teen/haip-api:latest
 ```
 
 Pull and run (supply your own `.env.production` and Postgres/Redis/Keycloak):
 
 ```bash
-docker pull ghcr.io/telivityai/haip-api:latest
-docker run --env-file .env.production -p 3000:3000 ghcr.io/telivityai/haip-api:latest
+docker pull ghcr.io/su1teen/haip-api:<tag>
+docker run --env-file .env.production -p 3000:3000 ghcr.io/su1teen/haip-api:<tag>
 ```
 
 For the full stack (Postgres, Redis, Keycloak, migrate/seed), use the compose files above rather than a bare `docker run`.
+
+Use an immutable version tag or digest for production. Forks use their own
+owner namespace; `GITHUB_TOKEN` is not a credential for publishing into another
+organization. A successful image publication is not a production deployment
+approval. Railway source deployments have a separate trigger: if a service
+tracks `main`, it may deploy and run its configured predeploy migrations/seed
+independently of this workflow. Before an approved production release, configure
+that service's automatic deployment policy separately; this PR does not modify
+Railway. Failed publications can leave a tag/release created by the preceding
+job; inspect those artifacts before an authorized retry.
 
 ## VPS self-host (Ubuntu)
 
@@ -184,7 +197,7 @@ Minimal path for a single VM (Hetzner, DigitalOcean, Linode, AWS EC2, etc.).
 7. **Cron:** schedule night audit / group cutoffs from the host using [`scripts/cron/`](../scripts/cron/) and [`docs/operations/cron.md`](./operations/cron.md).
 8. **Backups:** nightly `pg_dump` of `DATABASE_URL` off-box (see [Database backup and restore](#database-backup-and-restore)).
 
-Alternatively, skip building on the VPS and pull the GHCR image, then run compose with an override that sets `image: ghcr.io/telivityai/haip-api:latest` for the `api` service (still need Postgres, Redis, Keycloak, and the `init` migrate step).
+Alternatively, skip building on the VPS and pull the GHCR image, then run compose with an override that sets `image: ghcr.io/su1teen/haip-api:latest` for the `api` service (still need Postgres, Redis, Keycloak, and the `init` migrate step).
 
 ## Cloud deployment options
 
@@ -195,19 +208,19 @@ These are sketches for running the **published GHCR image** (or the production c
 | Mode | What to use |
 |------|-------------|
 | **Demo** (auth off) | One-click [`render.yaml`](../render.yaml) blueprint from the README — intentionally insecure for try-out only (`HAIP_ALLOW_INSECURE=true`). |
-| **Production** | Do **not** use the demo blueprint as-is. Create a **Web Service** from `ghcr.io/telivityai/haip-api:<tag>` (or Dockerfile), attach **managed Postgres** + **Redis**, set `AUTH_ENABLED=true`, `NODE_ENV=production`, real Stripe keys, `CONNECT_API_KEY`, and `CORS_ORIGINS`. Run Keycloak as a separate private service (or external IdP) and never set `HAIP_ALLOW_INSECURE`. Run migrate via a one-off job (`node packages/database/dist/push-schema.js`) before switching traffic. |
+| **Production** | Do **not** use the demo blueprint as-is. Create a **Web Service** from `ghcr.io/su1teen/haip-api:<tag>` (or Dockerfile), attach **managed Postgres** + **Redis**, set `AUTH_ENABLED=true`, `NODE_ENV=production`, real Stripe keys, `CONNECT_API_KEY`, and `CORS_ORIGINS`. Run Keycloak as a separate private service (or external IdP) and never set `HAIP_ALLOW_INSECURE`. Run migrate via a one-off job (`node packages/database/dist/push-schema.js`) before switching traffic. |
 
 ### Railway
 
 1. Create a project with **Postgres** and **Redis** plugins; copy their connection URLs into service variables.
-2. Deploy the API from the GitHub repo (Railway builds [`apps/api/Dockerfile`](../apps/api/Dockerfile)) **or** deploy from `ghcr.io/telivityai/haip-api:<tag>`.
+2. Deploy the API from the GitHub repo (Railway builds [`apps/api/Dockerfile`](../apps/api/Dockerfile)) **or** deploy from `ghcr.io/su1teen/haip-api:<tag>`.
 3. Set production env vars from [`.env.production.example`](../.env.production.example): `AUTH_ENABLED=true`, `NODE_ENV=production`, Stripe, `CONNECT_API_KEY`, Keycloak URL/realm/client, `SERVE_DASHBOARD=true`, `SERVE_BOOKING=true`.
 4. Add Keycloak as another Railway service (or point at an external realm). Restrict public networking to the API only.
 5. Run schema migration once (Railway one-off / release command) before serving traffic.
 
 ### AWS
 
-Typical pattern: **ECS Fargate** (or EC2 + Docker) for `ghcr.io/telivityai/haip-api`, **RDS Postgres**, **ElastiCache Redis**, and Keycloak on ECS or a managed OIDC provider.
+Typical pattern: **ECS Fargate** (or EC2 + Docker) for `ghcr.io/su1teen/haip-api`, **RDS Postgres**, **ElastiCache Redis**, and Keycloak on ECS or a managed OIDC provider.
 
 1. Push/pull the multi-arch GHCR image into the account (or mirror to ECR).
 2. Task definition: port `3000`, secrets from SSM/Secrets Manager for `DATABASE_URL`, `REDIS_URL`, Stripe, Connect keys.
@@ -219,7 +232,7 @@ Typical pattern: **ECS Fargate** (or EC2 + Docker) for `ghcr.io/telivityai/haip-
 
 Typical pattern: **Cloud Run** for the API image, **Cloud SQL (Postgres)**, **Memorystore (Redis)**, Keycloak on Cloud Run/GKE or external OIDC.
 
-1. Deploy `ghcr.io/telivityai/haip-api:<tag>` to Cloud Run (allow unauthenticated only if a proxy/IAP sits in front; otherwise keep the service private and expose via HTTPS load balancer).
+1. Deploy `ghcr.io/su1teen/haip-api:<tag>` to Cloud Run (allow unauthenticated only if a proxy/IAP sits in front; otherwise keep the service private and expose via HTTPS load balancer).
 2. Wire `DATABASE_URL` / `REDIS_URL` via Secret Manager; set `AUTH_ENABLED=true` and the rest of the production env table above.
 3. Cloud Run min instances ≥ 1 if you need warm WebSocket / cron targets.
 4. Run migrate from Cloud Run Jobs (same `push-schema` entrypoint) on deploy.
