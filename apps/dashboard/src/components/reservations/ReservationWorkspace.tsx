@@ -154,6 +154,7 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
             {guestId && hasPermission('guests.read') && <button className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={viewGuest}>{t('guestQuickView.title')}</button>}
             {mode === 'drawer' && <button className="flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold" onClick={() => go('/reservations/' + reservationId)}><ExternalLink size={14}/>{t('reservationWorkspace.fullPage')}</button>}
             {actions}
+            {hasPermission('ops.manage') && <button className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={() => go('/operations?tab=tasks&action=create-task&reservationId=' + reservationId)}>{i18n.language.startsWith('ru') ? 'Создать задачу' : 'Create task'}</button>}
             {hasPermission('folios.read') && <button className="rounded-lg bg-telivity-teal px-3 py-2 text-sm font-semibold text-white" onClick={() => go(`/folios?reservationId=${reservation.id}`)}>{t('reservations.viewFolio')}</button>}
             {hasPermission('frontdesk.access') && <button className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={() => go('/front-desk?reservationId=' + reservationId)}>{t('workspace.frontdesk')}</button>}
           </div>
