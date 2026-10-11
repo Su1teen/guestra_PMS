@@ -274,7 +274,13 @@ describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
             VALUES (${propertyId},${room!['id']},'checkout','2026-10-01',${sql.json(attachments)}) RETURNING id`;
           const [request] = await sql`INSERT INTO service_requests (property_id,room_id,type,title,linked_task_id)
             VALUES (${propertyId},${room!['id']},'checkout','Synthetic request',${task!['id']}) RETURNING id`;
+          const [staffUser] = await sql`INSERT INTO users(email,name,status) VALUES ('synthetic-shift@example.invalid','Fixture','active') RETURNING id`;
+          const [legacyShift] = await sql`INSERT INTO staff_shifts(property_id,user_id,start_at,end_at,status,notes,idempotency_key,request_fingerprint)
+            VALUES (${propertyId},${staffUser!['id']},'2027-01-01T09:00Z','2027-01-01T18:00Z','confirmed','Preserve','legacy-shift-key','original') RETURNING id`;
           await runAllMigrations(databaseUrl, { migrationsDir: MIGRATIONS_DIR });
+          expect(await sql`SELECT kind,absence_type,status,notes,idempotency_key,request_fingerprint FROM staff_shifts WHERE id=${legacyShift!['id']}`)
+            .toEqual([{kind:'shift',absence_type:null,status:'confirmed',notes:'Preserve',idempotency_key:'legacy-shift-key',request_fingerprint:'original'}]);
+          expect(await sql`SELECT * FROM staff_shift_templates WHERE property_id=${propertyId}`).toEqual([]);
           expect(await sql`SELECT revision,comments,attachments,blocks_inventory,return_to_service_required FROM maintenance_tickets WHERE id=${ticket!['id']}`)
             .toEqual([{ revision: 1, comments, attachments, blocks_inventory: true, return_to_service_required: true }]);
           expect(await sql`SELECT attachments FROM housekeeping_tasks WHERE id=${task!['id']}`).toEqual([{ attachments }]);

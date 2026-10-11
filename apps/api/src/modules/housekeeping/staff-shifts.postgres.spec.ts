@@ -14,6 +14,7 @@ import { eq, and, inArray } from 'drizzle-orm';
 import {
   properties,
   staffShifts,
+  staffShiftTemplates,
   users,
   roles,
   userRoles,
@@ -147,6 +148,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         auditLogs,
         housekeepingTasks,
         staffShifts,
+        staffShiftTemplates,
       ])
         await db
           .delete(t)
@@ -158,6 +160,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         auditLogs,
         housekeepingTasks,
         staffShifts,
+        staffShiftTemplates,
         rooms,
         roomTypes,
         userRoles,
@@ -174,6 +177,277 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         .delete(properties)
         .where(inArray(properties.id, [ids.property, ids.other]));
       await client.end();
+    });
+    const templateDto = (extra: any = {}) => ({
+      propertyId: ids.property,
+      userId: ids.user,
+      name: 'Будние дни',
+      weekdays: [0, 1, 2, 3, 4, 5, 6],
+      startTime: '09:00',
+      endTime: '18:00',
+      overnight: 0,
+      idempotencyKey: randomUUID(),
+      ...extra,
+    });
+    const applyDto = (extra: any = {}) => ({
+      propertyId: ids.property,
+      startDate: date,
+      endDate: new Date(Date.parse(date + 'T12:00Z') + 2 * 86400000)
+        .toISOString()
+        .slice(0, 10),
+      expectedRevision: 1,
+      status: 'confirmed' as const,
+      idempotencyKey: randomUUID(),
+      ...extra,
+    });
+    it('creates reusable patterns and atomically materializes explicit shifts with original replay', async () => {
+      const t = await shifts.saveTemplate(templateDto());
+      const request = applyDto();
+      const [a, b] = await Promise.all([
+        shifts.applyTemplate(t.id, request, { userId: ids.user }),
+        shifts.applyTemplate(t.id, request),
+      ]);
+      expect(a).toEqual(b);
+      expect(a.generated).toHaveLength(3);
+      expect(
+        await db
+          .select()
+          .from(staffShifts)
+          .where(eq(staffShifts.propertyId, ids.property)),
+      ).toHaveLength(3);
+      expect(
+        await db
+          .select()
+          .from(domainEventOutbox)
+          .where(eq(domainEventOutbox.propertyId, ids.property)),
+      ).toHaveLength(5);
+      await expect(
+        shifts.applyTemplate(t.id, { ...request, status: 'planned' }),
+      ).rejects.toMatchObject({ status: 409 });
+    });
+    it('preserves edited exceptions and rolls back the entire generated batch on conflict or outbox failure', async () => {
+      const t = await shifts.saveTemplate(templateDto());
+      const existing = await shifts.save(dto());
+      const preview = await shifts.previewTemplate(t.id, applyDto());
+      expect(preview.canApply).toBe(false);
+      expect(preview.conflictingShiftIds).toEqual([existing.id]);
+      await expect(
+        shifts.applyTemplate(t.id, applyDto()),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(
+        await db
+          .select()
+          .from(staffShifts)
+          .where(eq(staffShifts.propertyId, ids.property)),
+      ).toHaveLength(1);
+      await db
+        .delete(staffShifts)
+        .where(eq(staffShifts.propertyId, ids.property));
+      vi.spyOn(outbox, 'persist').mockRejectedValueOnce(
+        new Error('batch durability failed'),
+      );
+      await expect(shifts.applyTemplate(t.id, applyDto())).rejects.toThrow(
+        'batch durability failed',
+      );
+      expect(
+        await db
+          .select()
+          .from(staffShifts)
+          .where(eq(staffShifts.propertyId, ids.property)),
+      ).toHaveLength(0);
+    });
+    it('rejects stale and foreign templates and fences unaccepted generation', async () => {
+      const t = await shifts.saveTemplate(templateDto());
+      await shifts.saveTemplate(templateDto({ expectedRevision: 1 }), t.id);
+      await expect(
+        shifts.applyTemplate(t.id, applyDto()),
+      ).rejects.toMatchObject({ status: 409 });
+      await expect(
+        shifts.previewTemplate(t.id, applyDto({ propertyId: ids.other })),
+      ).rejects.toMatchObject({ status: 404 });
+      const request = applyDto({ expectedRevision: 2 });
+      await shifts.closeRequest(ids.property, request.idempotencyKey);
+      await expect(shifts.applyTemplate(t.id, request)).rejects.toMatchObject({
+        response: { code: 'REQUEST_CLOSED' },
+      });
+    });
+    it('records absence in the same calendar without cancelling a shift or reassigning existing tasks', async () => {
+      await shifts.save(dto());
+      const task = await createTask();
+      await hk.assign(task.id, ids.property, { assignedTo: ids.user });
+      const request = dto({
+        kind: 'absence',
+        absenceType: 'vacation',
+        breaks: [],
+      });
+      const saved = await shifts.save(request);
+      expect(saved.kind).toBe('absence');
+      expect(await shifts.save(request)).toEqual(saved);
+      const coverage = await shifts.availability(
+        ids.property,
+        date,
+        db,
+        new Date(date + 'T10:00+05:00'),
+      );
+      expect(coverage.find((u: any) => u.id === ids.user)).toMatchObject({
+        workingNow: false,
+        available: false,
+        onLeave: true,
+        reassignmentRequired: true,
+        tasksToReview: [{ id: task.id }],
+      });
+      const [stored] = await db
+        .select()
+        .from(housekeepingTasks)
+        .where(eq(housekeepingTasks.id, task.id));
+      expect(stored.assignedTo).toBe(ids.user);
+      expect(stored.status).toBe('assigned');
+      await expect(
+        hk.assign((await createTask()).id, ids.property, {
+          assignedTo: ids.user,
+        }),
+      ).rejects.toMatchObject({ status: 409 });
+      await shifts.save(
+        {
+          ...request,
+          idempotencyKey: randomUUID(),
+          status: 'cancelled',
+          expectedRevision: 1,
+        },
+        saved.id,
+      );
+      expect(
+        (
+          await shifts.availability(
+            ids.property,
+            date,
+            db,
+            new Date(date + 'T10:00+05:00'),
+          )
+        ).find((u: any) => u.id === ids.user)?.workingNow,
+      ).toBe(true);
+    });
+    it('keeps partial absence outside remaining work and prevents direct worker start during absence', async () => {
+      await shifts.save(dto());
+      const task = await createTask();
+      await hk.assign(task.id, ids.property, { assignedTo: ids.user });
+      await shifts.save(
+        dto({
+          kind: 'absence',
+          absenceType: 'other',
+          startAt: date + 'T09:00+05:00',
+          endAt: date + 'T11:00+05:00',
+          breaks: [],
+        }),
+      );
+      expect(
+        (
+          await shifts.availability(
+            ids.property,
+            date,
+            db,
+            new Date(date + 'T10:00+05:00'),
+          )
+        ).find((u: any) => u.id === ids.user),
+      ).toMatchObject({ available: true, workingNow: false, onLeave: true });
+      expect(
+        (
+          await shifts.availability(
+            ids.property,
+            date,
+            db,
+            new Date(date + 'T14:00+05:00'),
+          )
+        ).find((u: any) => u.id === ids.user)?.workingNow,
+      ).toBe(true);
+      vi.spyOn(shifts, 'availability').mockImplementation((p, d, tx) =>
+        StaffShiftService.prototype.availability.call(
+          shifts,
+          p,
+          d,
+          tx,
+          new Date(date + 'T10:00+05:00'),
+        ),
+      );
+      await expect(
+        hk.startTask(task.id, ids.property, ids.user),
+      ).rejects.toMatchObject({ response: { code: 'OUTSIDE_WORKING_SHIFT' } });
+      const [absence] = await db
+        .select()
+        .from(staffShifts)
+        .where(eq(staffShifts.kind, 'absence'));
+      await shifts.save(
+        dto({
+          kind: 'absence',
+          absenceType: 'other',
+          startAt: date + 'T09:00+05:00',
+          endAt: date + 'T11:00+05:00',
+          breaks: [],
+          status: 'cancelled',
+          expectedRevision: 1,
+        }),
+        absence!.id,
+      );
+      expect((await hk.startTask(task.id, ids.property, ids.user)).status).toBe(
+        'in_progress',
+      );
+    });
+    it('serializes absence with task assignment and exposes any existing assignment for review', async () => {
+      await shifts.save(dto());
+      const task = await createTask();
+      const outcomes = await Promise.allSettled([
+        shifts.save(
+          dto({ kind: 'absence', absenceType: 'vacation', breaks: [] }),
+        ),
+        hk.assign(task.id, ids.property, { assignedTo: ids.user }),
+      ]);
+      expect(outcomes[0].status).toBe('fulfilled');
+      const [stored] = await db
+        .select()
+        .from(housekeepingTasks)
+        .where(eq(housekeepingTasks.id, task.id));
+      const person = (
+        await shifts.availability(
+          ids.property,
+          date,
+          db,
+          new Date(date + 'T10:00+05:00'),
+        )
+      ).find((u: any) => u.id === ids.user);
+      expect(person.available).toBe(false);
+      if (outcomes[1].status === 'fulfilled') {
+        expect(stored.assignedTo).toBe(ids.user);
+        expect(person.reassignmentRequired).toBe(true);
+      } else {
+        expect(stored.assignedTo).toBeNull();
+      }
+    });
+    it('supports multi-day absence, preserves kind and limits worker visibility to own facts', async () => {
+      const end = new Date(
+        Date.parse(date + 'T00:00Z') + 14 * 86400000,
+      ).toISOString();
+      const a = await shifts.save(
+        dto({
+          kind: 'absence',
+          absenceType: 'sickness',
+          breaks: [],
+          endAt: end,
+        }),
+      );
+      expect(
+        await shifts.list(ids.property, date + 'T00:00Z', end, ids.second),
+      ).toEqual([]);
+      expect(
+        (await shifts.list(ids.property, date + 'T00:00Z', end, ids.user))[0],
+      ).toMatchObject({ id: a.id, kind: 'absence' });
+      await expect(
+        shifts.save(dto({ expectedRevision: 1 }), a.id),
+      ).rejects.toMatchObject({ status: 409 });
+      await expect(
+        shifts.save(
+          dto({ kind: 'absence', breaks: [], absenceType: undefined }),
+        ),
+      ).rejects.toMatchObject({ status: 400 });
     });
     it('replays the original accepted revision, with one shift and durable event', async () => {
       const request = dto();

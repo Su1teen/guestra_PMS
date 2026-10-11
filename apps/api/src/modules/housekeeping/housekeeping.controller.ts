@@ -28,7 +28,7 @@ import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
 import { PermissionsService } from '../auth/permissions.service';
 import { ConfigService } from '@nestjs/config';
 import { StaffShiftService } from './staff-shift.service';
-import { StaffShiftDto, StaffShiftRequestDto } from './dto/staff-shift.dto';
+import { StaffShiftDto, StaffShiftRequestDto, StaffShiftTemplateDto, ApplyShiftTemplateDto } from './dto/staff-shift.dto';
 import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
 import { isUUID } from 'class-validator';
 
@@ -103,6 +103,27 @@ export class HousekeepingController {
     @Query('serviceDate') date: string,
   ) {
     return this.shifts.availability(propertyId, date);
+  }
+  @Get('/shift-templates')
+  @RequirePermissions('housekeeping.manage')
+  templates(@Query('propertyId',ParseUUIDPipe) propertyId:string) { return this.shifts.templates(propertyId); }
+  @Post('/shift-templates')
+  @RequirePermissions('housekeeping.manage')
+  async createTemplate(@Body() dto:StaffShiftTemplateDto,@AuditActorCtx() actor:AuditActor,@CurrentUser() user?:AuthUser) {
+    const worker=await this.executor(dto.propertyId,user);return this.shifts.saveTemplate(dto,undefined,{...actor,userId:worker.id});
+  }
+  @Patch('/shift-templates/:id')
+  @RequirePermissions('housekeeping.manage')
+  async updateTemplate(@Param('id',ParseUUIDPipe) id:string,@Body() dto:StaffShiftTemplateDto,@AuditActorCtx() actor:AuditActor,@CurrentUser() user?:AuthUser) {
+    const worker=await this.executor(dto.propertyId,user);return this.shifts.saveTemplate(dto,id,{...actor,userId:worker.id});
+  }
+  @Post('/shift-templates/:id/preview')
+  @RequirePermissions('housekeeping.manage')
+  previewTemplate(@Param('id',ParseUUIDPipe) id:string,@Body() dto:ApplyShiftTemplateDto) {return this.shifts.previewTemplate(id,dto);}
+  @Post('/shift-templates/:id/apply')
+  @RequirePermissions('housekeeping.manage')
+  async applyTemplate(@Param('id',ParseUUIDPipe) id:string,@Body() dto:ApplyShiftTemplateDto,@AuditActorCtx() actor:AuditActor,@CurrentUser() user?:AuthUser) {
+    const worker=await this.executor(dto.propertyId,user);return this.shifts.applyTemplate(id,dto,{...actor,userId:worker.id});
   }
   @Get('/shifts')
   @RequirePermissions('housekeeping.read')

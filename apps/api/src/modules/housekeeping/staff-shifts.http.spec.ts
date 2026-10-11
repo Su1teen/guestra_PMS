@@ -18,6 +18,10 @@ describe('Staff shift and worker HTTP permissions', () => {
   let app: INestApplication;
   let granted: string[];
   const shift = {
+    templates: vi.fn().mockResolvedValue([]),
+    saveTemplate: vi.fn().mockResolvedValue({ id: ID }),
+    previewTemplate: vi.fn().mockResolvedValue({ canApply: true }),
+    applyTemplate: vi.fn().mockResolvedValue({ id: ID }),
     save: vi.fn().mockResolvedValue({ id: ID }),
     list: vi.fn().mockResolvedValue([]),
     staff: vi.fn().mockResolvedValue([]),
@@ -80,6 +84,71 @@ describe('Staff shift and worker HTTP permissions', () => {
     status: 'confirmed',
     breaks: [],
     idempotencyKey: 'shift-key',
+  });
+  it('protects recurring templates and application by manager and property scope', async () => {
+    const template = {
+      propertyId: P,
+      userId: U,
+      name: 'Будни',
+      weekdays: [1, 2, 3, 4, 5],
+      startTime: '09:00',
+      endTime: '18:00',
+      overnight: 0,
+      idempotencyKey: 'template-key',
+    };
+    await request(app.getHttpServer())
+      .get('/housekeeping/shift-templates')
+      .query({ propertyId: P })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post('/housekeeping/shift-templates')
+      .send(template)
+      .expect(403);
+    granted = ['housekeeping.manage'];
+    await request(app.getHttpServer())
+      .post('/housekeeping/shift-templates')
+      .send({ ...template, propertyId: O })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post('/housekeeping/shift-templates')
+      .send(template)
+      .expect(201);
+    const apply = {
+      propertyId: P,
+      startDate: '2027-01-01',
+      endDate: '2027-01-07',
+      status: 'planned',
+      expectedRevision: 1,
+      idempotencyKey: 'apply-key',
+    };
+    await request(app.getHttpServer())
+      .post('/housekeeping/shift-templates/' + ID + '/apply')
+      .send({ ...apply, propertyId: O })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post('/housekeeping/shift-templates/' + ID + '/apply')
+      .send(apply)
+      .expect(201);
+    expect(shift.applyTemplate).toHaveBeenCalledWith(
+      ID,
+      apply,
+      expect.objectContaining({ userId: U }),
+    );
+  });
+  it('accepts a validated absence through the existing shift endpoint and rejects invented policy fields', async () => {
+    granted = ['housekeeping.manage'];
+    await request(app.getHttpServer())
+      .post('/housekeeping/shifts')
+      .send({ ...body(), kind: 'absence', absenceType: 'vacation' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/housekeeping/shifts')
+      .send({ ...body(), kind: 'absence', absenceType: 'unapproved' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/housekeeping/shifts')
+      .send({ ...body(), payroll: true })
+      .expect(400);
   });
   it('denies worker shift writes and foreign-property reads', async () => {
     await request(app.getHttpServer())
