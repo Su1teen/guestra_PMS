@@ -82,7 +82,9 @@ export function createRegressionDatabaseHelpers(connectionTemplate: string) {
     },
   ): Buffer | undefined {
     try {
-      return execFileSync(command, args, {
+      const useNodePnpm = command === 'pnpm' && process.platform === 'win32' && options.env['npm_execpath'];
+      return execFileSync(useNodePnpm ? process.execPath : command,
+        useNodePnpm ? [options.env['npm_execpath']!, ...args] : args, {
         env: options.env,
         cwd: options.cwd,
         stdio: 'pipe',

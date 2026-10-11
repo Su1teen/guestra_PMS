@@ -12,7 +12,7 @@ SET name = 'ЛЕС Боровое',
     default_language = 'ru',
     settings = jsonb_set(
       jsonb_set(
-        jsonb_set(coalesce(settings, '{}'::jsonb), '{earlyCheckInFee}', '22500'::jsonb, true),
+        jsonb_set(CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END, '{earlyCheckInFee}', '22500'::jsonb, true),
         '{lateCheckoutFee}', '33750'::jsonb, true
       ),
       '{noShowFeeAmount}', '75000'::jsonb, true
