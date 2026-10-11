@@ -169,7 +169,7 @@ export class ReportsService {
     // Adjustments (reversals)
     const [adjResult] = await this.db
       .select({
-        total: sql<string>`coalesce(sum(abs(${charges.amount}::numeric)), 0)`,
+        total: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
       })
       .from(charges)
       .where(
