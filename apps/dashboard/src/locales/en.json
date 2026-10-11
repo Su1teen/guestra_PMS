@@ -623,6 +623,13 @@
       "laundry": "Laundry",
       "minibar": "Minibar",
       "other": "Other",
+      "spa": "Spa",
+      "phone": "Phone",
+      "tax": "Tax",
+      "incidental": "Incidental service",
+      "fee": "Fee",
+      "adjustment": "Adjustment",
+      "package": "Package",
       "parking": "Parking",
       "room": "Room"
     },
