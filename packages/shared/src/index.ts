@@ -191,6 +191,7 @@ export const WEBHOOK_EVENTS = {
   'service_booking.cancelled': 'service_booking.cancelled',
   'service_booking.completed': 'service_booking.completed',
   'service_resource.created': 'service_resource.created',
+  'service_resource.updated': 'service_resource.updated',
   'service_resource.blocked': 'service_resource.blocked',
   'service_resource.unblocked': 'service_resource.unblocked',
   'service_request.created': 'service_request.created',

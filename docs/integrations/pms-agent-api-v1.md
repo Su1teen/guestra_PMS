@@ -33,6 +33,10 @@ For read-only service credentials use scopes `["pms:scoped:v1", "services.read"]
 
 The staff UI uses `/api/v1/services/*`, JWT/property/RBAC guards, and the same `ConnectServiceBookingService`. Its `GET /booking-request?propertyId=&idempotencyKey=` recovers a committed booking after an uncertain response. A 404 is not proof that an in-flight request cannot later commit: retry only the original payload with its original key. Staff detail hides the folio's full balance/payments; those require the separate folio permission.
 
+The staff recovery banner persists only the random request key per actor/property in session storage, never a customer or financial payload. `POST /booking-request/close` accepts `propertyId` and the **original** `idempotencyKey`. It serializes with creation: an accepted request returns `{status:"committed",serviceBookingId}` unchanged; an unaccepted request returns `{status:"closed"}` and fences any late POST with `SERVICE_REQUEST_CLOSED`. A missing GET alone never permits abandoning an in-flight request.
+
+`GET /resources/:id/slots?propertyId=&startAt=&endAt=` provides a single-day, consistent capacity snapshot, including frozen buffers, working windows and blocks. It is not a hold. `PATCH /resources/:id` requires `services.manage`, a new operation key and `expectedUpdatedAt`. Capacity/hours/deactivation cannot invalidate future scheduled bookings; existing allocation buffers stay frozen. `GET /bookings?propertyId=&reservationId=` requires services/reservation read access and exposes scheduled stay extras separately from existing package/stay-service rows.
+
 Domain events retain existing `service_booking.created`, `service_booking.rescheduled`, `service_booking.cancelled`, `service_booking.completed` names. Charge events and lifecycle events use the existing transactional outbox, stable logical event IDs, HMAC delivery/retry and audit storage. Consumers deduplicate by logical event ID. Public booking detail excludes allocation IDs, internal notes, integration context and idempotency fingerprints.
 
 ```sh

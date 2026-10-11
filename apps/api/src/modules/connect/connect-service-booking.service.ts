@@ -8,12 +8,12 @@ import { FolioService } from '../folio/folio.service';
 import { TaxService } from '../tax/tax.service';
 import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 import type { AgentServiceAvailabilityDto, AgentServiceBookDto } from './dto/agent-service.dto';
-import type { ServiceBlockDto, ServiceChangeDto, ServiceStatusDto, ServiceMutationDto, ServiceResourceDto } from './dto/service-operations.dto';
+import type { ServiceBlockDto, ServiceChangeDto, ServiceStatusDto, ServiceMutationDto, ServiceResourceDto, ServiceResourceUpdateDto } from './dto/service-operations.dto';
 import { peakAllocatedUnits, stableServicePayload } from './service-capacity';
 import { fitsServiceSchedule, serviceInterval, validateServiceSchedule } from './service-schedule';
 
 const failure = (code: string, message: string) => ({ code, message });
-type ServiceOperationEvent = 'service_booking.rescheduled' | 'service_booking.cancelled' | 'service_booking.completed' | 'service_resource.created' | 'service_resource.blocked' | 'service_resource.unblocked';
+type ServiceOperationEvent = 'service_booking.rescheduled' | 'service_booking.cancelled' | 'service_booking.completed' | 'service_resource.created' | 'service_resource.updated' | 'service_resource.blocked' | 'service_resource.unblocked';
 
 @Injectable()
 export class ConnectServiceBookingService {
@@ -102,7 +102,8 @@ export class ConnectServiceBookingService {
     const { idempotencyKey: _legacyKey, ...legacy } = dto;
     const committed = await this.db.transaction(async (tx: any) => {
       await this.lockKey(tx, dto.propertyId, dto.idempotencyKey);
-      const [otherOperation] = await tx.select({ id: serviceOperations.id }).from(serviceOperations).where(and(eq(serviceOperations.propertyId, dto.propertyId), eq(serviceOperations.idempotencyKey, dto.idempotencyKey)));
+      const [otherOperation] = await tx.select().from(serviceOperations).where(and(eq(serviceOperations.propertyId, dto.propertyId), eq(serviceOperations.idempotencyKey, dto.idempotencyKey)));
+      if (otherOperation?.fingerprint === 'service_booking.request_closed:v1') throw new ConflictException(failure('SERVICE_REQUEST_CLOSED', 'Исходный запрос закрыт без создания записи. Проверьте время и создайте новый запрос.'));
       if (otherOperation) throw new ConflictException(failure('IDEMPOTENCY_CONFLICT', 'Ключ запроса уже использован для другого действия.'));
       const [existing] = await tx.select().from(serviceBookings).where(and(eq(serviceBookings.propertyId, dto.propertyId), eq(serviceBookings.idempotencyKey, dto.idempotencyKey)));
       if (existing) {
@@ -176,10 +177,33 @@ export class ConnectServiceBookingService {
     return this.get(booking.id, propertyId);
   }
 
+  /** Close an unaccepted attempt under the same lock as creation: a late request cannot commit afterwards. */
+  async closeRequest(dto: ServiceMutationDto) {
+    return this.db.transaction(async (tx: any) => {
+      await this.lockKey(tx, dto.propertyId, dto.idempotencyKey);
+      const [booking] = await tx.select({ id: serviceBookings.id }).from(serviceBookings).where(and(eq(serviceBookings.propertyId, dto.propertyId), eq(serviceBookings.idempotencyKey, dto.idempotencyKey)));
+      if (booking) return { status: 'committed', serviceBookingId: booking.id };
+      const fingerprint = 'service_booking.request_closed:v1';
+      const [receipt] = await tx.select().from(serviceOperations).where(and(eq(serviceOperations.propertyId, dto.propertyId), eq(serviceOperations.idempotencyKey, dto.idempotencyKey)));
+      if (receipt && receipt.fingerprint !== fingerprint) throw new ConflictException(failure('IDEMPOTENCY_CONFLICT', 'Ключ запроса уже использован для другого действия.'));
+      if (!receipt) await tx.insert(serviceOperations).values({ propertyId: dto.propertyId, idempotencyKey: dto.idempotencyKey, fingerprint, response: { status: 'closed' } });
+      return { status: 'closed' };
+    });
+  }
+
   async publicDetail(id: string, propertyId: string) {
     const b = await this.get(id, propertyId);
     return { serviceBookingId: b.id, serviceId: b.serviceId, guestId: b.guestId, reservationId: b.reservationId, status: b.status, revision: b.revision,
       startAt: b.startAt, endAt: b.endAt, participants: b.participants, quantity: b.quantity, totalAmount: b.totalAmount, currencyCode: b.currencyCode, folioId: b.folioId };
+  }
+
+  async forReservation(propertyId: string, reservationId: string) {
+    const [stay] = await this.db.select({ id: reservations.id }).from(reservations).where(and(eq(reservations.id, reservationId), eq(reservations.propertyId, propertyId)));
+    if (!stay) throw new NotFoundException(failure('RESERVATION_NOT_FOUND', 'Проживание не найдено в этом объекте.'));
+    const rows = await this.db.select({ booking: serviceBookings, name: services.name }).from(serviceBookings)
+      .innerJoin(services, and(eq(services.id, serviceBookings.serviceId), eq(services.propertyId, propertyId)))
+      .where(and(eq(serviceBookings.propertyId, propertyId), eq(serviceBookings.reservationId, reservationId))).orderBy(asc(serviceBookings.startAt));
+    return rows.map((r: any) => { const { integrationContext: _context, idempotencyKey: _key, ...booking } = r.booking; return { ...booking, name: r.name }; });
   }
 
   async previewChange(id: string, dto: ServiceChangeDto) {
@@ -205,7 +229,36 @@ export class ConnectServiceBookingService {
       const allocations = ids.length ? await tx.select().from(serviceResourceAllocations).where(and(eq(serviceResourceAllocations.propertyId, propertyId), inArray(serviceResourceAllocations.serviceBookingId, ids))) : [];
       const blocks = await tx.select().from(serviceResourceBlocks).where(and(eq(serviceResourceBlocks.propertyId, propertyId), lt(serviceResourceBlocks.startAt, end), gt(serviceResourceBlocks.endAt, start)));
       return { complete: true, startAt: start.toISOString(), endAt: end.toISOString(), services: catalog, resources, allocations, blocks,
-        bookings: booked.map((r: any) => { const { integrationContext: _private, ...booking } = r.booking; return { ...booking, guestName: [r.guestFirstName, r.guestLastName].filter(Boolean).join(' ') }; }) };
+        bookings: booked.map((r: any) => { const { integrationContext: _private, idempotencyKey: _privateKey, ...booking } = r.booking; return { ...booking, guestName: [r.guestFirstName, r.guestLastName].filter(Boolean).join(' ') }; }) };
+    }, { isolationLevel: 'repeatable read', readOnly: true });
+  }
+
+  async resourceSlots(id: string, propertyId: string, startAt: string, endAt: string) {
+    const { start, end } = serviceInterval(startAt, endAt, 2);
+    if (end.getTime() - start.getTime() > 25 * 3600000) throw new BadRequestException(failure('INVALID_INTERVAL', 'Выберите один день для просмотра интервалов.'));
+    return this.db.transaction(async (tx: any) => {
+      const [resource] = await tx.select().from(serviceResources).where(and(eq(serviceResources.id, id), eq(serviceResources.propertyId, propertyId)));
+      if (!resource) throw new NotFoundException(failure('RESOURCE_NOT_FOUND', 'Ресурс не найден.'));
+      const service = await this.service(tx, propertyId, resource.serviceId);
+      if (!service.durationMinutes) throw new BadRequestException(failure('INVALID_DURATION', 'Настройте продолжительность услуги.'));
+      const from = new Date(start.getTime() - resource.bufferBeforeMinutes * 60000);
+      const to = new Date(end.getTime() + resource.bufferAfterMinutes * 60000);
+      const begin = sql<Date>`coalesce(${serviceResourceAllocations.startAt}, ${serviceBookings.startAt})`;
+      const finish = sql<Date>`coalesce(${serviceResourceAllocations.endAt}, ${serviceBookings.endAt})`;
+      const rows = await tx.select({ startAt: begin, endAt: finish, units: serviceResourceAllocations.units }).from(serviceResourceAllocations)
+        .innerJoin(serviceBookings, and(eq(serviceBookings.id, serviceResourceAllocations.serviceBookingId), eq(serviceBookings.propertyId, propertyId)))
+        .where(and(eq(serviceResourceAllocations.propertyId, propertyId), eq(serviceResourceAllocations.resourceId, id), notInArray(serviceBookings.status, ['cancelled']), lt(begin, to.toISOString()), gt(finish, from.toISOString())));
+      const occupied = rows.map((r: any) => ({ ...r, startAt: new Date(r.startAt), endAt: new Date(r.endAt) }));
+      const blocks = await tx.select().from(serviceResourceBlocks).where(and(eq(serviceResourceBlocks.propertyId, propertyId), eq(serviceResourceBlocks.resourceId, id), lt(serviceResourceBlocks.startAt, to), gt(serviceResourceBlocks.endAt, from)));
+      const slots = [];
+      for (let at = start.getTime(); at + service.durationMinutes * 60000 <= end.getTime(); at += 30 * 60000) {
+        const slotEnd = at + service.durationMinutes * 60000;
+        const bufferedStart = new Date(at - resource.bufferBeforeMinutes * 60000); const bufferedEnd = new Date(slotEnd + resource.bufferAfterMinutes * 60000);
+        const blocked = blocks.some((b: any) => b.startAt < bufferedEnd && b.endAt > bufferedStart);
+        const open = resource.isActive && service.isActive && service.agentBookingMode === 'live_booking' && fitsServiceSchedule(resource.schedule, bufferedStart, bufferedEnd) && !blocked;
+        slots.push({ startAt: new Date(at).toISOString(), endAt: new Date(slotEnd).toISOString(), availableUnits: open ? Math.max(0, resource.capacity - peakAllocatedUnits(bufferedStart, bufferedEnd, occupied)) : 0 });
+      }
+      return { resourceId: id, capacity: resource.capacity, durationMinutes: service.durationMinutes, checkedAt: new Date().toISOString(), slots };
     }, { isolationLevel: 'repeatable read', readOnly: true });
   }
 
@@ -275,6 +328,35 @@ export class ConnectServiceBookingService {
       if (duplicate) throw new ConflictException(failure('RESOURCE_CODE_EXISTS', 'Ресурс с таким кодом уже существует.'));
       const [row] = await tx.insert(serviceResources).values({ propertyId: dto.propertyId, serviceId: dto.serviceId, code: dto.code, name: dto.name, capacity: dto.capacity,
         bufferBeforeMinutes: dto.bufferBeforeMinutes ?? 0, bufferAfterMinutes: dto.bufferAfterMinutes ?? 0, schedule, isActive: dto.isActive ?? true }).returning();
+      return row;
+    });
+  }
+
+  async updateResource(id: string, dto: ServiceResourceUpdateDto) {
+    const schedule = validateServiceSchedule(dto.schedule);
+    return this.mutation(dto, 'service_resource.updated', id, async tx => {
+      await this.lockServiceResources(tx, dto.propertyId, dto.serviceId);
+      const [current] = await tx.select().from(serviceResources).where(and(eq(serviceResources.propertyId, dto.propertyId), eq(serviceResources.id, id), eq(serviceResources.serviceId, dto.serviceId)));
+      if (!current) throw new NotFoundException(failure('RESOURCE_NOT_FOUND', 'Ресурс не найден.'));
+      if (current.updatedAt.getTime() !== Date.parse(dto.expectedUpdatedAt)) throw new ConflictException(failure('STALE_REVISION', 'Ресурс изменился. Обновите настройки.'));
+      const [duplicate] = await tx.select({ id: serviceResources.id }).from(serviceResources).where(and(eq(serviceResources.propertyId, dto.propertyId), eq(serviceResources.serviceId, dto.serviceId), eq(serviceResources.code, dto.code), ne(serviceResources.id, id)));
+      if (duplicate) throw new ConflictException(failure('RESOURCE_CODE_EXISTS', 'Ресурс с таким кодом уже существует.'));
+      const begin = sql<Date>`coalesce(${serviceResourceAllocations.startAt}, ${serviceBookings.startAt})`;
+      const finish = sql<Date>`coalesce(${serviceResourceAllocations.endAt}, ${serviceBookings.endAt})`;
+      const rows = await tx.select({ startAt: begin, endAt: finish, units: serviceResourceAllocations.units }).from(serviceResourceAllocations)
+        .innerJoin(serviceBookings, and(eq(serviceBookings.id, serviceResourceAllocations.serviceBookingId), eq(serviceBookings.propertyId, dto.propertyId)))
+        .where(and(eq(serviceResourceAllocations.propertyId, dto.propertyId), eq(serviceResourceAllocations.resourceId, id), eq(serviceBookings.status, 'scheduled'), gt(finish, new Date().toISOString())));
+      const intervals = rows.map((r: any) => ({ ...r, startAt: new Date(r.startAt), endAt: new Date(r.endAt) }));
+      if (intervals.length) {
+        const start = new Date(intervals.reduce((value: number, r: any) => Math.min(value, r.startAt.getTime()), Infinity));
+        const end = new Date(intervals.reduce((value: number, r: any) => Math.max(value, r.endAt.getTime()), -Infinity));
+        if (dto.isActive === false || peakAllocatedUnits(start, end, intervals) > dto.capacity || intervals.some((r: any) => !fitsServiceSchedule(schedule, r.startAt, r.endAt)))
+          throw new ConflictException(failure('RESOURCE_HAS_BOOKINGS', 'Настройки нарушают принятые записи. Сначала перенесите их на другой ресурс.'));
+      }
+      // Buffers are frozen on each accepted allocation; edited buffers apply only to new scheduling decisions.
+      const [row] = await tx.update(serviceResources).set({ code: dto.code, name: dto.name, capacity: dto.capacity, schedule,
+        bufferBeforeMinutes: dto.bufferBeforeMinutes ?? 0, bufferAfterMinutes: dto.bufferAfterMinutes ?? 0, isActive: dto.isActive ?? current.isActive,
+        updatedAt: new Date(Math.max(Date.now(), current.updatedAt.getTime() + 1)) }).where(and(eq(serviceResources.id, id), eq(serviceResources.propertyId, dto.propertyId))).returning();
       return row;
     });
   }

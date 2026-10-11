@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { and, eq } from 'drizzle-orm';
-import { auditLogs, charges, domainEventOutbox, folios, guestPropertyLinks, guests, integrationLinks, properties, reservations, serviceBookings, serviceOperations, serviceResourceAllocations, serviceResourceBlocks, serviceResources, services, taxProfiles, taxRules } from '@telivityhaip/database';
+import { auditLogs, bookings, charges, domainEventOutbox, folios, guestPropertyLinks, guests, integrationLinks, properties, ratePlans, reservations, roomTypes, serviceBookings, serviceOperations, serviceResourceAllocations, serviceResourceBlocks, serviceResources, services, taxProfiles, taxRules } from '@telivityhaip/database';
 import { ConnectServiceBookingService } from './connect-service-booking.service';
 import { FolioService } from '../folio/folio.service';
 import { TaxService } from '../tax/tax.service';
@@ -70,6 +70,30 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Service operations on PostgreSQ
     expect((results.find(r => r.status === 'rejected') as PromiseRejectedResult).reason.response.code).toBe('RESOURCE_CONFLICT');
     expect(await db.select().from(charges).where(eq(charges.propertyId, ids.property))).toHaveLength(1);
   });
+  it('permanently closes an unaccepted attempt and refuses any late create without financial side effects', async () => {
+    const idempotencyKey = randomUUID(); const dto = { propertyId: ids.property, idempotencyKey };
+    expect(await service.closeRequest(dto)).toEqual({ status: 'closed' });
+    expect(await service.closeRequest(dto)).toEqual({ status: 'closed' });
+    await expect(book({ idempotencyKey })).rejects.toMatchObject({ response: { code: 'SERVICE_REQUEST_CLOSED' } });
+    for (const table of [serviceBookings, charges, folios]) expect(await db.select().from(table).where(eq(table.propertyId, ids.property))).toHaveLength(0);
+    const other = await service.closeRequest({ ...dto, propertyId: ids.other }); expect(other.status).toBe('closed');
+    await db.delete(serviceOperations).where(eq(serviceOperations.propertyId, ids.other));
+  });
+  it('serializes create versus closure and recovers committed bookings without cancelling them', async () => {
+    const idempotencyKey = randomUUID();
+    const [create, close] = await Promise.allSettled([book({ idempotencyKey }), service.closeRequest({ propertyId: ids.property, idempotencyKey })]);
+    expect(close.status).toBe('fulfilled');
+    if (create.status === 'fulfilled') {
+      expect((close as PromiseFulfilledResult<any>).value).toEqual({ status: 'committed', serviceBookingId: create.value.serviceBookingId });
+      expect(await service.closeRequest({ propertyId: ids.property, idempotencyKey })).toEqual({ status: 'committed', serviceBookingId: create.value.serviceBookingId });
+      expect((await service.get(create.value.serviceBookingId, ids.property)).status).toBe('scheduled');
+      expect(await db.select().from(charges).where(eq(charges.propertyId, ids.property))).toHaveLength(1);
+    } else {
+      expect(create.reason.response.code).toBe('SERVICE_REQUEST_CLOSED');
+      expect((close as PromiseFulfilledResult<any>).value.status).toBe('closed');
+      expect(await db.select().from(charges).where(eq(charges.propertyId, ids.property))).toHaveLength(0);
+    }
+  });
   it('preserves preparation buffers and allows a genuinely adjacent free interval', async () => {
     await db.update(serviceResources).set({ bufferAfterMinutes: 15 }).where(eq(serviceResources.id, ids.resource)); await book();
     expect((await service.availability({ ...input, startAt: '2027-01-01T10:00:00Z', endAt: '2027-01-01T11:00:00Z' })).available).toBe(false);
@@ -87,12 +111,38 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Service operations on PostgreSQ
     expect((await service.availability(input)).available).toBe(true);
     expect((await service.availability({ ...input, startAt: '2027-01-01T01:00:00Z', endAt: '2027-01-01T02:00:00Z' })).available).toBe(false);
   });
+  it('edits resource metadata without rewriting accepted allocations and rejects invalid capacity, hours or concurrent edits', async () => {
+    await db.update(serviceResources).set({ capacity: 2, bufferAfterMinutes: 15 }).where(eq(serviceResources.id, ids.resource));
+    const b = await book({ participants: 2 });
+    const [before] = await db.select().from(serviceResources).where(eq(serviceResources.id, ids.resource));
+    const dto = { propertyId: ids.property, serviceId: ids.service, code: 'R1', name: 'Обновлённый кабинет', capacity: 2, bufferAfterMinutes: 30, expectedUpdatedAt: before.updatedAt.toISOString(), idempotencyKey: randomUUID() };
+    for (const patch of [{ capacity: 1 }, { isActive: false }, { schedule: { timeZone: 'UTC', windows: [{ day: 1, start: '09:00', end: '12:00' }] } }])
+      await expect(service.updateResource(ids.resource, { ...dto, ...patch, idempotencyKey: randomUUID() })).rejects.toMatchObject({ response: { code: 'RESOURCE_HAS_BOOKINGS' } });
+    const edited = await service.updateResource(ids.resource, dto); expect(edited['name']).toBe(dto.name);
+    const replay = await service.updateResource(ids.resource, dto); expect(replay['idempotentReplay']).toBe(true);
+    await expect(service.updateResource(ids.resource, { ...dto, idempotencyKey: randomUUID() })).rejects.toMatchObject({ response: { code: 'STALE_REVISION' } });
+    const [allocation] = await db.select().from(serviceResourceAllocations).where(eq(serviceResourceAllocations.serviceBookingId, b.serviceBookingId));
+    expect(allocation.endAt?.toISOString()).toBe('2027-01-01T10:15:00.000Z');
+    await expect(service.updateResource(ids.resource, { ...dto, propertyId: ids.other, idempotencyKey: randomUUID() })).rejects.toMatchObject({ response: { code: 'SERVICE_NOT_FOUND' } });
+  });
   it('blocks a free interval with replay protection and never overwrites a sold slot', async () => {
     const dto = { propertyId: ids.property, resourceId: ids.resource, startAt: input.startAt, endAt: input.endAt, idempotencyKey: randomUUID() };
     const blocked = await service.createBlock(dto); expect((await service.createBlock(dto))['id']).toBe(blocked['id']);
     expect((await service.availability(input)).available).toBe(false);
     await service.removeBlock(blocked['id'], { propertyId: ids.property, idempotencyKey: randomUUID() }); await book();
     await expect(service.createBlock({ ...dto, idempotencyKey: randomUUID() })).rejects.toMatchObject({ response: { code: 'RESOURCE_CONFLICT' } });
+  });
+  it('returns actual day slot capacity with working hours, frozen buffers, blocks and cancellation release', async () => {
+    await db.update(serviceResources).set({ capacity: 2, bufferAfterMinutes: 15, schedule: { timeZone: 'UTC', windows: [{ day: 5, start: '09:00', end: '18:00' }] } }).where(eq(serviceResources.id, ids.resource));
+    const b = await book();
+    await service.createBlock({ propertyId: ids.property, resourceId: ids.resource, startAt: '2027-01-01T12:00:00Z', endAt: '2027-01-01T13:00:00Z', idempotencyKey: randomUUID() });
+    const read = () => service.resourceSlots(ids.resource, ids.property, '2027-01-01T00:00:00Z', '2027-01-02T00:00:00Z');
+    const snapshot = await read();
+    const free = (at: string) => snapshot.slots.find(s => s.startAt === '2027-01-01T' + at + ':00.000Z')!.availableUnits;
+    expect(free('08:00')).toBe(0); expect(free('09:00')).toBe(1); expect(free('10:00')).toBe(1); expect(free('10:30')).toBe(2); expect(free('12:00')).toBe(0);
+    await service.transition(b.serviceBookingId, { propertyId: ids.property, expectedRevision: 1, idempotencyKey: randomUUID() }, 'cancelled');
+    expect((await read()).slots.find(s => s.startAt === '2027-01-01T09:00:00.000Z')!.availableUnits).toBe(2);
+    await expect(service.resourceSlots(ids.resource, ids.other, input.startAt, input.endAt)).rejects.toMatchObject({ response: { code: 'RESOURCE_NOT_FOUND' } });
   });
   it('moves and releases the old slot while preserving the accepted price and ledger', async () => {
     const b = await book(); await db.update(services).set({ price: '900.00' }).where(eq(services.id, ids.service));
@@ -156,6 +206,27 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Service operations on PostgreSQ
     const context = await new GuestService(db).get360(detail.guestId, ids.property);
     expect(context.stays).toHaveLength(0); expect(context.bookedServices.some(s => s.id === b.serviceBookingId)).toBe(true);
     expect(context.services).toHaveLength(1); expect(context.summary.ancillaryRevenue).toBe(100);
+  });
+  it('posts linked services into the existing stay folio and exposes the same accepted booking in the workspace', async () => {
+    const bookingId = randomUUID(), reservationId = randomUUID(), typeId = randomUUID(), rateId = randomUUID();
+    await db.insert(roomTypes).values({ id: typeId, propertyId: ids.property, name: 'Номер', code: 'TEST', maxOccupancy: 2, defaultOccupancy: 1 });
+    await db.insert(ratePlans).values({ id: rateId, propertyId: ids.property, roomTypeId: typeId, name: 'Тест', code: 'TEST', type: 'bar', baseAmount: '500.00', currencyCode: 'KZT' });
+    await db.insert(bookings).values({ id: bookingId, propertyId: ids.property, guestId: ids.guest, confirmationNumber: 'P2-' + bookingId, source: 'direct' });
+    await db.insert(reservations).values({ id: reservationId, bookingId, propertyId: ids.property, guestId: ids.guest, roomTypeId: typeId, ratePlanId: rateId, arrivalDate: '2027-01-01', departureDate: '2027-01-03', nights: 2, totalAmount: '1000.00', currencyCode: 'KZT', status: 'confirmed' });
+    try {
+      const existing = await folio.create({ propertyId: ids.property, guestId: ids.guest, reservationId, type: 'guest', currencyCode: 'KZT' });
+      const b = await book({ reservationId }); expect(b.folioId).toBe(existing.id);
+      expect(await db.select().from(folios).where(eq(folios.propertyId, ids.property))).toHaveLength(1);
+      const list = await service.forReservation(ids.property, reservationId); expect(list).toHaveLength(1);
+      expect(list[0]).toMatchObject({ id: b.serviceBookingId, reservationId, folioId: existing.id, totalAmount: '100.00', name: 'Массаж' });
+      expect(list[0]).not.toHaveProperty('idempotencyKey'); expect(list[0]).not.toHaveProperty('integrationContext');
+      await expect(service.forReservation(ids.other, reservationId)).rejects.toMatchObject({ response: { code: 'RESERVATION_NOT_FOUND' } });
+      const mismatched = await service.closeRequest({ propertyId: ids.other, idempotencyKey: randomUUID() }); expect(mismatched.status).toBe('closed');
+      await db.delete(serviceOperations).where(eq(serviceOperations.propertyId, ids.other));
+    } finally {
+      await clearBookings(); await db.delete(reservations).where(eq(reservations.id, reservationId)); await db.delete(bookings).where(eq(bookings.id, bookingId));
+      await db.delete(ratePlans).where(eq(ratePlans.id, rateId)); await db.delete(roomTypes).where(eq(roomTypes.id, typeId));
+    }
   });
   it('denies foreign property detail, history, resource references and calendar data', async () => {
     const b = await book(); await expect(service.get(b.serviceBookingId, ids.other)).rejects.toMatchObject({ response: { code: 'SERVICE_BOOKING_NOT_FOUND' } });

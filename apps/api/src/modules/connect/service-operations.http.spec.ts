@@ -12,7 +12,7 @@ import { ConnectController } from './connect.controller';
 const P = '10000000-0000-4000-a000-000000000001'; const OTHER = '10000000-0000-4000-a000-000000000002'; const ID = '10000000-0000-4000-a000-000000000003';
 describe('service operations HTTP permissions and validation', () => {
   let app: INestApplication; let granted: string[];
-  const service = { book: vi.fn().mockResolvedValue({ id: ID }), transition: vi.fn(), get: vi.fn().mockResolvedValue({ id: ID }) };
+  const service = { book: vi.fn().mockResolvedValue({ id: ID }), transition: vi.fn(), get: vi.fn().mockResolvedValue({ id: ID }), closeRequest: vi.fn().mockResolvedValue({ status: 'closed' }), updateResource: vi.fn().mockResolvedValue({ id: ID }) };
   beforeEach(async () => {
     granted = ['services.read','reservations.write']; vi.clearAllMocks();
     const module = await Test.createTestingModule({ controllers: [ServiceOperationsController], providers: [{ provide: ConnectServiceBookingService, useValue: service }] }).compile();
@@ -41,6 +41,16 @@ describe('service operations HTTP permissions and validation', () => {
   it('requires a valid explicit property on detail routes', async () => {
     await request(app.getHttpServer()).get(`/services/bookings/${ID}`).expect(403);
     expect(service.get).not.toHaveBeenCalled();
+  });
+  it('protects recovery closure and resource edits with their own property permissions', async () => {
+    granted = ['services.read'];
+    await request(app.getHttpServer()).post('/services/booking-request/close').send({ propertyId: P, idempotencyKey: 'original' }).expect(403);
+    expect(service.closeRequest).not.toHaveBeenCalled();
+    granted = ['services.manage'];
+    const edit = { propertyId: P, serviceId: ID, code: 'room', name: 'Кабинет', capacity: 1, idempotencyKey: 'edit', expectedUpdatedAt: '2026-01-01T00:00:00Z' };
+    await request(app.getHttpServer()).patch(`/services/resources/${ID}`).send({ ...edit, propertyId: OTHER }).expect(403);
+    await request(app.getHttpServer()).patch(`/services/resources/${ID}`).send(edit).expect(200);
+    expect(service.updateResource).toHaveBeenCalledWith(ID, expect.objectContaining(edit));
   });
 });
 describe('service Connect capabilities', () => {

@@ -32,6 +32,9 @@ export class ServiceResourceDto extends ServiceMutationDto {
   @ApiPropertyOptional() @IsOptional() @IsObject() schedule?: ServiceSchedule;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() isActive?: boolean;
 }
+export class ServiceResourceUpdateDto extends ServiceResourceDto {
+  @ApiProperty() @IsDateString() expectedUpdatedAt!: string;
+}
 export class ServiceBlockDto extends ServiceMutationDto {
   @ApiProperty() @IsUUID() resourceId!: string;
   @ApiProperty() @IsDateString() startAt!: string;

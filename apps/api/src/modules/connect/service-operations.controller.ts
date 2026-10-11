@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from 
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { ConnectServiceBookingService } from './connect-service-booking.service';
-import { ServiceBlockDto, ServiceChangeDto, ServiceStatusDto, ServiceMutationDto, ServiceResourceDto, StaffServiceAvailabilityDto, StaffServiceBookDto } from './dto/service-operations.dto';
+import { ServiceBlockDto, ServiceChangeDto, ServiceStatusDto, ServiceMutationDto, ServiceResourceDto, ServiceResourceUpdateDto, StaffServiceAvailabilityDto, StaffServiceBookDto } from './dto/service-operations.dto';
 
 @ApiTags('Service operations')
 @Controller('services')
@@ -18,6 +18,9 @@ export class ServiceOperationsController {
   @Post('bookings') @RequirePermissions('services.read', 'reservations.write')
   @ApiOperation({ summary: 'Create a confirmed, retry-safe service booking using the existing scheduling domain' })
   book(@Body() dto: StaffServiceBookDto) { return this.service.book(dto, 'front_desk', dto.resourceId); }
+  @Get('bookings') @RequirePermissions('services.read', 'reservations.read')
+  @ApiOperation({ summary: 'Read scheduled services linked to one property-scoped stay' })
+  forReservation(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Query('reservationId', ParseUUIDPipe) reservationId: string) { return this.service.forReservation(propertyId, reservationId); }
   @Get('booking-request') @RequirePermissions('services.read', 'reservations.write')
   @ApiOperation({ summary: 'Recover an accepted booking after an uncertain network response' })
   @ApiQuery({ name: 'propertyId', required: true }) @ApiQuery({ name: 'idempotencyKey', required: true })
@@ -25,6 +28,9 @@ export class ServiceOperationsController {
     const { folio: _privateFolio, idempotencyKey: _privateKey, ...booking } = await this.service.recover(propertyId, key);
     return booking;
   }
+  @Post('booking-request/close') @RequirePermissions('services.read', 'reservations.write')
+  @ApiOperation({ summary: 'Resolve or permanently close an uncertain request without cancelling an accepted booking' })
+  closeRequest(@Body() dto: ServiceMutationDto) { return this.service.closeRequest(dto); }
   @Get('bookings/:id') @RequirePermissions('services.read')
   @ApiOperation({ summary: 'Read booking, accepted price and actual financial review state' })
   async get(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string) {
@@ -49,6 +55,12 @@ export class ServiceOperationsController {
   @Post('resources') @RequirePermissions('services.manage')
   @ApiOperation({ summary: 'Create an operational resource with capacity, working windows and buffers' })
   createResource(@Body() dto: ServiceResourceDto) { return this.service.createResource(dto); }
+  @Patch('resources/:id') @RequirePermissions('services.manage')
+  @ApiOperation({ summary: 'Edit a resource while preserving accepted capacity, schedule and allocation buffers' })
+  updateResource(@Param('id', ParseUUIDPipe) id: string, @Body() dto: ServiceResourceUpdateDto) { return this.service.updateResource(id, dto); }
+  @Get('resources/:id/slots') @RequirePermissions('services.read')
+  @ApiOperation({ summary: 'Read a bounded day of capacity slots in one consistent snapshot; confirmation rechecks under locks' })
+  slots(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string, @Query('startAt') startAt: string, @Query('endAt') endAt: string) { return this.service.resourceSlots(id, propertyId, startAt, endAt); }
   @Post('resource-blocks') @RequirePermissions('services.manage')
   @ApiOperation({ summary: 'Block a free resource interval without invalidating accepted bookings' })
   block(@Body() dto: ServiceBlockDto) { return this.service.createBlock(dto); }
