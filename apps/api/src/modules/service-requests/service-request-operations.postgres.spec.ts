@@ -136,6 +136,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
       expect(await all(housekeepingTasks)).toHaveLength(0);
       expect(await all(domainEventOutbox)).toHaveLength(2);
       expect(result[0].request.linkedOperation.kind).toBe('maintenance');
+      expect(new URL(result[0].request.linkedOperation.href, 'http://local.test').searchParams.get('propertyId')).toBe(ids.property);
       expect(
         (await service.findById(row.id, ids.property))
           .linkedMaintenanceTicketId,

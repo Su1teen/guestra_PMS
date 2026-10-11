@@ -1139,6 +1139,7 @@ function LostAndFoundPanel() {
 
 // ---- Service Requests ----
 function ServiceRequestsPanel() {
+  const { propertyId } = useProperty();
   return (
     <div className="space-y-3 rounded-xl bg-white p-6 shadow-sm">
       <h2 className="text-lg font-semibold text-telivity-navy">
@@ -1149,7 +1150,7 @@ function ServiceRequestsPanel() {
         общей операционной очереди.
       </p>
       <a
-        href="/operations?tab=tasks"
+        href={'/operations?tab=tasks&propertyId=' + encodeURIComponent(propertyId ?? '')}
         className="inline-flex rounded-lg bg-telivity-teal px-4 py-2 text-sm font-semibold text-white"
       >
         Открыть запросы и задачи →

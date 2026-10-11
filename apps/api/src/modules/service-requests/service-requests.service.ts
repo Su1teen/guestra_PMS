@@ -272,8 +272,8 @@ export class ServiceRequestsService {
           id: source.id,
           status: source.status,
           href: isMaintenance
-            ? `/operations?tab=maintenance&ticketId=${source.id}`
-            : `/housekeeping?tab=tasks&taskId=${source.id}`,
+            ? `/operations?tab=maintenance&ticketId=${source.id}&propertyId=${propertyId}`
+            : `/housekeeping?tab=tasks&taskId=${source.id}&propertyId=${propertyId}`,
         },
       };
     });
