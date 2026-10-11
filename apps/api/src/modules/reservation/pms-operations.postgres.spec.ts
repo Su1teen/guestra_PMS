@@ -3,8 +3,27 @@ import { randomUUID } from 'node:crypto';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { eq, inArray } from 'drizzle-orm';
-import { properties, guests, guestPropertyLinks, roomTypes, rooms, ratePlans, reservations, reservationGuests,
-  bookings, folios, auditLogs, domainEventOutbox, taxProfiles, taxRules, depositLedgerEntries, staffRequestFences } from '@telivityhaip/database';
+import {
+  properties,
+  guests,
+  guestPropertyLinks,
+  roomTypes,
+  rooms,
+  ratePlans,
+  reservations,
+  reservationGuests,
+  bookings,
+  folios,
+  auditLogs,
+  domainEventOutbox,
+  taxProfiles,
+  taxRules,
+  depositLedgerEntries,
+  staffRequestFences,
+  housekeepingTasks,
+  maintenanceTickets,
+  roomInventoryBlocks,
+} from '@telivityhaip/database';
 import { OperationsService } from '../operations/operations.service';
 import { ReportsService } from '../reports/reports.service';
 import { ReservationCalendarService } from './reservation-calendar.service';
@@ -17,34 +36,51 @@ import { FolioService } from '../folio/folio.service';
 import { RoomStatusService } from '../room/room-status.service';
 import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 import { GuestService } from '../guest/guest.service';
+import { BookingEngineService } from '../booking-engine/booking-engine.service';
+import { InboundReservationService } from '../channel/inbound-reservation.service';
+import { MaintenanceService } from '../maintenance/maintenance.service';
 
 // Real SQL, locks, transactions, pricing and folios. Only external delivery is a port double.
-describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreSQL', () => {
-  const client = postgres(process.env.DATABASE_URL!, { max: 8 });
-  const db = drizzle(client);
-  const ids = { property: randomUUID(), guest: randomUUID(), type: randomUUID(), rate: randomUUID(), room: randomUUID(), target: randomUUID(), third: randomUUID(), tax: randomUUID() };
-  const webhooks = { emit: vi.fn(), dispatchPersisted: vi.fn() };
-  const taxes = new TaxService(db);
-  const rates = new RatePlanService(db, webhooks as any);
-  const outbox = new DomainEventOutboxService(db, webhooks as any);
-  const reservationService = new ReservationService(db, new AvailabilityService(db), new FolioService(db, webhooks as any, taxes),
+describe.runIf(process.env.PMS_LIVE_PG === '1')(
+  'PMS operations against PostgreSQL',
+  () => {
+    const client = postgres(process.env.DATABASE_URL!, { max: 8 });
+    const db = drizzle(client);
+    const ids = { property: randomUUID(), guest: randomUUID(), type: randomUUID(), rate: randomUUID(), room: randomUUID(), target: randomUUID(), third: randomUUID(), tax: randomUUID() };
+    const webhooks = { emit: vi.fn(), dispatchPersisted: vi.fn() };
+    const taxes = new TaxService(db);
+    const rates = new RatePlanService(db, webhooks as any);
+    const outbox = new DomainEventOutboxService(db, webhooks as any);
+    const reservationService = new ReservationService(db, new AvailabilityService(db), new FolioService(db, webhooks as any, taxes),
     new RoomStatusService(db, webhooks as any), {} as any, webhooks as any, {} as any, {} as any, {} as any, rates, outbox);
-  const staff = new StaffReservationService(db, reservationService, rates, taxes, outbox);
-  const input = { propertyId: ids.property, guestId: ids.guest, roomTypeId: ids.type, ratePlanId: ids.rate,
+    const staff = new StaffReservationService(db, reservationService, rates, taxes, outbox);
+    const maintenance=new MaintenanceService(db,new RoomStatusService(db,webhooks as any),outbox,new AvailabilityService(db));
+    const channel=new InboundReservationService(db,{} as any,{getAdapter:()=>({confirmReservation:vi.fn()})} as any,{pushAvailability:vi.fn()} as any,webhooks as any,new AvailabilityService(db),new RoomStatusService(db,webhooks as any));
+    const conn={propertyId:ids.property,id:randomUUID(),roomTypeMapping:[{channelRoomCode:'STD',roomTypeId:ids.type}],ratePlanMapping:[{channelRateCode:'TX',ratePlanId:ids.rate}]};
+    const channelInput=()=>({externalConfirmation:randomUUID(),channelCode:'test',channelRoomCode:'STD',channelRateCode:'TX',arrivalDate:input.checkIn,departureDate:input.checkOut,totalAmount:200,currencyCode:'KZT',adults:1,guestFirstName:'Тест',status:'new'});
+    const plannedBlock=(extra:any={})=>({propertyId:ids.property,roomId:ids.room,startDate:'2027-05-02',endDate:'2027-05-03',kind:'OOO' as const,reason:'Плановый ремонт',idempotencyKey:randomUUID(),...extra});
+    const input = { propertyId: ids.property, guestId: ids.guest, roomTypeId: ids.type, ratePlanId: ids.rate,
     checkIn: '2027-05-01', checkOut: '2027-05-03', expectedTotal: '200.00', currencyCode: 'KZT', adults: 1, roomId: ids.room };
-  const create = (changes = {}) => staff.create({ ...input, requestId: randomUUID(), ...changes });
+    const create = (changes = {}) => staff.create({ ...input, requestId: randomUUID(), ...changes });
 
-  async function clearStays() {
-    await db.delete(staffRequestFences).where(eq(staffRequestFences.propertyId, ids.property));
-    await db.delete(depositLedgerEntries).where(eq(depositLedgerEntries.propertyId, ids.property));
-    await db.delete(domainEventOutbox).where(eq(domainEventOutbox.propertyId, ids.property));
-    await db.delete(auditLogs).where(eq(auditLogs.propertyId, ids.property));
-    await db.delete(folios).where(eq(folios.propertyId, ids.property));
-    await db.delete(reservationGuests).where(eq(reservationGuests.propertyId, ids.property));
-    await db.delete(reservations).where(eq(reservations.propertyId, ids.property));
-    await db.delete(bookings).where(eq(bookings.propertyId, ids.property));
-  }
-  beforeAll(async () => {
+    async function clearStays() {
+      await db.delete(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId,ids.property));
+      await db
+        .delete(housekeepingTasks)
+        .where(eq(housekeepingTasks.propertyId, ids.property));
+      await db
+        .delete(maintenanceTickets)
+        .where(eq(maintenanceTickets.propertyId, ids.property));
+      await db.delete(staffRequestFences).where(eq(staffRequestFences.propertyId, ids.property));
+      await db.delete(depositLedgerEntries).where(eq(depositLedgerEntries.propertyId, ids.property));
+      await db.delete(domainEventOutbox).where(eq(domainEventOutbox.propertyId, ids.property));
+      await db.delete(auditLogs).where(eq(auditLogs.propertyId, ids.property));
+      await db.delete(folios).where(eq(folios.propertyId, ids.property));
+      await db.delete(reservationGuests).where(eq(reservationGuests.propertyId, ids.property));
+      await db.delete(reservations).where(eq(reservations.propertyId, ids.property));
+      await db.delete(bookings).where(eq(bookings.propertyId, ids.property));
+    }
+    beforeAll(async () => {
     await db.insert(properties).values({ id: ids.property, name: 'PMS transaction test', code: 'TX-' + ids.property.slice(0, 8), countryCode: 'KZ', timezone: 'Asia/Almaty', currencyCode: 'KZT', totalRooms: 1 });
     await db.insert(guests).values({ id: ids.guest, firstName: 'Тест', lastName: 'Транзакции' });
     await db.insert(guestPropertyLinks).values({ propertyId: ids.property, guestId: ids.guest, source: 'pms' });
@@ -55,7 +91,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
       { id: ids.third, propertyId: ids.property, roomTypeId: ids.type, number: '103', status: 'vacant_clean', isActive: false }]);
     await db.insert(taxProfiles).values({ id: ids.tax, propertyId: ids.property, name: 'Test rules', jurisdictionCode: 'TEST', effectiveFrom: '2027-01-01', isActive: false });
   });
-  beforeEach(async () => {
+    beforeEach(async () => {
     await clearStays();
     await db.delete(taxRules).where(eq(taxRules.taxProfileId, ids.tax));
     await db.update(taxProfiles).set({ isActive: false }).where(eq(taxProfiles.id, ids.tax));
@@ -66,7 +102,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     vi.clearAllMocks();
     webhooks.dispatchPersisted.mockResolvedValue(undefined);
   });
-  afterAll(async () => {
+    afterAll(async () => {
     await clearStays();
     await db.delete(taxRules).where(eq(taxRules.taxProfileId, ids.tax));
     await db.delete(taxProfiles).where(eq(taxProfiles.id, ids.tax));
@@ -79,44 +115,169 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     await client.end();
   });
 
-  it('allows exactly one concurrent purchase of the last room, without orphan booking/folio/outbox', async () => {
-    const results = await Promise.allSettled([create(), create()]);
-    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
-    for (const table of [bookings, reservations, folios, domainEventOutbox]) {
+    it('serializes a planned block with purchase of the final unit and leaves no orphan booking or block',async()=>{
+      const results=await Promise.allSettled([create({roomId:undefined}),maintenance.saveInventoryBlock(plannedBlock())]);
+      expect(results.filter(row=>row.status==='fulfilled')).toHaveLength(1);
+      const stays=await db.select().from(reservations).where(eq(reservations.propertyId,ids.property));
+      const blocks=await db.select().from(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId,ids.property));
+      expect(stays.length+blocks.length).toBe(1);
+      expect(await db.select().from(bookings).where(eq(bookings.propertyId,ids.property))).toHaveLength(stays.length);
+      expect(await db.select().from(folios).where(eq(folios.propertyId,ids.property))).toHaveLength(stays.length);
+    });
+    it('serializes inbound channel purchase with planned inventory for the final unit',async()=>{
+      const guestLookup=vi.spyOn(channel as any,'findOrCreateGuestTx').mockResolvedValue({id:ids.guest});
+      try {
+        const outcomes=await Promise.allSettled([(channel as any).handleNewReservation(conn,channelInput()),maintenance.saveInventoryBlock(plannedBlock())]);
+        expect(outcomes.filter(row=>row.status==='fulfilled')).toHaveLength(1);
+        const stays=await db.select().from(reservations).where(eq(reservations.propertyId,ids.property));
+        const blocks=await db.select().from(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId,ids.property));
+        expect(stays.length+blocks.length).toBe(1);
+        expect(await db.select().from(bookings).where(eq(bookings.propertyId,ids.property))).toHaveLength(stays.length);
+      } finally {guestLookup.mockRestore();}
+    });
+    it('rejects channel amendment of an assigned blocked room even when its category has spare inventory',async()=>{
+      await db.update(rooms).set({isActive:true}).where(eq(rooms.id,ids.target));
+      const stay=await create({checkOut:'2027-05-02',expectedTotal:'100.00'});
+      await maintenance.saveInventoryBlock(plannedBlock());
+      await expect((channel as any).handleModification(conn,{...channelInput(),status:'modified'},{id:stay.bookingId})).rejects.toMatchObject({response:{code:'ROOM_INVENTORY_BLOCKED'}});
+      const [stored]=await db.select().from(reservations).where(eq(reservations.id,stay.id));
+      expect(stored.departureDate).toBe('2027-05-02');expect(stored.totalAmount).toBe('100.00');
+    });
+    it('rejects planned physical-room conflicts in preview and repeats the capacity check before saving',async()=>{
+      const stay=await create();
+      const preview=await maintenance.previewInventoryBlock(plannedBlock());
+      expect(preview.canApply).toBe(false);expect(preview.conflictingReservationIds).toEqual([stay.id]);
+      await expect(maintenance.saveInventoryBlock(plannedBlock())).rejects.toMatchObject({response:{code:'INVENTORY_BLOCK_CONFLICT'}});
+      expect(await db.select().from(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId,ids.property))).toHaveLength(0);
+    });
+    it('prevents assignment, move and check-in through a clean-labelled room with a block later in the stay',async()=>{
+      await db.update(rooms).set({isActive:true}).where(eq(rooms.id,ids.target));
+      const stay=await create({roomId:undefined});
+      await maintenance.saveInventoryBlock(plannedBlock());
+      const specificRoom = await (BookingEngineService.prototype as any).inspectSpecificRoom.call({}, ids.property, {roomId:ids.room,roomTypeId:ids.type,checkIn:input.checkIn,checkOut:input.checkOut}, db, false);
+      expect(specificRoom.available).toBe(false);expect(specificRoom.reason).toContain('возврата');
+      await expect(reservationService.assignRoom(stay.id,ids.property,{roomId:ids.room})).rejects.toMatchObject({response:{code:'ROOM_INVENTORY_BLOCKED'}});
+      await reservationService.assignRoom(stay.id,ids.property,{roomId:ids.target});
+      await expect(reservationService.moveRoom(stay.id,ids.property,{roomId:ids.room})).rejects.toMatchObject({response:{code:'ROOM_INVENTORY_BLOCKED'}});
+      // Existing/legacy assignment fixture proves check-in itself enforces the whole stay,
+      // rather than trusting the UI or a previous assignment check.
+      await db.update(reservations).set({roomId:ids.room}).where(eq(reservations.id,stay.id));
+      await expect(reservationService.checkIn(stay.id,ids.property)).rejects.toMatchObject({response:{code:'ROOM_INVENTORY_BLOCKED'}});
+      const [stored]=await db.select().from(reservations).where(eq(reservations.id,stay.id));
+      expect(stored.status).toBe('assigned');expect(stored.totalAmount).toBe('200.00');
+      const calendar=await new ReservationCalendarService(db,new AvailabilityService(db)).range({propertyId:ids.property,checkIn:'2027-05-01',checkOut:'2027-05-05'});
+      expect(calendar.inventoryBlocks).toHaveLength(1);expect(calendar.inventoryBlocks[0].endDate).toBe('2027-05-03');
+      expect(calendar.availability.find((row:any)=>row.date==='2027-05-04')?.available).toBe(1);
+    });
+    it('rejects a stale amendment snapshot after an intervening room move without changing accepted pricing',async()=>{
+      const stay=await create();const original=await (reservationService as any).findByIdRaw(stay.id,ids.property);
+      await db.update(rooms).set({isActive:true}).where(eq(rooms.id,ids.target));
+      await db.update(reservations).set({roomId:ids.target,updatedAt:new Date(+original.updatedAt+1000)}).where(eq(reservations.id,stay.id));
+      const stale=vi.spyOn(reservationService as any,'findByIdRaw').mockResolvedValueOnce(original);
+      try {await expect(reservationService.modify(stay.id,ids.property,{specialRequests:'Обновление'})).rejects.toMatchObject({status:409});}
+      finally {stale.mockRestore();}
+      const [stored]=await db.select().from(reservations).where(eq(reservations.id,stay.id));
+      expect(stored.roomId).toBe(ids.target);expect(stored.acceptedPricingSnapshot).toEqual(original.acceptedPricingSnapshot);expect(stored.specialRequests).toBe(original.specialRequests);
+    });
+    it('allows exactly one concurrent purchase of the last room, without orphan booking/folio/outbox', async () => {
+      const results = await Promise.allSettled([create(), create()]);
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      for (const table of [bookings, reservations, folios, domainEventOutbox]) {
       expect(await db.select().from(table).where(eq(table.propertyId, ids.property))).toHaveLength(1);
     }
-  });
-  it('excludes OOO/OOS physical inventory from sale even with an overbooking allowance', async () => {
-    await db.update(properties).set({ overbookingPercentage: 100 }).where(eq(properties.id, ids.property));
-    try {
-      for (const status of ['out_of_order', 'out_of_service'] as const) {
-        await db.update(rooms).set({ status }).where(eq(rooms.id, ids.room));
-        const availability = await new AvailabilityService(db).searchAvailability(ids.property, input.checkIn, input.checkOut, ids.type);
-        expect(availability.every(night => night.available === 0 && night.overbookingBuffer === 0)).toBe(true);
-        await expect(create({ roomId: undefined })).rejects.toThrow();
-      }
-      expect(await db.select().from(bookings).where(eq(bookings.propertyId, ids.property))).toHaveLength(0);
-    } finally { await db.update(properties).set({ overbookingPercentage: 0 }).where(eq(properties.id, ids.property)); }
-  });
-  it('serializes concurrent retries and returns the same immutable snapshot', async () => {
-    const requestId = randomUUID();
-    const results = await Promise.all([create({ requestId }), create({ requestId })]);
-    expect(results[0].id).toBe(results[1].id);
-    expect(await staff.result(ids.property, requestId)).toMatchObject({ state: 'committed', reservationId: results[0].id });
-    expect(await staff.result(randomUUID(), requestId)).toEqual({ state: 'unconfirmed' });
-    expect(results.map(r => r.replayed).sort()).toEqual([false, true]);
-    expect(results[0].acceptedPricingSnapshot).toMatchObject({ grandTotal: '200.00', roomTotal: '200.00', taxTotal: '0.00' });
-    await db.update(ratePlans).set({ baseAmount: '150.00' }).where(eq(ratePlans.id, ids.rate));
-    expect(await create({ requestId })).toMatchObject({ id: results[0].id, totalAmount: '200.00', replayed: true });
-    await expect(create({ requestId, adults: 2 })).rejects.toMatchObject({ response: { code: 'REQUEST_CHANGED' } });
-  });
-  it('rolls back creation, roster, folio and event when physical assignment fails', async () => {
+    });
+    it('enforces housekeeping readiness at check-in even if the cached room status looks clean', async () => {
+      const stay = await create();
+      await db
+        .insert(housekeepingTasks)
+        .values({
+          propertyId: ids.property,
+          roomId: ids.room,
+          type: 'checkout',
+          status: 'completed',
+          serviceDate: new Date('2020-01-01'),
+          checklist: [],
+        });
+      await expect(reservationService.checkIn(stay.id, ids.property)).rejects.toMatchObject({ response: { code: 'ROOM_NOT_READY' } });
+      const [stored] = await db.select().from(reservations).where(eq(reservations.id, stay.id));
+      expect(stored.status).toBe('assigned');
+      const [room] = await db.select().from(rooms).where(eq(rooms.id, ids.room));
+      expect(room.status).toBe('vacant_clean');
+    });
+    it('enforces a pending return-to-service at assignment and check-in without relying on the room label', async () => {
+      const stay = await create({ roomId: undefined });
+      await db
+        .insert(maintenanceTickets)
+        .values({
+          propertyId: ids.property,
+          roomId: ids.room,
+          category: 'other',
+          title: 'Проверка',
+          description: 'Ремонт',
+          status: 'resolved',
+          returnToServiceRequired: true,
+        });
+      await expect(
+        reservationService.assignRoom(stay.id, ids.property, { roomId: ids.room }),
+      ).rejects.toMatchObject({ response: { code: 'ROOM_NOT_READY' } });
+      await db.update(reservations).set({ status: 'assigned', roomId: ids.room })
+        .where(eq(reservations.id, stay.id));
+      await expect(reservationService.checkIn(stay.id, ids.property)).rejects.toMatchObject({ response: { code: 'ROOM_NOT_READY' } });
+    });
+    it('rejects moving to a room with a blocking housekeeping task and keeps the original assignment', async () => {
+      await db.update(rooms).set({ isActive: true }).where(eq(rooms.id, ids.target));
+      const stay = await create();
+      await db
+        .insert(housekeepingTasks)
+        .values({
+          propertyId: ids.property,
+          roomId: ids.target,
+          type: 'deep_clean',
+          status: 'pending',
+          serviceDate: new Date(input.checkIn),
+          checklist: [],
+        });
+      await expect(
+        reservationService.moveRoom(stay.id, ids.property, { roomId: ids.target }),
+      ).rejects.toMatchObject({ response: { code: 'ROOM_NOT_READY' } });
+      const [stored] = await db.select().from(reservations).where(eq(reservations.id, stay.id));
+      expect(stored.roomId).toBe(ids.room);
+    });
+    it('excludes OOO/OOS physical inventory from sale even with an overbooking allowance', async () => {
+      await db.update(properties).set({ overbookingPercentage: 100 }).where(eq(properties.id, ids.property));
+      try {
+        for (const status of ['out_of_order', 'out_of_service'] as const) {
+          await db.update(rooms).set({ status }).where(eq(rooms.id, ids.room));
+          const availability = await new AvailabilityService(db).searchAvailability(ids.property, input.checkIn, input.checkOut, ids.type);
+          expect(
+            availability.every(
+              (night) => night.available === 0 && night.overbookingBuffer === 0,
+            ),
+          ).toBe(true);
+          await expect(create({ roomId: undefined })).rejects.toThrow();
+        }
+        expect(await db.select().from(bookings).where(eq(bookings.propertyId, ids.property))).toHaveLength(0);
+      } finally { await db.update(properties).set({ overbookingPercentage: 0 }).where(eq(properties.id, ids.property)); }
+    });
+    it('serializes concurrent retries and returns the same immutable snapshot', async () => {
+      const requestId = randomUUID();
+      const results = await Promise.all([create({ requestId }), create({ requestId })]);
+      expect(results[0].id).toBe(results[1].id);
+      expect(await staff.result(ids.property, requestId)).toMatchObject({ state: 'committed', reservationId: results[0].id });
+      expect(await staff.result(randomUUID(), requestId)).toEqual({ state: 'unconfirmed' });
+      expect(results.map((r) => r.replayed).sort()).toEqual([false, true]);
+      expect(results[0].acceptedPricingSnapshot).toMatchObject({ grandTotal: '200.00', roomTotal: '200.00', taxTotal: '0.00' });
+      await db.update(ratePlans).set({ baseAmount: '150.00' }).where(eq(ratePlans.id, ids.rate));
+      expect(await create({ requestId })).toMatchObject({ id: results[0].id, totalAmount: '200.00', replayed: true });
+      await expect(create({ requestId, adults: 2 })).rejects.toMatchObject({ response: { code: 'REQUEST_CHANGED' } });
+    });
+    it('rolls back creation, roster, folio and event when physical assignment fails', async () => {
     await expect(create({ roomId: ids.target })).rejects.toThrow();
     for (const table of [bookings, reservations, reservationGuests, folios, auditLogs, domainEventOutbox]) {
       expect(await db.select().from(table).where(eq(table.propertyId, ids.property))).toHaveLength(0);
     }
   });
-  it('closes a request that never arrived and rejects a delayed POST without creating any stay', async () => {
+    it('closes a request that never arrived and rejects a delayed POST without creating any stay', async () => {
     const requestId = randomUUID();
     expect(await staff.result(ids.property, requestId)).toEqual({ state: 'unconfirmed' });
     expect(await staff.result(ids.property, requestId, true)).toEqual({ state: 'closed' });
@@ -127,7 +288,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     expect(await staff.result(randomUUID(), requestId)).toEqual({ state: 'unconfirmed' });
     expect(await create()).toMatchObject({ replayed: false });
   });
-  it('serializes closing against creation: either a saved stay or a permanently fenced token', async () => {
+    it('serializes closing against creation: either a saved stay or a permanently fenced token', async () => {
     const requestId = randomUUID();
     const [creation, closing] = await Promise.allSettled([create({ requestId }), staff.result(ids.property, requestId, true)]);
     expect(closing.status).toBe('fulfilled');
@@ -140,17 +301,17 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     }
     expect(await db.select().from(reservations).where(eq(reservations.propertyId, ids.property))).toHaveLength(creation.status === 'fulfilled' ? 1 : 0);
   });
-  it('prevents two independent stays assigning the same physical room', async () => {
-    await db.update(rooms).set({ isActive: true }).where(eq(rooms.id, ids.target));
-    const a = await create({ roomId: undefined });
-    const b = await create({ roomId: undefined });
-    const results = await Promise.allSettled([
+    it('prevents two independent stays assigning the same physical room', async () => {
+      await db.update(rooms).set({ isActive: true }).where(eq(rooms.id, ids.target));
+      const a = await create({ roomId: undefined });
+      const b = await create({ roomId: undefined });
+      const results = await Promise.allSettled([
       reservationService.assignRoom(a.id, ids.property, { roomId: ids.room }),
       reservationService.assignRoom(b.id, ids.property, { roomId: ids.room }),
     ]);
-    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
-  });
-  it('moves an in-house stay and both room statuses atomically and rejects foreign property reads', async () => {
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    });
+    it('moves an in-house stay and both room statuses atomically and rejects foreign property reads', async () => {
     await db.update(rooms).set({ isActive: true }).where(eq(rooms.id, ids.target));
     const stay = await create();
     await db.update(reservations).set({ status: 'checked_in' }).where(eq(reservations.id, stay.id));
@@ -160,48 +321,67 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     expect((await db.select().from(rooms).where(eq(rooms.id, ids.target)))[0]?.status).toBe('occupied');
     await expect(reservationService.moveRoom(stay.id, randomUUID(), { roomId: ids.room })).rejects.toThrow('Reservation not found');
   });
-  it('allows only one concurrent check-in and commits its room and folio together', async () => {
-    const stay = await create();
-    const results = await Promise.allSettled([reservationService.checkIn(stay.id, ids.property, { registrationSigned: true }), reservationService.checkIn(stay.id, ids.property, { registrationSigned: true })]);
-    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
-    expect((await db.select().from(reservations).where(eq(reservations.id, stay.id)))[0]?.status).toBe('checked_in');
-    expect((await db.select().from(rooms).where(eq(rooms.id, ids.room)))[0]?.status).toBe('occupied');
-    expect(await db.select().from(folios).where(eq(folios.reservationId, stay.id))).toHaveLength(1);
-  });
-  it('rejects checking into an assigned room that became OOO without changing the stay', async () => {
+    it('allows only one concurrent check-in and commits its room and folio together', async () => {
+      const stay = await create();
+      const results = await Promise.allSettled([reservationService.checkIn(stay.id, ids.property, { registrationSigned: true }), reservationService.checkIn(stay.id, ids.property, { registrationSigned: true })]);
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      expect((await db.select().from(reservations).where(eq(reservations.id, stay.id)))[0]?.status).toBe('checked_in');
+      expect((await db.select().from(rooms).where(eq(rooms.id, ids.room)))[0]?.status).toBe('occupied');
+      expect(await db.select().from(folios).where(eq(folios.reservationId, stay.id))).toHaveLength(1);
+    });
+    it('rejects checking into an assigned room that became OOO without changing the stay', async () => {
     const stay = await create();
     await db.update(rooms).set({ status: 'out_of_order' }).where(eq(rooms.id, ids.room));
     await expect(reservationService.checkIn(stay.id, ids.property)).rejects.toThrow();
     expect((await db.select().from(reservations).where(eq(reservations.id, stay.id)))[0]?.status).toBe('assigned');
     expect((await db.select().from(rooms).where(eq(rooms.id, ids.room)))[0]?.status).toBe('out_of_order');
   });
-  it('serializes two independent check-ins requesting the same ready room', async () => {
-    await db.update(rooms).set({ isActive: true }).where(inArray(rooms.id, [ids.target, ids.third]));
-    const a = await create();
-    const b = await create({ roomId: ids.third });
-    const results = await Promise.allSettled([a, b].map(stay => reservationService.checkIn(stay.id, ids.property,
-      { roomId: ids.target, registrationSigned: true })));
-    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
-    const rows = await db.select().from(reservations).where(eq(reservations.propertyId, ids.property));
-    expect(rows.filter(r => r.status === 'checked_in' && r.roomId === ids.target)).toHaveLength(1);
-    expect(rows.filter(r => r.status === 'assigned')).toHaveLength(1);
-  });
-  it('serializes competing in-house moves and preserves the losing stay and room', async () => {
-    await db.update(rooms).set({ isActive: true }).where(inArray(rooms.id, [ids.target, ids.third]));
-    const a = await create();
-    const b = await create({ roomId: ids.third });
-    await reservationService.checkIn(a.id, ids.property, { registrationSigned: true });
-    await reservationService.checkIn(b.id, ids.property, { registrationSigned: true });
-    const results = await Promise.allSettled([a, b].map(stay => reservationService.moveRoom(stay.id, ids.property, { roomId: ids.target })));
-    expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
-    const stays = await db.select().from(reservations).where(eq(reservations.propertyId, ids.property));
-    expect(stays.filter(r => r.roomId === ids.target)).toHaveLength(1);
-    const roomRows = await db.select().from(rooms).where(eq(rooms.propertyId, ids.property));
-    expect(roomRows.filter(r => r.status === 'occupied')).toHaveLength(2);
-    expect(roomRows.filter(r => r.status === 'vacant_dirty')).toHaveLength(1);
-    expect(stays.every(r => r.totalAmount === '200.00' && r.acceptedPricingSnapshot?.grandTotal === '200.00')).toBe(true);
-  });
-  it('rolls back room occupancy and check-in when folio creation fails', async () => {
+    it('serializes two independent check-ins requesting the same ready room', async () => {
+      await db.update(rooms).set({ isActive: true }).where(inArray(rooms.id, [ids.target, ids.third]));
+      const a = await create();
+      const b = await create({ roomId: ids.third });
+      const results = await Promise.allSettled(
+        [a, b].map((stay) =>
+          reservationService.checkIn(stay.id, ids.property,
+      { roomId: ids.target, registrationSigned: true }),
+        ),
+      );
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const rows = await db.select().from(reservations).where(eq(reservations.propertyId, ids.property));
+      expect(
+        rows.filter(
+          (r) => r.status === 'checked_in' && r.roomId === ids.target,
+        ),
+      ).toHaveLength(1);
+      expect(rows.filter((r) => r.status === 'assigned')).toHaveLength(1);
+    });
+    it('serializes competing in-house moves and preserves the losing stay and room', async () => {
+      await db.update(rooms).set({ isActive: true }).where(inArray(rooms.id, [ids.target, ids.third]));
+      const a = await create();
+      const b = await create({ roomId: ids.third });
+      await reservationService.checkIn(a.id, ids.property, { registrationSigned: true });
+      await reservationService.checkIn(b.id, ids.property, { registrationSigned: true });
+      const results = await Promise.allSettled(
+        [a, b].map((stay) =>
+          reservationService.moveRoom(stay.id, ids.property, { roomId: ids.target }),
+        ),
+      );
+      expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const stays = await db.select().from(reservations).where(eq(reservations.propertyId, ids.property));
+      expect(stays.filter((r) => r.roomId === ids.target)).toHaveLength(1);
+      const roomRows = await db.select().from(rooms).where(eq(rooms.propertyId, ids.property));
+      expect(roomRows.filter((r) => r.status === 'occupied')).toHaveLength(2);
+      expect(roomRows.filter((r) => r.status === 'vacant_dirty')).toHaveLength(
+        1,
+      );
+      expect(
+        stays.every(
+          (r) =>
+            r.totalAmount === '200.00' && r.acceptedPricingSnapshot?.grandTotal === '200.00',
+        ),
+      ).toBe(true);
+    });
+    it('rolls back room occupancy and check-in when folio creation fails', async () => {
     const stay = await create();
     const failure = vi.spyOn((reservationService as any).folioService, 'createAutoFolio').mockRejectedValueOnce(new Error('folio unavailable'));
     try { await expect(reservationService.checkIn(stay.id, ids.property, { registrationSigned: true })).rejects.toThrow('folio unavailable'); }
@@ -209,7 +389,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     expect((await db.select().from(reservations).where(eq(reservations.id, stay.id)))[0]?.status).toBe('assigned');
     expect((await db.select().from(rooms).where(eq(rooms.id, ids.room)))[0]?.status).toBe('vacant_clean');
   });
-  it('retains a committed event after a delivery failure and recovers once per logical event', async () => {
+    it('retains a committed event after a delivery failure and recovers once per logical event', async () => {
     webhooks.dispatchPersisted.mockRejectedValueOnce(new Error('Delivery unavailable'));
     const stay = await create();
     const [pending] = await db.select().from(domainEventOutbox).where(eq(domainEventOutbox.propertyId, ids.property));
@@ -222,7 +402,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     expect((await db.select().from(reservations).where(eq(reservations.id, stay.id)))[0]?.status).toBe('assigned');
     expect((await db.select().from(domainEventOutbox).where(eq(domainEventOutbox.id, pending!.id)))[0]?.deliveredAt).not.toBeNull();
   });
-  it('decomposes a gross tariff, including compounding, and preserves net + taxes = accepted total', async () => {
+    it('decomposes a gross tariff, including compounding, and preserves net + taxes = accepted total', async () => {
     await db.update(taxProfiles).set({ isActive: true }).where(eq(taxProfiles.id, ids.tax));
     await db.insert(taxRules).values([
       { taxProfileId: ids.tax, name: 'Base', code: 'BASE', type: 'percentage', rate: '10', effectiveFrom: '2027-01-01', sortOrder: 1 },
@@ -234,14 +414,14 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
       nights: [{ date: '2027-05-01', roomAmount: '100.00', taxAmount: '15.50' }, { date: '2027-05-02', roomAmount: '100.00', taxAmount: '15.50' }] });
     expect((await new GuestService(db).get360(ids.guest, ids.property)).stays).toHaveLength(1);
   });
-  it('does not mark OOO rooms or a foreign-currency deposit as ready', async () => {
+    it('does not mark OOO rooms or a foreign-currency deposit as ready', async () => {
     const stay = await create();
     await db.update(rooms).set({ status: 'out_of_order' }).where(eq(rooms.id, ids.room));
     await db.insert(depositLedgerEntries).values({ propertyId: ids.property, reservationId: stay.id, amount: '100.00', currencyCode: 'USD' });
     const rows = await new OperationsService(db, new RoomStatusService(db, webhooks as any)).preArrivals(ids.property, input.checkIn, input.checkIn);
     expect(rows[0]?.checks).toMatchObject({ housekeepingReady: false, roomOperational: false, depositReceived: false, depositAmount: 0 });
   });
-  it('counts a later cancellation in pickup baseline, and offsets additions cancelled in the same window', async () => {
+    it('counts a later cancellation in pickup baseline, and offsets additions cancelled in the same window', async () => {
     const stay = await create();
     await db.update(reservations).set({ status: 'cancelled', createdAt: new Date('2027-04-01T10:00:00Z'), cancelledAt: new Date('2027-04-20T10:00:00Z') }).where(eq(reservations.id, stay.id));
     const reports = new ReportsService(db);
@@ -252,27 +432,32 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     expect(offset.pickup.roomNights).toBe(0);
     expect(offset.daily.reduce((sum, day) => sum + day.netPickup, 0)).toBe(0);
   });
-  it('retains committed check-in events when webhook delivery fails and retries with stable identities', async () => {
-    const stay = await create();
-    webhooks.dispatchPersisted.mockRejectedValue(new Error('temporary delivery failure'));
-    try {
-      const result = await reservationService.checkIn(stay.id, ids.property, { registrationSigned: true, skipDepositAuth: true });
-      expect(result.reservation.status).toBe('checked_in');
-      const events = await db.select().from(domainEventOutbox).where(eq(domainEventOutbox.propertyId, ids.property));
-      const checkedIn = events.find(row => row.payload.event === 'reservation.checked_in');
-      const occupied = events.find(row => row.payload.event === 'room.status_changed');
-      expect(checkedIn).toBeDefined(); expect(occupied).toBeDefined();
-      expect(checkedIn!.deliveredAt).toBeNull();
-      expect(occupied!.payload.data.roomNumber).toBeDefined();
-      webhooks.dispatchPersisted.mockResolvedValue(undefined);
-      await outbox.deliver(ids.property, checkedIn!.logicalEventId);
-      const [delivered] = await db.select().from(domainEventOutbox).where(eq(domainEventOutbox.id, checkedIn!.id));
-      expect(delivered.deliveredAt).not.toBeNull();
-      expect(delivered.logicalEventId).toBe(checkedIn!.logicalEventId);
-    } finally { webhooks.dispatchPersisted.mockResolvedValue(undefined); }
-  });
+    it('retains committed check-in events when webhook delivery fails and retries with stable identities', async () => {
+      const stay = await create();
+      webhooks.dispatchPersisted.mockRejectedValue(new Error('temporary delivery failure'));
+      try {
+        const result = await reservationService.checkIn(stay.id, ids.property, { registrationSigned: true, skipDepositAuth: true });
+        expect(result.reservation.status).toBe('checked_in');
+        const events = await db.select().from(domainEventOutbox).where(eq(domainEventOutbox.propertyId, ids.property));
+        const checkedIn = events.find(
+          (row) => row.payload.event === 'reservation.checked_in',
+        );
+        const occupied = events.find(
+          (row) => row.payload.event === 'room.status_changed',
+        );
+        expect(checkedIn).toBeDefined();
+        expect(occupied).toBeDefined();
+        expect(checkedIn!.deliveredAt).toBeNull();
+        expect(occupied!.payload.data.roomNumber).toBeDefined();
+        webhooks.dispatchPersisted.mockResolvedValue(undefined);
+        await outbox.deliver(ids.property, checkedIn!.logicalEventId);
+        const [delivered] = await db.select().from(domainEventOutbox).where(eq(domainEventOutbox.id, checkedIn!.id));
+        expect(delivered.deliveredAt).not.toBeNull();
+        expect(delivered.logicalEventId).toBe(checkedIn!.logicalEventId);
+      } finally { webhooks.dispatchPersisted.mockResolvedValue(undefined); }
+    });
 
-  it('retains the booking source in the property-scoped reservation detail', async () => {
+    it('retains the booking source in the property-scoped reservation detail', async () => {
     const stay = await create();
     await db.update(bookings).set({ source: 'ota' }).where(eq(bookings.id, stay.bookingId));
     const detail = await reservationService.findById(stay.id, ids.property);
@@ -281,11 +466,11 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     await expect(reservationService.findById(stay.id, randomUUID())).rejects.toThrow();
   });
 
-  it('returns a complete 31-night calendar for 300 rooms and 900 stays without list pagination', async () => {
-    const extraRooms = Array.from({ length: 300 }, (_, index) => ({ id: randomUUID(), propertyId: ids.property, roomTypeId: ids.type, number: String(1000 + index), status: 'vacant_clean' as const }));
-    await db.insert(rooms).values(extraRooms);
-    const bookingRows = Array.from({ length: 900 }, () => ({ id: randomUUID(), propertyId: ids.property, guestId: ids.guest, confirmationNumber: 'CAL-' + randomUUID(), source: 'direct' as const }));
-    try {
+    it('returns a complete 31-night calendar for 300 rooms and 900 stays without list pagination', async () => {
+      const extraRooms = Array.from({ length: 300 }, (_, index) => ({ id: randomUUID(), propertyId: ids.property, roomTypeId: ids.type, number: String(1000 + index), status: 'vacant_clean' as const }));
+      await db.insert(rooms).values(extraRooms);
+      const bookingRows = Array.from({ length: 900 }, () => ({ id: randomUUID(), propertyId: ids.property, guestId: ids.guest, confirmationNumber: 'CAL-' + randomUUID(), source: 'direct' as const }));
+      try {
       await db.insert(bookings).values(bookingRows);
       await db.insert(reservations).values(bookingRows.map((booking, index) => {
         const period = Math.floor(index / 300);
@@ -305,9 +490,14 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
       expect(new Set(result.reservations.map((row: any) => row.id)).size).toBe(900);
       await expect(new ReservationCalendarService(db, new AvailabilityService(db)).range({ propertyId: ids.property, checkIn: '2027-05-01', checkOut: '2027-06-02' })).rejects.toThrow();
     } finally {
-      await clearStays();
-      await db.delete(rooms).where(inArray(rooms.id, extraRooms.map(room => room.id)));
-    }
-  });
-
-});
+        await clearStays();
+        await db.delete(rooms).where(
+          inArray(
+            rooms.id,
+            extraRooms.map((room) => room.id),
+          ),
+        );
+      }
+    });
+  },
+);

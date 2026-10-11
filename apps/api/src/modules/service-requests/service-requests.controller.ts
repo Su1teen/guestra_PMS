@@ -10,6 +10,7 @@ import {
   ParseUUIDPipe,
   HttpCode,
   HttpStatus,
+  ForbiddenException,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
 import { RequirePermissions } from '../auth/permissions.decorator';
@@ -22,11 +23,18 @@ import {
   AddServiceRequestCommentDto,
 } from './dto/service-request.dto';
 import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
+import { ConfigService } from '@nestjs/config';
+import { PermissionsService } from '../auth/permissions.service';
+import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
 
 @ApiTags('service-requests')
 @Controller('service-requests')
 export class ServiceRequestsController {
-  constructor(private readonly serviceRequestsService: ServiceRequestsService) {}
+  constructor(
+    private readonly serviceRequestsService: ServiceRequestsService,
+    private readonly permissions: PermissionsService,
+    private readonly config: ConfigService,
+  ) {}
 
   @Post()
   @RequirePermissions('ops.manage')
@@ -80,11 +88,31 @@ export class ServiceRequestsController {
   @Post(':id/create-task')
   @RequirePermissions('ops.manage')
   @ApiOperation({ summary: 'Create a linked housekeeping task from a service request' })
-  createTask(
+  async createTask(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateTaskFromRequestDto,
+    @AuditActorCtx() actor: AuditActor,
+    @CurrentUser() user?: AuthUser,
   ) {
-    return this.serviceRequestsService.createLinkedTask(id, dto);
+    let localActor = { ...actor, userId: null as string | null };
+    let grants: string[] | undefined;
+    if (this.config.get('AUTH_ENABLED', 'true') !== 'false') {
+      const local =
+        user && (await this.permissions.findLocalUser(user.sub, user.email));
+      if (!local || local.status !== 'active')
+        throw new ForbiddenException('Нет активной учётной записи.');
+      grants = await this.permissions.getEffectivePermissions(
+        local.id,
+        dto.propertyId,
+      );
+      localActor = { ...actor, userId: local.id };
+    }
+    return this.serviceRequestsService.createLinkedTask(
+      id,
+      dto,
+      localActor,
+      grants,
+    );
   }
 
   @Delete(':id')

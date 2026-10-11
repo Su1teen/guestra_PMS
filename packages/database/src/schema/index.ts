@@ -111,6 +111,7 @@ export {
 
 // Demand capture — turnaway + waitlist
 export { staffShifts } from './staff-shift.js';
+export { roomInventoryBlocks } from './room-inventory-block.js';
 export {
   turnawayTypeEnum,
   turnawayReasonCodes,

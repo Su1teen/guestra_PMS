@@ -38,7 +38,11 @@ const mockFolioService = {
   findById: vi.fn(),
   settle: vi.fn(),
 };
-const mockRoomStatusService = { markOccupied: vi.fn(), markVacantDirty: vi.fn() };
+const mockRoomStatusService = {
+  assertReady: vi.fn().mockResolvedValue({ ready: true }),
+  markOccupied: vi.fn(),
+  markVacantDirty: vi.fn(),
+};
 const mockPaymentService = {
   authorizePayment: vi.fn(),
   capturePayment: vi.fn(),

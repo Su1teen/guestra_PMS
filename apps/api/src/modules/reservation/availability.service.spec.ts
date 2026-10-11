@@ -31,6 +31,7 @@ describe('AvailabilityService', () => {
       },
       { rows: [{ roomTypeId: 'rt-1', count: 2 }], groupBy: true },
       { rows: [], innerJoin: true },
+      { rows: [], innerJoin: true },
     ]);
     const service = new AvailabilityService(db as any);
 
@@ -56,6 +57,7 @@ describe('AvailabilityService', () => {
       { rows: [{ id: 'rt-1', name: 'Standard', maxOccupancy: 2 }] },
       { rows: [{ roomTypeId: 'rt-1', arrivalDate: '2026-09-01', departureDate: '2026-09-02' }] },
       { rows: [{ roomTypeId: 'rt-1', count: 5 }], groupBy: true },
+      { rows: [], innerJoin: true },
       {
         innerJoin: true,
         rows: [

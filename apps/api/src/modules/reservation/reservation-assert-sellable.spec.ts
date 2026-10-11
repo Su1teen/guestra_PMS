@@ -241,7 +241,7 @@ describe('ReservationService.create — assertSellable (BOOK path)', () => {
     const update = vi.fn().mockReturnValue({ set });
     const db = mkDb();
     db.transaction.mockImplementation(async (callback: (tx: any) => Promise<unknown>) =>
-      callback({ update }));
+      callback({ update, select:()=>({from:()=>({where:()=>({for:async()=>[updated]})})}) }));
     const { svc } = await mkService(vi.fn().mockResolvedValue(undefined), db);
     vi.spyOn(svc as any, 'findByIdRaw').mockResolvedValue({
       ...updated,

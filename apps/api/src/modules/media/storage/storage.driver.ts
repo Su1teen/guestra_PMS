@@ -25,4 +25,11 @@ export interface StorageDriver {
   readonly configured: boolean;
   put(buffer: Buffer, opts: PutOptions): Promise<PutResult>;
   delete(storageKey: string): Promise<void>;
+  readonly privateConfigured?: boolean;
+  putPrivate?(
+    buffer: Buffer,
+    storageKey: string,
+    contentType: string,
+  ): Promise<void>;
+  readPrivate?(storageKey: string): Promise<Buffer>;
 }

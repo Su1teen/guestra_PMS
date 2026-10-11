@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
-import { bookingEngineIdempotency, bookings, reservations, rooms } from '@telivityhaip/database';
+import { bookingEngineIdempotency, bookings, reservations, rooms, roomInventoryBlocks } from '@telivityhaip/database';
 import { validate } from 'class-validator';
 import { BookingEngineService } from './booking-engine.service';
 import { BeCreateBookingDto } from './dto/be-create-booking.dto';
@@ -169,6 +169,7 @@ function makeSpecificRoomDb(options: {
               for: vi.fn().mockResolvedValue(rows),
             };
           }
+          if (table === roomInventoryBlocks) return {limit:vi.fn().mockResolvedValue([])};
           return { limit: vi.fn().mockResolvedValue(blocks ? [{ id: 'overlap' }] : []) };
         }),
       })),
@@ -204,7 +205,7 @@ function makeConcurrentSpecificRoomDb() {
           from: vi.fn((table: unknown) => ({
             where: vi.fn(() => table === rooms && shape == null
               ? { for: vi.fn(async () => { await previous; return [physicalRoom]; }) }
-              : { limit: vi.fn(async () => reserved ? [{ id: 'winner' }] : []) }),
+              : { limit: vi.fn(async () => table === roomInventoryBlocks ? [] : reserved ? [{ id: 'winner' }] : []) }),
           })),
         })),
         update: vi.fn(() => ({

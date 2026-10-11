@@ -503,6 +503,71 @@ export class HousekeepingService {
     }
   }
 
+  async addAttachment(
+    taskId: string,
+    propertyId: string,
+    attachment: any,
+    actor?: AuditActor,
+    workerId?: string,
+  ) {
+    if (
+      !attachment.id ||
+      !attachment.storageKey?.startsWith(
+        `properties/${propertyId}/private/housekeeping/${taskId}/`,
+      )
+    )
+      throw new BadRequestException(
+        'Загрузите приватную фотографию через защищённый endpoint.',
+      );
+    const ids: string[] = [];
+    const result = await this.db.transaction(async (tx: any) => {
+      const task = await this.findByIdRaw(taskId, propertyId, tx, true);
+      this.assertWorker(task, workerId);
+      const existing = (task.attachments ?? []).find(
+        (a: any) => a.id === attachment.id,
+      );
+      if (existing) {
+        if (
+          ['id', 'storageKey', 'name', 'contentType', 'size', 'sha256'].some(
+            (key) => existing[key] !== attachment[key],
+          )
+        )
+          throw new ConflictException(
+            'Ключ загрузки уже использован для другой фотографии.',
+          );
+        return existing;
+      }
+      if (task.attachments.length >= 50)
+        throw new BadRequestException('В задаче уже 50 вложений.');
+      const [next] = await tx
+        .update(housekeepingTasks)
+        .set({
+          attachments: [...task.attachments, attachment],
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+          eq(housekeepingTasks.id, taskId),
+          eq(housekeepingTasks.propertyId, propertyId),
+        ),
+        )
+        .returning();
+      await this.taskAudit(tx, task, next, 'attachment', actor);
+      await this.recordEvent(
+        tx,
+        propertyId,
+        'housekeeping.task_updated',
+        'housekeeping_task',
+        taskId,
+        { action: 'attachment_added', attachmentId: attachment.id },
+        ids,
+      );
+      return attachment;
+    });
+    await this.deliverEvents(propertyId, ids);
+    return result;
+  }
+
   private async recordEvent(
     tx: any,
     propertyId: string,

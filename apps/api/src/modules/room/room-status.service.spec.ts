@@ -3,6 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { RoomStatusService } from './room-status.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { DRIZZLE } from '../../database/database.module';
+import { maintenanceTickets, roomInventoryBlocks, housekeepingTasks, properties } from '@telivityhaip/database';
 
 const mockRoom = {
   id: 'room-001',
@@ -14,23 +15,28 @@ const mockRoom = {
 };
 
 function createMockDb(returnData: any[] = [mockRoom]) {
-  return {
+  const db: any = {
     select: vi.fn().mockImplementation(() => ({
-      from: vi.fn().mockReturnValue({
+      from: vi.fn().mockImplementation((table: any) => ({
         where: vi.fn().mockReturnValue({
-          then: (resolve: any) => resolve(returnData),
+          then: (resolve: any) =>
+            resolve([maintenanceTickets, roomInventoryBlocks, housekeepingTasks].includes(table) ? [] : table === properties ? [{timezone:'UTC'}] : returnData),
+          for: vi.fn().mockResolvedValue(returnData),
+          limit: vi.fn().mockResolvedValue([maintenanceTickets, roomInventoryBlocks, housekeepingTasks].includes(table) ? [] : table === properties ? [{timezone:'UTC'}] : returnData),
           groupBy: vi.fn().mockResolvedValue(returnData),
         }),
-      }),
+      })),
     })),
     update: vi.fn().mockReturnValue({
       set: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue(returnData.map(r => ({ ...r }))),
+          returning: vi.fn().mockResolvedValue(returnData.map((r) => ({ ...r }))),
         }),
       }),
     }),
   };
+  db.transaction = vi.fn((work: any) => work(db));
+  return db;
 }
 
 const mockWebhookService = { emit: vi.fn() };

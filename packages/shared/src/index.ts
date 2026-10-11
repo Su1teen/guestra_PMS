@@ -104,6 +104,7 @@ export const WEBHOOK_EVENTS = {
 
   // Room events
   'room.status_changed': 'room.status_changed',
+  'room.inventory_block_changed': 'room.inventory_block_changed',
 
   // Housekeeping events
   'housekeeping.task_assigned': 'housekeeping.task_assigned',
@@ -188,6 +189,7 @@ export const WEBHOOK_EVENTS = {
   'reservation.service_posted': 'reservation.service_posted',
   'staff_shift.updated': 'staff_shift.updated',
   'housekeeping.task_inspected': 'housekeeping.task_inspected',
+  'housekeeping.task_updated': 'housekeeping.task_updated',
   'service_booking.created': 'service_booking.created',
   'service_booking.rescheduled': 'service_booking.rescheduled',
   'service_booking.cancelled': 'service_booking.cancelled',

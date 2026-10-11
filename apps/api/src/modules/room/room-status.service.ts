@@ -3,11 +3,23 @@ import {
   Inject,
   NotFoundException,
   BadRequestException,
+  ConflictException,
+  Optional,
 } from '@nestjs/common';
 import { eq, and, sql, inArray, lte, or } from 'drizzle-orm';
-import { rooms, housekeepingTasks, maintenanceTickets } from '@telivityhaip/database';
+import {
+  rooms,
+  roomTypes,
+  housekeepingTasks,
+  maintenanceTickets,
+  properties,
+  roomInventoryBlocks,
+} from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { WebhookService } from '../webhook/webhook.service';
+import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
+import { randomUUID } from 'node:crypto';
+import { activeInventoryBlockConditions, dayAfter } from './room-inventory-policy';
 
 type RoomStatus =
   | 'vacant_clean'
@@ -39,6 +51,7 @@ export class RoomStatusService {
   constructor(
     @Inject(DRIZZLE) private readonly db: any,
     private readonly webhookService: WebhookService,
+    @Optional() private readonly outbox?: DomainEventOutboxService,
   ) {}
 
   async transitionStatus(
@@ -48,6 +61,58 @@ export class RoomStatusService {
     note?: string,
     tx?: any,
   ) {
+    if (!tx) {
+      const eventId = randomUUID();
+      const { updated, previous } = await this.db.transaction(
+        async (connection: any) => {
+          const previous = await this.lockRoom(roomId, propertyId, connection);
+          const updated = await this.transitionStatus(
+            roomId,
+            propertyId,
+            newStatus,
+            note,
+            connection,
+          );
+          if (this.outbox)
+            await this.outbox.persist(
+              connection,
+              {
+                event: 'room.status_changed',
+                entityType: 'room',
+                entityId: roomId,
+                propertyId,
+                timestamp: new Date().toISOString(),
+                data: {
+                  previousStatus: previous.status,
+                  newStatus,
+                  roomNumber: previous.number,
+                },
+              },
+              eventId,
+            );
+          return { updated, previous };
+        },
+      );
+      if (this.outbox) {
+        try {
+          await this.outbox.deliver(propertyId, eventId);
+        } catch {
+          /* Committed event remains in the durable outbox. */
+        }
+      } else
+        await this.webhookService.emit(
+          'room.status_changed',
+          'room',
+          roomId,
+          {
+            previousStatus: previous.status,
+            newStatus,
+            roomNumber: previous.number,
+          },
+          propertyId,
+        );
+      return updated;
+    }
     const room = await this.findRoom(roomId, propertyId, tx);
     const currentStatus = room.status as RoomStatus;
     const allowed = VALID_TRANSITIONS[currentStatus] ?? [];
@@ -57,6 +122,31 @@ export class RoomStatusService {
         `Cannot transition room from '${currentStatus}' to '${newStatus}'. Valid transitions: ${allowed.join(', ') || 'none'}`,
       );
     }
+
+    if (
+      ['out_of_order','out_of_service'].includes(currentStatus) &&
+      newStatus === 'vacant_dirty'
+    ) {
+      const [blocking] = await tx
+        .select({ id: maintenanceTickets.id })
+        .from(maintenanceTickets)
+        .where(
+          and(
+            eq(maintenanceTickets.propertyId, propertyId),
+            eq(maintenanceTickets.roomId, roomId),
+            or(
+        eq(maintenanceTickets.returnToServiceRequired, true), and(eq(maintenanceTickets.blocksInventory, true), inArray(maintenanceTickets.status, ['open','assigned','in_progress','waiting_parts'])),
+      ),
+          ),
+        )
+        .limit(1);
+      if (blocking)
+        throw new ConflictException(
+          'Возврат номера не разрешён: подтвердите все блокирующие технические заявки.',
+        );
+    }
+
+    if (newStatus === 'occupied') await this.assertReady(roomId, propertyId, undefined, tx);
 
     const updates: Record<string, unknown> = {
       status: newStatus,
@@ -92,8 +182,13 @@ export class RoomStatusService {
     return this.transitionStatus(roomId, propertyId, 'vacant_dirty', undefined, tx);
   }
 
-  async markOutOfOrder(roomId: string, propertyId: string, notes: string) {
-    return this.transitionStatus(roomId, propertyId, 'out_of_order', notes);
+  async markOutOfOrder(
+    roomId: string,
+    propertyId: string,
+    notes: string,
+    tx?: any,
+  ) {
+    return this.transitionStatus(roomId, propertyId, 'out_of_order', notes, tx);
   }
 
   async markBackInService(roomId: string, propertyId: string) {
@@ -113,34 +208,158 @@ export class RoomStatusService {
     return room;
   }
 
+  /** Matches canonical reservation creation: room type -> physical room. */
+  async lockRoomInventory(roomId: string, propertyId: string, tx: any) {
+    const room = await this.findRoom(roomId, propertyId, tx);
+    const [type] = await tx
+      .select({ id: roomTypes.id })
+      .from(roomTypes)
+      .where(
+        and(
+          eq(roomTypes.id, room.roomTypeId),
+          eq(roomTypes.propertyId, propertyId),
+        ),
+      )
+      .for('update');
+    if (!type)
+      throw new NotFoundException(
+        'Категория номера не найдена в этом объекте.',
+      );
+    return this.lockRoom(roomId, propertyId, tx);
+  }
+
   /** One projection of existing room, cleaning and repair state; it does not create a second readiness ledger. */
-  async operationalReadiness(propertyId: string, serviceDate: string, db: any = this.db): Promise<RoomReadiness[]> {
-    const [inventory, cleaning, repairs] = await Promise.all([
-      db.select({ id: rooms.id, status: rooms.status, isActive: rooms.isActive }).from(rooms).where(eq(rooms.propertyId, propertyId)),
-      db.select({ id: housekeepingTasks.id, roomId: housekeepingTasks.roomId, status: housekeepingTasks.status }).from(housekeepingTasks).where(and(
-        eq(housekeepingTasks.propertyId, propertyId), lte(housekeepingTasks.serviceDate, new Date(serviceDate + 'T23:59:59.999Z')),
-        inArray(housekeepingTasks.type, ['checkout','deep_clean','inspection','maintenance']), inArray(housekeepingTasks.status, ['pending','assigned','in_progress','completed']),
-      )),
-      db.select({ id: maintenanceTickets.id, roomId: maintenanceTickets.roomId }).from(maintenanceTickets).where(and(eq(maintenanceTickets.propertyId, propertyId), or(
+  async operationalReadiness(
+    propertyId: string,
+    serviceDate: string,
+    db: any = this.db,
+    roomIds?: string[],
+    excludeInventoryBlockId?: string,
+  ): Promise<RoomReadiness[]> {
+    if (roomIds?.length === 0) return [];
+    const [inventory, cleaning, repairs, planned] = await Promise.all([
+      db.select({ id: rooms.id, status: rooms.status, isActive: rooms.isActive }).from(rooms).where(
+          and(
+            eq(rooms.propertyId, propertyId),
+            roomIds ? inArray(rooms.id, roomIds) : undefined,
+          ),
+        ),
+      db.select({ id: housekeepingTasks.id, roomId: housekeepingTasks.roomId, status: housekeepingTasks.status }).from(housekeepingTasks).where(
+          and(
+            eq(housekeepingTasks.propertyId, propertyId),
+            roomIds ? inArray(housekeepingTasks.roomId, roomIds) : undefined,
+            lte(housekeepingTasks.serviceDate, new Date(serviceDate + 'T23:59:59.999Z')),
+            inArray(housekeepingTasks.type, ['checkout','deep_clean','inspection','maintenance']),
+            inArray(housekeepingTasks.status, ['pending','assigned','in_progress','completed']),
+          ),
+        ),
+      db.select({ id: maintenanceTickets.id, roomId: maintenanceTickets.roomId }).from(maintenanceTickets).where(
+          and(
+            eq(maintenanceTickets.propertyId, propertyId),
+            roomIds ? inArray(maintenanceTickets.roomId, roomIds) : undefined,
+            or(
         eq(maintenanceTickets.returnToServiceRequired, true), and(eq(maintenanceTickets.blocksInventory, true), inArray(maintenanceTickets.status, ['open','assigned','in_progress','waiting_parts'])),
-      ))),
+      ),
+          ),
+        ),
+      db.select().from(roomInventoryBlocks).where(activeInventoryBlockConditions(propertyId, dayAfter(serviceDate), roomIds, excludeInventoryBlockId)),
     ]);
-    const cleaningByRoom = new Map<string,any[]>(); const repairsByRoom = new Map<string,any[]>();
+    const cleaningByRoom = new Map<string,any[]>();
+    const repairsByRoom = new Map<string,any[]>();
     for (const row of cleaning) cleaningByRoom.set(row.roomId, [...(cleaningByRoom.get(row.roomId) ?? []), row]);
     for (const row of repairs) if (row.roomId) repairsByRoom.set(row.roomId, [...(repairsByRoom.get(row.roomId) ?? []), row]);
     return inventory.map((room: any) => {
-      const tasks = cleaningByRoom.get(room.id) ?? []; const tickets = repairsByRoom.get(room.id) ?? [];
+      const tasks = cleaningByRoom.get(room.id) ?? [];
+      const tickets = repairsByRoom.get(room.id) ?? [];
       const reasons: Array<{ code: string; label: string; entityIds?: string[] }> = [];
       if (!room.isActive) reasons.push({ code: 'inactive', label: 'Номер выключен' });
       if (['out_of_order','out_of_service'].includes(room.status)) reasons.push({ code: 'inventory_blocked', label: 'Номер выведен из эксплуатации' });
-      if (tickets.length) reasons.push({ code: 'maintenance', label: 'Ремонт или возврат в эксплуатацию не подтверждён', entityIds: tickets.map(t => t.id) });
+      if (tickets.length)
+        reasons.push({
+          code: 'maintenance',
+          label: 'Ремонт или возврат в эксплуатацию не подтверждён',
+          entityIds: tickets.map((t) => t.id),
+        });
       if (room.status === 'vacant_dirty') reasons.push({ code: 'dirty', label: 'Номер грязный' });
-      if (['clean','inspected'].includes(room.status) || tasks.some(t => t.status === 'completed')) reasons.push({ code: 'inspection', label: 'Не завершена инспекция', entityIds: tasks.filter(t => t.status === 'completed').map(t => t.id) });
-      if (tasks.some(t => t.status !== 'completed')) reasons.push({ code: 'blocking_task', label: 'Есть незавершённая блокирующая задача', entityIds: tasks.filter(t => t.status !== 'completed').map(t => t.id) });
+      if (
+        ['clean','inspected'].includes(room.status) ||
+        tasks.some((t) => t.status === 'completed')
+      )
+        reasons.push({
+          code: 'inspection',
+          label: 'Не завершена инспекция',
+          entityIds: tasks
+            .filter((t) => t.status === 'completed')
+            .map((t) => t.id),
+        });
+      if (tasks.some((t) => t.status !== 'completed'))
+        reasons.push({
+          code: 'blocking_task',
+          label: 'Есть незавершённая блокирующая задача',
+          entityIds: tasks
+            .filter((t) => t.status !== 'completed')
+            .map((t) => t.id),
+        });
       if (room.status === 'occupied') reasons.push({ code: 'occupied', label: 'Номер занят' });
+      const blocks = planned.filter((b:any) => b.roomId === room.id);
+      for (const kind of ['OOO','OOS']) {
+        const matching = blocks.filter((b:any) => b.kind === kind);
+        if (matching.length) reasons.push({ code: 'planned_' + kind.toLowerCase(),
+          label: matching.some((b:any) => b.endDate <= serviceDate)
+            ? kind + ': просрочена блокировка / требуется подтверждение'
+            : kind + ': требуется подтверждённый возврат в эксплуатацию',
+          entityIds: matching.map((b:any) => b.id) });
+      }
       return { roomId: room.id, status: room.status, ready: ['vacant_clean','guest_ready'].includes(room.status) && reasons.length === 0, reasons,
-        operational: room.isActive && !['out_of_order','out_of_service'].includes(room.status) && tickets.length === 0 };
+        operational: room.isActive && !['out_of_order','out_of_service'].includes(room.status) && tickets.length === 0 && blocks.length === 0 };
     });
+  }
+
+  /** All room operations call this under their physical-room lock for the entire remaining stay. */
+  async assertInventoryAvailable(roomId: string, propertyId: string, departureDate: string, tx: any) {
+    const blocks = await tx.select({ id: roomInventoryBlocks.id, kind: roomInventoryBlocks.kind,
+      startDate: roomInventoryBlocks.startDate, endDate: roomInventoryBlocks.endDate })
+      .from(roomInventoryBlocks).where(activeInventoryBlockConditions(propertyId, departureDate, [roomId]));
+    if (blocks.length) throw new ConflictException({ code:'ROOM_INVENTORY_BLOCKED',
+      message:'Номер недоступен до подтверждённого возврата в эксплуатацию.', blocks });
+  }
+
+  /** Call after acquiring the physical room lock in the operation's transaction. */
+  async assertReady(
+    roomId: string,
+    propertyId: string,
+    serviceDate: string | undefined,
+    tx: any,
+    departureDate?: string,
+  ) {
+    if (departureDate) await this.assertInventoryAvailable(roomId, propertyId, departureDate, tx);
+    if (!serviceDate) {
+      const [property] = await tx
+        .select({ timezone: properties.timezone })
+        .from(properties)
+        .where(eq(properties.id, propertyId));
+      if (!property) throw new NotFoundException('Объект не найден.');
+      serviceDate = new Intl.DateTimeFormat('sv-SE', {
+        timeZone: property.timezone ?? 'UTC',
+      }).format(new Date());
+    }
+    const [readiness] = await this.operationalReadiness(
+      propertyId,
+      serviceDate,
+      tx,
+      [roomId],
+    );
+    if (!readiness)
+      throw new NotFoundException('Номер не найден в этом объекте.');
+    if (!readiness.ready)
+      throw new ConflictException({
+        code: 'ROOM_NOT_READY',
+        message:
+          'Номер не готов: ' +
+          readiness.reasons.map((reason) => reason.label).join('; '),
+        readiness,
+      });
+    return readiness;
   }
 
   async getRoomStatus(roomId: string, propertyId: string, tx?: any) {

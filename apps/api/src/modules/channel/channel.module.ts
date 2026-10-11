@@ -24,6 +24,7 @@ import {
   WAVE_CHANNEL_ADAPTERS,
   WAVE_CHANNEL_CONSOLE_PACKS,
 } from './adapters/wave3-console/named-console-channel.adapter';
+import { RoomModule } from '../room/room.module';
 import { ReservationModule } from '../reservation/reservation.module';
 import { WebhookModule } from '../webhook/webhook.module';
 import { MediaModule } from '../media/media.module';
@@ -39,7 +40,7 @@ const waveChannelProviders = WAVE_CHANNEL_CONSOLE_PACKS.map((pack, index) => ({
 }));
 
 @Module({
-  imports: [ReservationModule, WebhookModule, MediaModule, ReviewsModule],
+  imports: [RoomModule, ReservationModule, WebhookModule, MediaModule, ReviewsModule],
   controllers: [
     ChannelController,
     BookingComInboundController,

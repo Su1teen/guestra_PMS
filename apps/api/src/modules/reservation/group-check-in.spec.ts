@@ -42,6 +42,7 @@ const mockFolioService = {
 };
 
 const mockRoomStatusService = {
+  assertReady: vi.fn().mockResolvedValue({ ready: true }),
   markOccupied: vi.fn().mockResolvedValue({ status: 'occupied' }),
   markVacantDirty: vi.fn(),
 };
@@ -59,20 +60,30 @@ const mockAvailabilityService = { searchAvailability: vi.fn() };
 function createGroupDb(reservationRows: any[]) {
   let rawRead = 0, transactionIndex = 0, current: any, inTransaction = false;
   const db: any = {
-    select: vi.fn((fields?: any) => ({ from: (table: any) => {
-      const query: any = { where() { return this; }, for() { return this; }, limit() { return this; },
-        then(resolve: any) {
-          if (table === reservationTable) {
-            if (fields) return resolve([]);
-            return resolve([inTransaction ? current : reservationRows[(rawRead++) % reservationRows.length]]);
-          }
-          if (table === guests) return resolve([mockGuest]);
-          if (table === rooms) return resolve([{ id: current.roomId, roomTypeId: current.roomTypeId, status: 'guest_ready', isActive: true }]);
-          if (table === properties) return resolve([mockProperty]);
-          return resolve([]);
-        } };
-      return query;
-    } })),
+    select: vi.fn((fields?: any) => ({
+      from: (table: any) => {
+        const query: any = {
+          where() { return this; },
+          for() { return this; },
+          limit() { return this; },
+          then(resolve: any) {
+            if (table === reservationTable) {
+              if (fields) return resolve([]);
+              return resolve([
+                inTransaction
+                  ? current
+                  : reservationRows[rawRead++ % reservationRows.length],
+              ]);
+            }
+            if (table === guests) return resolve([mockGuest]);
+            if (table === rooms) return resolve([{ id: current.roomId, roomTypeId: current.roomTypeId, status: 'guest_ready', isActive: true }]);
+            if (table === properties) return resolve([mockProperty]);
+            return resolve([]);
+          },
+        };
+        return query;
+      },
+    })),
     update: vi.fn(() => ({ set: () => ({ where: () => ({ returning: async () => [{ ...current, status: 'checked_in', checkedInAt: new Date(), actualArrivalTime: new Date() }] }) }) })),
     transaction: async (fn: any) => {
       current = reservationRows[transactionIndex++]; inTransaction = true;

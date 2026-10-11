@@ -1,4 +1,6 @@
+import PrivatePhotos from '../components/operations/PrivatePhotos';
 import { useSearchParams } from 'react-router-dom';
+import { useEffect } from 'react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -22,6 +24,7 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { addDays, format } from 'date-fns';
 import { api } from '../lib/api';
+import { errorMessage } from '../lib/error-message';
 import { useProperty } from '../context/PropertyContext';
 import { useAuth } from '../context/AuthContext';
 import StaffShiftCalendar from '../components/housekeeping/StaffShiftCalendar';
@@ -92,7 +95,6 @@ interface OpsForecast {
 
 const TASK_COLUMNS = ['pending', 'assigned', 'in_progress', 'completed', 'inspected'];
 
-
 const ROOM_STATUS_KEYS = [
   'vacant_clean',
   'vacant_dirty',
@@ -103,8 +105,6 @@ const ROOM_STATUS_KEYS = [
   'out_of_order',
   'out_of_service',
 ] as const;
-
-
 
 // ---- Dashboard ----
 function HousekeepingDashboard() {
@@ -186,7 +186,9 @@ function HousekeepingDashboard() {
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-5 gap-3">
           {ROOM_STATUS_KEYS.map((key) => (
             <div key={key} className="border border-gray-100 rounded-lg p-3 text-center">
-              <p className="text-xs text-telivity-mid-grey uppercase">{t(`housekeeping.roomStatuses.${key}`)}</p>
+              <p className="text-xs text-telivity-mid-grey uppercase">
+                {t(`housekeeping.roomStatuses.${key}`)}
+              </p>
               <p className="text-lg font-semibold text-telivity-navy mt-1">{roomSummary[key] ?? 0}</p>
             </div>
           ))}
@@ -276,19 +278,29 @@ function HousekeepingDashboard() {
 
 // ---- Task Board / List ----
 function TaskBoard() {
+  const [taskParams, setTaskParams] = useSearchParams();
   const { t } = useTranslation();
   const { propertyId,properties } = useProperty();
   const { user, hasPermission } = useAuth();
   const canManage = hasPermission('housekeeping.manage');
   const queryClient = useQueryClient();
-  const today = hotelDate(properties.find(p=>p.id===propertyId)?.timezone);
+  const today = hotelDate(
+    properties.find((p) => p.id===propertyId)?.timezone,
+  );
   const [page,setPage]=useState(1);
   const [mine,setMine]=useState(!canManage);
-  const {data:identity}=useQuery({queryKey:['housekeeping','identity',propertyId],queryFn:()=>api.get('/v1/housekeeping/identity',{params:{propertyId}}).then(r=>r.data as {staffId:string|null}),enabled:!!propertyId&&!canManage});
+  const { data: identity } = useQuery({
+    queryKey:['housekeeping','identity',propertyId],
+    queryFn: () =>
+      api.get('/v1/housekeeping/identity',{params:{propertyId}}).then((r) => r.data as {staffId:string|null}),
+    enabled:!!propertyId&&!canManage,
+  });
 
   const [view, setView] = useState<'board' | 'list'>('board');
   const [taskDetail, setTaskDetail] = useState<Task | null>(null);
-  const canExecute=canManage||hasPermission('housekeeping.execute')&&!!identity?.staffId&&taskDetail?.assignedTo===identity.staffId;
+  const canExecute =
+    canManage ||
+    (hasPermission('housekeeping.execute')&&!!identity?.staffId&&taskDetail?.assignedTo===identity.staffId);
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFilter, setDateFilter] = useState(today);
   const [selectedStaffId, setSelectedStaffId] = useState('');
@@ -300,6 +312,25 @@ function TaskBoard() {
   const [newTaskType, setNewTaskType] = useState('stayover');
   const [newPriority, setNewPriority] = useState('0');
   const [newNotes, setNewNotes] = useState('');
+  const linkedTaskId = taskParams.get('taskId');
+  const linkedTask = useQuery({
+    queryKey: ['housekeeping', 'task-detail', propertyId, linkedTaskId],
+    queryFn: () =>
+      api
+        .get('/v1/housekeeping/tasks/' + linkedTaskId, {params:{propertyId}})
+        .then((r) => r.data as Task),
+    enabled: !!propertyId && !!linkedTaskId,
+    retry: false,
+  });
+  useEffect(() => {
+    if (!linkedTask.data) return;
+    setTaskDetail(linkedTask.data);
+    setEditableChecklist(
+      (linkedTask.data.checklist ?? []).map((item) => ({ ...item })),
+    );
+    setMaintenanceRequired(linkedTask.data.maintenanceRequired ?? false);
+    setMaintenanceNotes(linkedTask.data.maintenanceNotes ?? '');
+  }, [linkedTask.data]);
 
   const { data } = useQuery({
     queryKey: ['housekeeping', 'tasks', propertyId, statusFilter, dateFilter,page,mine],
@@ -325,7 +356,14 @@ function TaskBoard() {
   });
 
   const hkStaff = usersData ?? [];
-  const {data:coverage=[]}=useQuery({queryKey:['housekeeping','staff-availability',propertyId,taskDetail?.serviceDate??dateFilter],queryFn:()=>api.get('/v1/housekeeping/staff-availability',{params:{propertyId,serviceDate:(taskDetail?.serviceDate??dateFilter).slice(0,10)}}).then(r=>r.data as {id:string;available:boolean;load:number}[]),enabled:!!propertyId&&canManage});
+  const {data:coverage=[]} = useQuery({
+    queryKey:['housekeeping','staff-availability',propertyId,taskDetail?.serviceDate??dateFilter],
+    queryFn: () =>
+      api.get('/v1/housekeeping/staff-availability',{params:{propertyId,serviceDate:(taskDetail?.serviceDate??dateFilter).slice(0,10)}}).then(
+          (r) => r.data as {id:string;available:boolean;load:number}[],
+        ),
+    enabled:!!propertyId&&canManage,
+  });
 
   const { data: roomsData } = useQuery({
     queryKey: ['rooms', propertyId, 'housekeeping-create'],
@@ -344,18 +382,20 @@ function TaskBoard() {
 
   const actionMutation = useMutation({
     mutationFn: ({ id, action, body }: { id: string; action: string; body?: Record<string, unknown> }) =>
-      api.patch(`/v1/housekeeping/tasks/${id}/${action}`, body ?? {}, { params: { propertyId } }),
+      api.patch(`/v1/housekeeping/tasks/${id}/${action}`, body ?? {}, {params:{propertyId}}),
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['housekeeping'] });
       queryClient.invalidateQueries({ queryKey: ['front-desk'] });
       queryClient.invalidateQueries({ queryKey: ['rooms'] });
-      setTaskDetail(previous=>previous?{...previous,...response.data}:null);
+      setTaskDetail((previous) =>
+        previous?{...previous,...response.data}:null,
+      );
     },
   });
 
   const updateMutation = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
-      api.patch(`/v1/housekeeping/tasks/${id}`, body, { params: { propertyId } }),
+      api.patch(`/v1/housekeeping/tasks/${id}`, body, {params:{propertyId}}),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['housekeeping'] });
     },
@@ -405,7 +445,9 @@ function TaskBoard() {
 
   const toggleChecklistItem = (index: number) => {
     setEditableChecklist((prev) =>
-      prev.map((item, i) => (i === index ? { ...item, checked: !item.checked } : item)),
+      prev.map((item, i) =>
+        i === index ? { ...item, checked: !item.checked } : item,
+      ),
     );
   };
 
@@ -424,6 +466,12 @@ function TaskBoard() {
 
   return (
     <div>
+      {linkedTaskId && linkedTask.isError && (
+        <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+          Не удалось открыть связанную задачу. {errorMessage(linkedTask.error)}
+          <button type="button" onClick={() => linkedTask.refetch()} className="ml-3 underline">Повторить</button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2 mb-4">
         <div className="flex border border-gray-200 rounded-lg overflow-hidden">
           <button
@@ -457,7 +505,14 @@ function TaskBoard() {
             </option>
           ))}
         </select>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={mine} onChange={e=>{setMine(e.target.checked);setPage(1);}}/>Мои задачи</label>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={mine}
+            onChange={(e) => {setMine(e.target.checked);setPage(1);}}
+          />
+          Мои задачи
+        </label>
         {canManage && (
           <div className="ml-auto flex gap-2">
             <button
@@ -603,10 +658,33 @@ function TaskBoard() {
         </div>
       )}
 
-      <div className="my-4 flex items-center gap-3 text-sm"><button disabled={page===1} onClick={()=>setPage(p=>p-1)} className="rounded-lg border p-2 disabled:opacity-50">Назад</button><span>Страница {page} · Всего задач: {data?.total??tasks.length}</span><button disabled={page*50>=(data?.total??tasks.length)} onClick={()=>setPage(p=>p+1)} className="rounded-lg border p-2 disabled:opacity-50">Далее</button></div>
+      <div className="my-4 flex items-center gap-3 text-sm">
+        <button
+          disabled={page===1}
+          onClick={() => setPage((p) => p - 1)}
+          className="rounded-lg border p-2 disabled:opacity-50"
+        >
+          Назад
+        </button>
+        <span>Страница {page} · Всего задач: {data?.total??tasks.length}</span>
+        <button
+          disabled={page*50>=(data?.total??tasks.length)}
+          onClick={() => setPage((p) => p + 1)}
+          className="rounded-lg border p-2 disabled:opacity-50"
+        >
+          Далее
+        </button>
+      </div>
       <Modal
         open={!!taskDetail}
-        onClose={() => setTaskDetail(null)}
+        onClose={() => {
+          setTaskDetail(null);
+          setTaskParams((previous) => {
+            const next = new URLSearchParams(previous);
+            next.delete('taskId');
+            return next;
+          });
+        }}
         title={t('housekeeping.taskForRoom', { number: taskDetail?.roomNumber ?? '—' })}
         wide
       >
@@ -667,6 +745,14 @@ function TaskBoard() {
               </div>
             )}
 
+            <PrivatePhotos
+              key={propertyId + taskDetail.id}
+              propertyId={propertyId!}
+              ownerId={taskDetail.id}
+              kind="housekeeping"
+              canUpload={canManage||canExecute}
+            />
+
             {taskDetail.maintenanceRequired && taskDetail.status !== 'in_progress' && (
               <div className="bg-telivity-orange/10 rounded-lg p-3">
                 <p className="text-sm font-medium text-telivity-orange">{t('housekeeping.maintenanceRequired')}</p>
@@ -710,7 +796,13 @@ function TaskBoard() {
                     >
                       <option value="">{t('housekeeping.selectStaff')}</option>
                       {hkStaff.map((s) => (
-                        <option key={s.id} value={s.id} disabled={!coverage.find(c=>c.id===s.id)?.available}>
+                        <option
+                          key={s.id}
+                          value={s.id}
+                          disabled={
+                            !coverage.find((c) => c.id === s.id)?.available
+                          }
+                        >
                           {s.name}
                         </option>
                       ))}
@@ -809,21 +901,30 @@ function TaskBoard() {
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="Новая задача уборки">
         <div className="space-y-3">
-          <label className="block text-sm text-telivity-slate">Номер
+          <label className="block text-sm text-telivity-slate">
+            Номер
             <select value={newRoomId} onChange={(e) => setNewRoomId(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
               <option value="">Выберите номер</option>
-              {rooms.map((room) => <option key={room.id} value={room.id}>{room.number}</option>)}
+              {rooms.map((room) => (
+                <option key={room.id} value={room.id}>{room.number}</option>
+              ))}
             </select>
           </label>
           <div className="grid grid-cols-2 gap-3">
-            <label className="block text-sm text-telivity-slate">Тип
+            <label className="block text-sm text-telivity-slate">
+              Тип
               <select value={newTaskType} onChange={(e) => setNewTaskType(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
-                {['checkout', 'stayover', 'deep_clean', 'inspection', 'turndown', 'maintenance'].map((type) => <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>)}
+                {['checkout', 'stayover', 'deep_clean', 'inspection', 'turndown', 'maintenance'].map((type) => (
+                  <option key={type} value={type}>{type.replace(/_/g, ' ')}</option>
+                ))}
               </select>
             </label>
-            <label className="block text-sm text-telivity-slate">Приоритет
+            <label className="block text-sm text-telivity-slate">
+              Приоритет
               <select value={newPriority} onChange={(e) => setNewPriority(e.target.value)} className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm">
-                {[0, 1, 3, 5].map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+                {[0, 1, 3, 5].map((priority) => (
+                  <option key={priority} value={priority}>{priority}</option>
+                ))}
               </select>
             </label>
           </div>
@@ -966,7 +1067,11 @@ function LostAndFoundPanel() {
   });
 
   if (!propertyId) {
-    return <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('common.selectProperty')}</div>;
+    return (
+      <div className="flex items-center justify-center h-64 text-telivity-mid-grey">
+        {t('common.selectProperty')}
+      </div>
+    );
   }
 
   return (
@@ -975,7 +1080,9 @@ function LostAndFoundPanel() {
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm">
           <option value="">{t('housekeeping.allStatus')}</option>
           {(['held', 'returned', 'disposed'] as const).map((s) => (
-            <option key={s} value={s}>{t(`housekeeping.lostFound.statuses.${s}`)}</option>
+            <option key={s} value={s}>
+              {t(`housekeeping.lostFound.statuses.${s}`)}
+            </option>
           ))}
         </select>
         <button onClick={() => setCreateOpen(true)} className="ml-auto flex items-center gap-2 bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold">
@@ -995,18 +1102,24 @@ function LostAndFoundPanel() {
             </tr>
           </thead>
           <tbody>
-            {items.map((item: { id: string; tagCode: string; description: string; status: string; foundAt: string; disposeAfter: string }) => (
-              <tr key={item.id} className="border-b border-gray-50">
-                <td className="px-4 py-3 text-sm font-medium text-telivity-navy">{item.tagCode}</td>
-                <td className="px-4 py-3 text-sm text-telivity-slate">{item.description}</td>
-                <td className="px-4 py-3"><StatusBadge status={item.status} label={t(`housekeeping.lostFound.statuses.${item.status}`, { defaultValue: item.status })} /></td>
-                <td className="px-4 py-3 text-sm text-telivity-slate">{format(new Date(item.foundAt), 'yyyy-MM-dd')}</td>
-                <td className="px-4 py-3 text-sm text-telivity-slate">{format(new Date(item.disposeAfter), 'yyyy-MM-dd')}</td>
-              </tr>
-            ))}
+            {items.map(
+              (item: { id: string; tagCode: string; description: string; status: string; foundAt: string; disposeAfter: string }) => (
+                <tr key={item.id} className="border-b border-gray-50">
+                  <td className="px-4 py-3 text-sm font-medium text-telivity-navy">{item.tagCode}</td>
+                  <td className="px-4 py-3 text-sm text-telivity-slate">{item.description}</td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={item.status} label={t(`housekeeping.lostFound.statuses.${item.status}`, { defaultValue: item.status })} />
+                  </td>
+                  <td className="px-4 py-3 text-sm text-telivity-slate">{format(new Date(item.foundAt), 'yyyy-MM-dd')}</td>
+                  <td className="px-4 py-3 text-sm text-telivity-slate">{format(new Date(item.disposeAfter), 'yyyy-MM-dd')}</td>
+                </tr>
+              ),
+            )}
           </tbody>
         </table>
-        {items.length === 0 && <p className="p-6 text-center text-telivity-mid-grey text-sm">{t('housekeeping.lostFound.noItems')}</p>}
+        {items.length === 0 && (
+          <p className="p-6 text-center text-telivity-mid-grey text-sm">{t('housekeeping.lostFound.noItems')}</p>
+        )}
       </div>
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={t('housekeeping.lostFound.logItem')}>
@@ -1026,115 +1139,33 @@ function LostAndFoundPanel() {
 
 // ---- Service Requests ----
 function ServiceRequestsPanel() {
-  const { t } = useTranslation();
   const { propertyId } = useProperty();
-  const queryClient = useQueryClient();
-  const [statusFilter, setStatusFilter] = useState('');
-  const [createOpen, setCreateOpen] = useState(false);
-  const [title, setTitle] = useState('');
-  const [type, setType] = useState('service_request');
-
-  const { data } = useQuery({
-    queryKey: ['service-requests', propertyId, statusFilter],
-    queryFn: () =>
-      api.get('/v1/service-requests', { params: { propertyId, status: statusFilter || undefined } }).then((r) => r.data),
-    enabled: !!propertyId,
-  });
-
-  const requests = data?.data ?? data ?? [];
-
-  const createMutation = useMutation({
-    mutationFn: () => api.post('/v1/service-requests', { propertyId, title, type }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['service-requests'] });
-      setCreateOpen(false);
-      setTitle('');
-    },
-  });
-
-  const taskMutation = useMutation({
-    mutationFn: (id: string) => api.post(`/v1/service-requests/${id}/create-task`, { propertyId }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['service-requests', 'housekeeping'] }),
-  });
-
-  if (!propertyId) {
-    return <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('common.selectProperty')}</div>;
-  }
-
   return (
-    <div className="space-y-4">
-      <div className="flex gap-2 items-center">
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm">
-          <option value="">{t('housekeeping.allStatus')}</option>
-          {(['open', 'in_progress', 'done', 'cancelled'] as const).map((s) => (
-            <option key={s} value={s}>{t(`housekeeping.serviceRequests.statuses.${s}`)}</option>
-          ))}
-        </select>
-        <button onClick={() => setCreateOpen(true)} className="ml-auto flex items-center gap-2 bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold">
-          <Plus size={16} /> {t('housekeeping.serviceRequests.newRequest')}
-        </button>
-      </div>
-
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="bg-telivity-teal/5 border-b border-gray-100">
-              <th className="px-4 py-3 text-left text-xs font-semibold text-telivity-slate uppercase">{t('common.title', { defaultValue: 'Title' })}</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-telivity-slate uppercase">{t('housekeeping.type')}</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-telivity-slate uppercase">{t('common.status')}</th>
-              <th className="px-4 py-3 text-left text-xs font-semibold text-telivity-slate uppercase"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {requests.map((req: { id: string; title: string; type: string; status: string; linkedTaskId?: string; roomId?: string }) => (
-              <tr key={req.id} className="border-b border-gray-50">
-                <td className="px-4 py-3 text-sm font-medium text-telivity-navy">{req.title}</td>
-                <td className="px-4 py-3 text-sm text-telivity-slate">{t(`housekeeping.serviceRequests.types.${req.type}`, { defaultValue: req.type })}</td>
-                <td className="px-4 py-3"><StatusBadge status={req.status} label={t(`housekeeping.serviceRequests.statuses.${req.status}`, { defaultValue: req.status })} /></td>
-                <td className="px-4 py-3 text-right">
-                  {!req.linkedTaskId && req.roomId && req.status === 'open' && (
-                    <button onClick={() => taskMutation.mutate(req.id)} disabled={taskMutation.isPending} className="text-xs text-telivity-teal font-medium hover:underline">
-                      {t('housekeeping.serviceRequests.createTask')}
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {requests.length === 0 && <p className="p-6 text-center text-telivity-mid-grey text-sm">{t('housekeeping.serviceRequests.noRequests')}</p>}
-      </div>
-
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={t('housekeeping.serviceRequests.newRequest')}>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('common.title', { defaultValue: 'Title' })} *</label>
-            <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal" />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('housekeeping.type')}</label>
-            <select value={type} onChange={(e) => setType(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm">
-              {(['maintenance', 'turndown', 'deep_clean', 'service_request'] as const).map((tp) => (
-                <option key={tp} value={tp}>{t(`housekeeping.serviceRequests.types.${tp}`)}</option>
-              ))}
-            </select>
-          </div>
-          <button onClick={() => createMutation.mutate()} disabled={!title.trim() || createMutation.isPending} className="w-full bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">
-            {createMutation.isPending ? t('common.creating') : t('common.create')}
-          </button>
-        </div>
-      </Modal>
+    <div className="space-y-3 rounded-xl bg-white p-6 shadow-sm">
+      <h2 className="text-lg font-semibold text-telivity-navy">
+        Гостевые запросы
+      </h2>
+      <p className="text-sm text-telivity-slate">
+        Запросы, передача в уборку и ремонт и актуальные статусы доступны в
+        общей операционной очереди.
+      </p>
+      <a
+        href={'/operations?tab=tasks&propertyId=' + encodeURIComponent(propertyId ?? '')}
+        className="inline-flex rounded-lg bg-telivity-teal px-4 py-2 text-sm font-semibold text-white"
+      >
+        Открыть запросы и задачи →
+      </a>
     </div>
   );
 }
-
-// ---- Main Router ----
 export default function Housekeeping() {
   const { t } = useTranslation();
-  const {propertyId}=useProperty();
+  const { propertyId } = useProperty();
   const [params,setParams]=useSearchParams();
-  const currentTab=params.get('tab');const tab=['dashboard','tasks','shifts','analytics','lostFound','serviceRequests'].includes(currentTab??'')?currentTab:'tasks';
-  const setTab=(value:string)=>setParams(p=>{p.set('tab',value);return p;});
+  const currentTab=params.get('tab');
+  const tab=['dashboard','tasks','shifts','analytics','lostFound','serviceRequests'].includes(currentTab??'')?currentTab:'tasks';
+  const setTab = (value: string) =>
+    setParams((p) => {p.set('tab',value);return p;});
 
   return (
     <div>
@@ -1152,8 +1183,12 @@ export default function Housekeeping() {
               tab === tabName ? 'bg-telivity-teal text-white' : 'text-telivity-slate hover:bg-telivity-light-grey'
             }`}
           >
-            {tabName === 'lostFound' && <Package size={14} className="inline mr-1" />}
-            {tabName === 'serviceRequests' && <ClipboardList size={14} className="inline mr-1" />}
+            {tabName === 'lostFound' && (
+              <Package size={14} className="inline mr-1" />
+            )}
+            {tabName === 'serviceRequests' && (
+              <ClipboardList size={14} className="inline mr-1" />
+            )}
             {tabName==='shifts'?'Смены':t(`housekeeping.tabs.${tabName}`)}
           </button>
         ))}

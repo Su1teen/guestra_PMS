@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, gt, lt, notInArray, sql } from 'drizzle-orm';
-import { bookings, guests, reservations, rooms, roomTypes, icalBlocks, icalFeeds, folios } from '@telivityhaip/database';
+import { bookings, guests, reservations, rooms, roomTypes, icalBlocks, icalFeeds, folios, roomInventoryBlocks, properties } from '@telivityhaip/database';
+import { activeInventoryBlockConditions } from '../room/room-inventory-policy';
 import { DRIZZLE } from '../../database/database.module';
 import { AvailabilityService, stayDates } from './availability.service';
 import { CalendarRangeDto } from './dto/calendar-range.dto';
@@ -41,8 +42,12 @@ export class ReservationCalendarService {
         .from(icalBlocks).innerJoin(icalFeeds, and(eq(icalFeeds.id, icalBlocks.feedId), eq(icalFeeds.propertyId, property), eq(icalFeeds.isActive, true)))
         .where(and(eq(icalBlocks.propertyId, property), lt(icalBlocks.startDate, dto.checkOut), gt(icalBlocks.endDate, dto.checkIn)));
       const availability = await this.availability.searchAvailability(property, dto.checkIn, dto.checkOut, undefined, tx);
+      const [settings]=await tx.select({timezone:properties.timezone}).from(properties).where(eq(properties.id,property));
+      const today=new Intl.DateTimeFormat('sv-SE',{timeZone:settings?.timezone??'UTC'}).format(new Date());
+      const inventoryBlocks=await tx.select().from(roomInventoryBlocks).where(activeInventoryBlockConditions(property,dto.checkOut));
       return { checkIn: dto.checkIn, checkOut: dto.checkOut, complete: true, rooms: roomRows, roomTypes: types,
-        reservations: rows.map(({ firstName, lastName, ...row }: any) => ({ ...row, guestName: [firstName, lastName].filter(Boolean).join(' ') })), blocks, availability };
+        reservations: rows.map(({ firstName, lastName, ...row }: any) => ({ ...row, guestName: [firstName, lastName].filter(Boolean).join(' ') })), blocks, availability,
+        inventoryBlocks:inventoryBlocks.map((block:any)=>({...block,overdue:block.endDate<=today,releaseRequired:true})) };
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' });
   }
 }

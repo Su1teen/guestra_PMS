@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createHmac } from 'crypto';
+import { createServer } from 'node:net';
 import { WebhookDeliveryService } from './webhook-delivery.service';
 import { assertSafeOutboundUrl } from '../../common/security/url-guard';
 
@@ -148,6 +149,31 @@ describe('WebhookDeliveryService', () => {
     expect(stored.status).toBe('pending');
     expect(stored.attempts).toBe(0);
   });
+
+  it('rejects a real producer against offline Redis in bounded time while retaining the pending delivery', async () => {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as { port: number };
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    const previous = process.env['REDIS_URL'];
+    process.env['REDIS_URL'] = 'redis://127.0.0.1:' + address.port;
+    const db = createStatefulMockDb(subscription);
+    const service = new WebhookDeliveryService(db as any);
+    try {
+      const started = Date.now();
+      await expect(service.enqueue(payload, subscription.id, 'offline-event')).rejects.toThrow();
+      expect(Date.now() - started).toBeLessThan(4500);
+      expect(db._deliveries.size).toBe(1);
+      expect([...db._deliveries.values()][0]).toMatchObject({ status: 'pending', attempts: 0 });
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      await service.onModuleDestroy();
+      if (previous === undefined) delete process.env['REDIS_URL'];
+      else process.env['REDIS_URL'] = previous;
+    }
+  }, 6000);
 
   it('uses the delivery row ID as the event header for legacy events', async () => {
     fetchMock.mockResolvedValue({ ok: true, status: 200 });

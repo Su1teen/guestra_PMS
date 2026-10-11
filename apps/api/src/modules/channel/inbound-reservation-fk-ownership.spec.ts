@@ -7,6 +7,7 @@ import { ChannelService } from './channel.service';
 import { ChannelAdapterFactory } from './channel-adapter.factory';
 import { AriService } from './ari.service';
 import { WebhookService } from '../webhook/webhook.service';
+import { RoomStatusService } from '../room/room-status.service';
 import { AvailabilityService } from '../reservation/availability.service';
 
 /**
@@ -39,6 +40,7 @@ async function mkSvc(db: any) {
     providers: [
       InboundReservationService,
       { provide: DRIZZLE, useValue: db },
+      { provide: RoomStatusService, useValue: {} },
       { provide: ChannelService, useValue: {} },
       { provide: ChannelAdapterFactory, useValue: {} },
       { provide: AriService, useValue: {} },

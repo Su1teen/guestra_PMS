@@ -1,8 +1,9 @@
 import { Injectable, BadRequestException, ConflictException, ForbiddenException, Inject, NotFoundException } from '@nestjs/common';
 import { eq, and, gt, lt, notInArray } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { bookingEngineIdempotency, bookings, reservations, rooms } from '@telivityhaip/database';
+import { bookingEngineIdempotency, bookings, reservations, rooms, roomInventoryBlocks } from '@telivityhaip/database';
 import type { DepositPolicy } from '@telivityhaip/database';
+import { activeInventoryBlockConditions } from '../room/room-inventory-policy';
 import { DRIZZLE } from '../../database/database.module';
 import { ConnectSearchService } from '../connect/connect-search.service';
 import { ConnectBookingService } from '../connect/connect-booking.service';
@@ -650,6 +651,10 @@ export class BookingEngineService {
     if (room.status === 'out_of_order' || room.status === 'out_of_service') {
       return { room, available: false, reason: `Room is ${room.status}` };
     }
+
+    const blocks = await db.select({id:roomInventoryBlocks.id}).from(roomInventoryBlocks)
+      .where(activeInventoryBlockConditions(propertyId, request.checkOut, [room.id])).limit(1);
+    if (blocks.length) return {room, available:false, reason:'Номер недоступен до подтверждённого возврата в эксплуатацию.'};
 
     const conflicts = await db
       .select({ id: reservations.id })

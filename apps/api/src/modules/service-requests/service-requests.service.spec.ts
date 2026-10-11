@@ -4,6 +4,8 @@ import { ServiceRequestsService } from './service-requests.service';
 import { HousekeepingService } from '../housekeeping/housekeeping.service';
 import { DRIZZLE } from '../../database/database.module';
 import { WebhookService } from '../webhook/webhook.service';
+import { MaintenanceService } from '../maintenance/maintenance.service';
+import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 
 const mockRequest = {
   id: 'sr-001',
@@ -60,6 +62,8 @@ describe('ServiceRequestsService', () => {
         { provide: DRIZZLE, useValue: db },
         { provide: HousekeepingService, useValue: mockHousekeepingService },
         { provide: WebhookService, useValue: mockWebhookService },
+        { provide: MaintenanceService, useValue: {} },
+        { provide: DomainEventOutboxService, useValue: {} },
       ],
     }).compile();
 
