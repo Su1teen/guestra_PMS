@@ -129,7 +129,41 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
       <div className="p-6" role="tabpanel">
         {query.isError ? <QueryError onRetry={() => void query.refetch()}/> : !reservation ? <p role="status">{t('reservationWorkspace.loading')}</p> : tab === 'guests' ? (
           guestQuery.isError ? <QueryError onRetry={() => void guestQuery.refetch()}/> : guestQuery.data && propertyId ? <Guest360Panel data={guestQuery.data} propertyId={propertyId}/> : <p role="status">{t('reservationWorkspace.loading')}</p>
-        ) : tab === 'notes' ? propertyId && <><ReservationOpsNotes reservationId={reservationId} propertyId={propertyId}/>{hasPermission('reservations.write') && <ReservationMessageCompose reservationId={reservationId} propertyId={propertyId}/>}</> : tab === 'services' ? <><h3 className="mb-2 text-sm font-semibold">Пакеты и услуги проживания</h3><QueryRows query={servicesQuery}>{(rows: any[]) => rows.map((row: any) => <div key={row.id} className="flex justify-between gap-3 rounded-lg border p-3 text-sm"><span>{row.service?.name ?? row.serviceName ?? row.name ?? t('reservationWorkspace.services')} · {t('reservationWorkspace.serviceStatuses.' + row.status, { defaultValue: t('reservationWorkspace.unknownStatus') })}</span><span>{formatMoney(row.totalAmount ?? row.lineTotal, row.currencyCode ?? currencyCode)}</span></div>)}</QueryRows>{hasPermission('services.read') && <><h3 className="mb-2 mt-5 text-sm font-semibold">Записи на услуги</h3><QueryRows query={scheduledServicesQuery}>{(rows: any[]) => rows.map(row => <button key={row.id} className="mb-2 flex w-full flex-wrap justify-between gap-3 rounded-lg border p-3 text-left text-sm" onClick={() => go('/services?bookingId=' + row.id + '&date=' + String(row.startAt).slice(0,10))}><span>{row.name} · {serviceStatus(row.status)}<span className="mt-1 block text-xs text-gray-500">{new Date(row.startAt).toLocaleString(i18n.resolvedLanguage)}</span></span><span>{formatMoney(row.totalAmount,row.currencyCode)}</span></button>)}</QueryRows></>}</> : tab === 'folios' ? <QueryRows query={folioQuery}>{(rows: any[]) => rows.map((f: any) => <button key={f.id} className="flex w-full justify-between rounded-lg border p-4 text-sm" onClick={() => go('/folios/' + f.id)}><span>{t('reservationWorkspace.folios')} · {t('reservationWorkspace.folioStatuses.' + f.status, { defaultValue: t('reservationWorkspace.unknownStatus') })}</span><strong>{t('frontDesk.balance')}: {formatMoney(f.balance, f.currencyCode ?? currencyCode)}</strong></button>)}</QueryRows> : tab === 'tasks' ? <QueryRows query={tasksQuery}>{(rows: any[]) => rows.map((task: any) => <button key={task.id} className="block w-full rounded-lg border p-3 text-left text-sm" onClick={() => go('/operations?tab=tasks&taskId=' + task.id)}>{task.title}</button>)}</QueryRows> : tab === 'history' ? <QueryRows query={historyQuery}>{(rows: any[]) => rows.map((event: any) => <div key={event.id} className="rounded-lg border p-3 text-sm"><p>{t('reservationWorkspace.auditActions.' + event.action, { defaultValue: t('reservationWorkspace.historyEvent') })}</p><p className="mt-1 text-xs text-gray-500">{new Date(event.occurredAt).toLocaleString(i18n.resolvedLanguage)} · {event.userEmail ?? t('reservationWorkspace.system')}</p></div>)}</QueryRows> : <div className="space-y-5">
+        ) : tab === 'notes' ? propertyId && <><ReservationOpsNotes reservationId={reservationId} propertyId={propertyId}/>{hasPermission('reservations.write') && <ReservationMessageCompose reservationId={reservationId} propertyId={propertyId}/>}</> : tab === 'services' ? <><h3 className="mb-2 text-sm font-semibold">Пакеты и услуги проживания</h3><QueryRows query={servicesQuery}>{(rows: any[]) => rows.map((row: any) => <div key={row.id} className="flex justify-between gap-3 rounded-lg border p-3 text-sm"><span>{row.service?.name ?? row.serviceName ?? row.name ?? t('reservationWorkspace.services')} · {t('reservationWorkspace.serviceStatuses.' + row.status, { defaultValue: t('reservationWorkspace.unknownStatus') })}</span><span>{formatMoney(row.totalAmount ?? row.lineTotal, row.currencyCode ?? currencyCode)}</span></div>)}</QueryRows>{hasPermission('services.read') && <><h3 className="mb-2 mt-5 text-sm font-semibold">Записи на услуги</h3><QueryRows query={scheduledServicesQuery}>{(rows: any[]) => rows.map(row => <button key={row.id} className="mb-2 flex w-full flex-wrap justify-between gap-3 rounded-lg border p-3 text-left text-sm" onClick={() => go('/services?bookingId=' + row.id + '&date=' + String(row.startAt).slice(0,10))}><span>{row.name} · {serviceStatus(row.status)}<span className="mt-1 block text-xs text-gray-500">{new Date(row.startAt).toLocaleString(i18n.resolvedLanguage)}</span></span><span>{formatMoney(row.totalAmount,row.currencyCode)}</span></button>)}</QueryRows></>}</> : tab === 'folios' ? <QueryRows query={folioQuery}>{(rows: any[]) => rows.map((f: any) => <button key={f.id} className="flex w-full justify-between rounded-lg border p-4 text-sm" onClick={() => go('/folios/' + f.id)}><span>{t('reservationWorkspace.folios')} · {t('reservationWorkspace.folioStatuses.' + f.status, { defaultValue: t('reservationWorkspace.unknownStatus') })}</span><strong>{t('frontDesk.balance')}: {formatMoney(f.balance, f.currencyCode ?? currencyCode)}</strong></button>)}</QueryRows> : tab === 'tasks' ? <QueryRows query={tasksQuery}>
+              {(rows: any[]) =>
+                rows.map((task: any) => (
+                  <button
+                    key={task.id}
+                    className="block w-full rounded-lg border p-3 text-left text-sm"
+                    onClick={() =>
+                      go(
+                        task.linkedOperation?.href ??
+                          '/operations?tab=tasks&taskId=' + task.id,
+                      )
+                    }
+                  >
+                    {task.title}
+                    <span className="mt-1 block text-xs text-telivity-mid-grey">
+                      {(
+                        {
+                          open: 'Открыт',
+                          assigned: 'Назначен',
+                          in_progress: 'В работе',
+                          done: 'Выполнен',
+                          completed: 'Выполнен',
+                          cancelled: 'Отменён',
+                        } as Record<string, string>
+                      )[task.status] ?? 'Статус уточняется'}
+                    </span>
+                    {task.coordinationWarning && (
+                      <span className="mt-1 block text-xs text-amber-800">
+                        {task.coordinationWarning}
+                      </span>
+                    )}
+                  </button>
+                ))
+              }
+            </QueryRows> : tab === 'history' ? <QueryRows query={historyQuery}>{(rows: any[]) => rows.map((event: any) => <div key={event.id} className="rounded-lg border p-3 text-sm"><p>{t('reservationWorkspace.auditActions.' + event.action, { defaultValue: t('reservationWorkspace.historyEvent') })}</p><p className="mt-1 text-xs text-gray-500">{new Date(event.occurredAt).toLocaleString(i18n.resolvedLanguage)} · {event.userEmail ?? t('reservationWorkspace.system')}</p></div>)}</QueryRows> : <div className="space-y-5">
           {hasPermission('guests.read') && envelope?.guest && <div className="rounded-xl bg-gray-50 p-4 text-sm"><p>{envelope.guest.email ?? '—'}</p><p className="mt-1">{envelope.guest.phone ?? '—'}</p></div>}
           <StatusBadge status={reservation.status} label={t(`reservations.statuses.${reservation.status}`, { defaultValue: t('reservationWorkspace.unknownStatus') })}/>
           <div className="grid grid-cols-2 gap-4">
