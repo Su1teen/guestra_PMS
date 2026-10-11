@@ -382,21 +382,36 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async enqueueDeliveryJob(deliveryId: string, propertyId: string) {
-    await this.getQueue().add(
-      WEBHOOK_DELIVERY_JOB_NAME,
-      { deliveryId, propertyId },
-      {
-        ...this.defaultJobOptions,
-        jobId: deliveryId,
-      },
-    );
+    const queue = this.getQueue();
+    try {
+      await queue.add(
+        WEBHOOK_DELIVERY_JOB_NAME,
+        { deliveryId, propertyId },
+        {
+          ...this.defaultJobOptions,
+          jobId: deliveryId,
+        },
+      );
+    } catch (error) {
+      // Discard a failed owned producer so outbox recovery can connect again after Redis returns.
+      if (this.ownsQueue && this.queue === queue) {
+        this.queue = undefined;
+        this.ownsQueue = false;
+        await queue.close?.().catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   private getQueue(): WebhookDeliveryQueue {
     if (!this.queue) {
-      this.queue = new Queue<WebhookDeliveryJob>(WEBHOOK_DELIVERY_QUEUE_NAME, {
+      const queue = new Queue<WebhookDeliveryJob>(WEBHOOK_DELIVERY_QUEUE_NAME, {
         connection: this.createRedisConnectionOptions(),
       });
+      queue.on('error', () =>
+        this.logger.warn('Webhook producer cannot reach Redis; the persisted delivery remains pending'),
+      );
+      this.queue = queue;
       this.ownsQueue = true;
     }
     return this.queue;
@@ -407,7 +422,7 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
       const worker = new Worker<WebhookDeliveryJob>(
         WEBHOOK_DELIVERY_QUEUE_NAME,
         async (job) => this.processDeliveryJob(job.data),
-        { connection: this.createRedisConnectionOptions() },
+        { connection: this.createRedisConnectionOptions(true) },
       );
       worker.on('error', (err) => {
         this.logger.error(`Webhook delivery worker error: ${err?.message ?? err}`);
@@ -418,7 +433,7 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
     return this.worker;
   }
 
-  private createRedisConnectionOptions() {
+  private createRedisConnectionOptions(blockingWorker = false) {
     const redisUrl = process.env['REDIS_URL'] ?? 'redis://localhost:6379';
     const parsed = new URL(redisUrl);
     const dbPath = parsed.pathname.replace(/^\//, '');
@@ -434,7 +449,14 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
       password: parsed.password ? decodeURIComponent(parsed.password) : undefined,
       db,
       tls: parsed.protocol === 'rediss:' ? {} : undefined,
-      maxRetriesPerRequest: null,
+      // HTTP producers fail in bounded time; only the background worker waits indefinitely.
+      maxRetriesPerRequest: blockingWorker ? null : 1,
+      enableOfflineQueue: blockingWorker,
+      connectTimeout: 2000,
+      commandTimeout: blockingWorker ? undefined : 2000,
+      retryStrategy: blockingWorker
+        ? undefined
+        : (attempt: number) => (attempt <= 1 ? 100 : null),
     };
   }
 

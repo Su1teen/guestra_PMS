@@ -37,13 +37,16 @@ export default function Modal({
     document.body.style.overflow = 'hidden';
     panelRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement)?.closest('[role="dialog"]') !== panelRef.current) return;
+      // A completed action can remove the focused button and move focus to body.
+      // Only the foremost dialog may recover it or handle keyboard dismissal.
+      const dialogs = document.querySelectorAll('[role="dialog"]');
+      if (dialogs[dialogs.length - 1] !== panelRef.current) return;
       if (event.key === 'Tab') {
         const controls = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex="0"]') ?? []).filter(el => el.getClientRects().length > 0);
         const first = controls[0]; const last = controls[controls.length - 1];
         if (!first) event.preventDefault();
-        else if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current)) { event.preventDefault(); last.focus(); }
-        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panelRef.current)) { event.preventDefault(); first.focus(); }
+        else if (event.shiftKey && (document.activeElement === first || document.activeElement === panelRef.current || !panelRef.current?.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || document.activeElement === panelRef.current || !panelRef.current?.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
       }
       if (event.key === 'Escape' && !closeDisabledRef.current) {
         event.preventDefault();

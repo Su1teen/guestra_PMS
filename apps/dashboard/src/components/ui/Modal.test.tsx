@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import Modal from './Modal';
 
@@ -36,5 +36,19 @@ describe('Modal', () => {
     render(<Modal open={true} onClose={() => {}} title="Wide" wide>Content</Modal>);
     const modal = screen.getByText('Content').closest('.relative');
     expect(modal?.className).toContain('max-w-2xl');
+  });
+
+  it('recovers focus inside the dialog when a completed action removes its focused button', () => {
+    const rects = vi.spyOn(HTMLElement.prototype, 'getClientRects').mockReturnValue([{}] as any);
+    try {
+      const { rerender } = render(<Modal open onClose={() => {}} title="Return"><button>Confirm return</button></Modal>);
+      screen.getByRole('button', { name: 'Confirm return' }).focus();
+      rerender(<Modal open onClose={() => {}} title="Return"><p>Returned</p></Modal>);
+      expect(document.activeElement).toBe(document.body);
+      fireEvent.keyDown(document.body, { key: 'Tab' });
+      expect(screen.getByRole('dialog')).toContainElement(document.activeElement as HTMLElement);
+    } finally {
+      rects.mockRestore();
+    }
   });
 });
