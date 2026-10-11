@@ -25,6 +25,8 @@ export const staffShifts = pgTable(
       .references(() => users.id),
     startAt: timestamp('start_at', { withTimezone: true }).notNull(),
     endAt: timestamp('end_at', { withTimezone: true }).notNull(),
+    kind: varchar('kind', { length: 20 }).notNull().default('shift'),
+    absenceType: varchar('absence_type', { length: 20 }),
     status: varchar('status', { length: 20 }).notNull().default('planned'),
     breaks: jsonb('breaks')
       .$type<Array<{ startAt: string; endAt: string }>>()
@@ -53,4 +55,44 @@ export const staffShifts = pgTable(
       t.idempotencyKey,
     ),
   ],
+);
+
+/** Reusable patterns materialize explicit shifts in the existing calendar. */
+export const staffShiftTemplates = pgTable(
+  'staff_shift_templates',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    propertyId: uuid('property_id')
+      .notNull()
+      .references(() => properties.id),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    name: varchar('name', { length: 100 }).notNull(),
+    weekdays: jsonb('weekdays').$type<number[]>().notNull(),
+    startTime: varchar('start_time', { length: 5 }).notNull(),
+    endTime: varchar('end_time', { length: 5 }).notNull(),
+    overnight: integer('overnight').notNull().default(0),
+    breaks: jsonb('breaks')
+      .$type<
+        Array<{
+          startTime: string;
+          endTime: string;
+          startDay: number;
+          endDay: number;
+        }>
+      >()
+      .notNull()
+      .default([]),
+    maxOpenTasks: integer('max_open_tasks'),
+    notes: text('notes'),
+    revision: integer('revision').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index('staff_shift_templates_property_idx').on(t.propertyId)],
 );

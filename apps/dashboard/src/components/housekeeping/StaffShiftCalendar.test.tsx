@@ -132,7 +132,38 @@ it('recovers a token after reload without storing staff data or submitting a new
   await userEvent.click(
     screen.getByRole('button', { name: 'Проверить результат' }),
   );
-  await screen.findByText('Исходный запрос принят: смена сохранена.');
+  await screen.findByText('Исходная операция календаря сохранена.');
   expect(sessionStorage.getItem(key)).toBeNull();
   expect(api.post).not.toHaveBeenCalled();
+});
+
+it('records absence in the existing calendar with explicit property times and no break or task limit', async () => {
+  renderWithProviders(<StaffShiftCalendar />);
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Отпуск / отсутствие' }),
+  );
+  fireEvent.input(screen.getByLabelText('Начало отсутствия'), {
+    target: { value: '2027-01-10T09:00' },
+  });
+  fireEvent.input(screen.getByLabelText('Конец отсутствия'), {
+    target: { value: '2027-01-20T18:00' },
+  });
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Сохранить отсутствие' }),
+  );
+  await waitFor(() =>
+    expect(api.post).toHaveBeenCalledWith(
+      '/v1/housekeeping/shifts',
+      expect.objectContaining({
+        kind: 'absence',
+        absenceType: 'vacation',
+        propertyId: 'hotel',
+        breaks: [],
+        startAt: '2027-01-10T04:00:00.000Z',
+      }),
+    ),
+  );
+  expect(vi.mocked(api.post).mock.calls[0][1]).not.toHaveProperty(
+    'maxOpenTasks',
+  );
 });

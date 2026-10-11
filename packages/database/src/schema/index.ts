@@ -110,7 +110,7 @@ export {
 } from './ops.js';
 
 // Demand capture — turnaway + waitlist
-export { staffShifts } from './staff-shift.js';
+export { staffShifts, staffShiftTemplates } from './staff-shift.js';
 export { roomInventoryBlocks } from './room-inventory-block.js';
 export {
   turnawayTypeEnum,
