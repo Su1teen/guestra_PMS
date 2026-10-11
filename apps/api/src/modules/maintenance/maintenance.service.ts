@@ -5,6 +5,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import {
   and,
@@ -13,6 +14,8 @@ import {
   inArray,
   like,
   lt,
+  gt,
+  notInArray,
   ne,
   not,
   or,
@@ -23,6 +26,7 @@ import {
   guestPropertyLinks,
   guests,
   maintenanceTickets,
+  roomInventoryBlocks,
   properties,
   reservationGuests,
   reservations,
@@ -34,6 +38,14 @@ import { DRIZZLE } from '../../database/database.module';
 import { actorFields, type AuditActor } from '../../common/audit/audit-actor';
 import { RoomStatusService } from '../room/room-status.service';
 import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
+import {
+  AvailabilityService,
+  stayDates,
+} from '../reservation/availability.service';
+import type {
+  InventoryBlockDto,
+  InventoryReturnDto,
+} from './dto/inventory-block.dto';
 import type {
   CreateMaintenanceTicketDto,
   ListMaintenanceTicketsDto,
@@ -50,6 +62,7 @@ export class MaintenanceService {
     @Inject(DRIZZLE) private readonly db: any,
     private readonly roomStatus: RoomStatusService,
     private readonly outbox: DomainEventOutboxService,
+    @Optional() private readonly availability?: AvailabilityService,
   ) {}
 
   private async ticket(
@@ -136,7 +149,11 @@ export class MaintenanceService {
     actor: AuditActor | undefined,
     action: string,
     work: (tx: any, current: any, room: any, events: string[]) => Promise<any>,
-    options: { transaction?: any; eventIds?: string[] } = {},
+    options: {
+      transaction?: any;
+      eventIds?: string[];
+      inventoryBlock?: boolean;
+    } = {},
   ) {
     const key = input.idempotencyKey;
     if (
@@ -148,7 +165,10 @@ export class MaintenanceService {
     const fingerprint = JSON.stringify({ action, id: id ?? null, data });
     const events: string[] = options.eventIds ?? [];
     const operation = async (tx: any) => {
-      const initial = id ? await this.ticket(id, propertyId, tx) : null;
+      const target = options.inventoryBlock
+        ? this.inventoryBlock.bind(this)
+        : this.ticket.bind(this);
+      const initial = id ? await target(id, propertyId, tx) : null;
       const roomId = initial?.roomId ?? input.roomId;
       // Room relation is immutable; inventory writers consistently lock type -> room -> ticket.
       const room = roomId
@@ -187,7 +207,7 @@ export class MaintenanceService {
           return receipt.value.response;
         }
       }
-      const current = id ? await this.ticket(id, propertyId, tx, true) : null;
+      const current = id ? await target(id, propertyId, tx, true) : null;
       if (
         current &&
         input.expectedRevision !== undefined &&
@@ -201,17 +221,15 @@ export class MaintenanceService {
         );
       const response = publicRecord(await work(tx, current, room, events));
       if (key)
-        await tx
-          .insert(auditLogs)
-          .values({
-            propertyId,
-            entityType: 'maintenance_request',
-            entityId: response.id ?? id,
-            action: 'create',
-            description: 'maintenance.request:' + key,
-            newValue: { fingerprint, response },
-            ...actorFields(actor),
-          });
+        await tx.insert(auditLogs).values({
+          propertyId,
+          entityType: 'maintenance_request',
+          entityId: response.id ?? id,
+          action: 'create',
+          description: 'maintenance.request:' + key,
+          newValue: { fingerprint, response },
+          ...actorFields(actor),
+        });
       return response;
     };
     const result = options.transaction
@@ -237,18 +255,16 @@ export class MaintenanceService {
     event?: string,
     eventData?: Record<string, unknown>,
   ) {
-    await tx
-      .insert(auditLogs)
-      .values({
-        propertyId: next.propertyId,
-        entityType: 'maintenance_ticket',
-        entityId: next.id,
-        action,
-        description: action,
-        previousValue: previous ? publicRecord(previous) : null,
-        newValue: publicRecord(next),
-        ...actorFields(actor),
-      });
+    await tx.insert(auditLogs).values({
+      propertyId: next.propertyId,
+      entityType: 'maintenance_ticket',
+      entityId: next.id,
+      action,
+      description: action,
+      previousValue: previous ? publicRecord(previous) : null,
+      newValue: publicRecord(next),
+      ...actorFields(actor),
+    });
     const eventId = randomUUID();
     await this.outbox.persist(
       tx,
@@ -264,7 +280,14 @@ export class MaintenanceService {
           previousStatus: previous?.status ?? null,
           status: next.status,
           revision: next.revision,
-          action: ({ comment: 'comment_added', attachment: 'attachment_added', return_to_service: 'returned_to_service' } as Record<string, string>)[action] ?? action,
+          action:
+            (
+              {
+                comment: 'comment_added',
+                attachment: 'attachment_added',
+                return_to_service: 'returned_to_service',
+              } as Record<string, string>
+            )[action] ?? action,
           ...eventData,
         },
       },
@@ -644,7 +667,10 @@ export class MaintenanceService {
           'return_to_service',
           events,
           undefined,
-          { roomStatus: roomReturned ? 'vacant_dirty' : room.status, roomReturned },
+          {
+            roomStatus: roomReturned ? 'vacant_dirty' : room.status,
+            roomReturned,
+          },
         );
         return {
           ...next,
@@ -653,6 +679,443 @@ export class MaintenanceService {
         };
       },
     );
+  }
+  private async inventoryBlock(
+    id: string,
+    propertyId: string,
+    db: any = this.db,
+    lock = false,
+  ) {
+    const query = db
+      .select()
+      .from(roomInventoryBlocks)
+      .where(
+        and(
+          eq(roomInventoryBlocks.id, id),
+          eq(roomInventoryBlocks.propertyId, propertyId),
+        ),
+      );
+    const [row] = await (lock ? query.for('update') : query);
+    if (!row)
+      throw new NotFoundException('Блокировка не найдена в этом объекте.');
+    return row;
+  }
+  private validateInventoryBlock(dto: InventoryBlockDto) {
+    if (
+      !/^\d{4}-\d{2}-\d{2}$/.test(dto.startDate) ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(dto.endDate)
+    )
+      throw new BadRequestException('Укажите даты блокировки без времени.');
+    try {
+      stayDates(dto.startDate, dto.endDate);
+    } catch {
+      throw new BadRequestException(
+        'Окончание блокировки должно быть позже начала; укажите корректные даты.',
+      );
+    }
+    if (
+      !['OOO', 'OOS'].includes(dto.kind) ||
+      !dto.reason?.trim() ||
+      !dto.idempotencyKey?.trim()
+    )
+      throw new BadRequestException('Укажите вид, причину и ключ блокировки.');
+  }
+  /** Uses canonical availability; preview never reserves inventory and is rechecked under type/room locks. */
+  async previewInventoryBlock(
+    dto: InventoryBlockDto,
+    id?: string,
+    db: any = this.db,
+    lockedRoom?: any,
+  ) {
+    this.validateInventoryBlock(dto);
+    let room = lockedRoom;
+    if (!room)
+      [room] = await db
+        .select()
+        .from(rooms)
+        .where(
+          and(eq(rooms.id, dto.roomId), eq(rooms.propertyId, dto.propertyId)),
+        );
+    if (!room) throw new NotFoundException('Номер не найден в этом объекте.');
+    if (!room?.isActive) throw new BadRequestException('Номер неактивен.');
+    if (id) {
+      const original = await this.inventoryBlock(id, dto.propertyId, db);
+      if (original.roomId !== dto.roomId)
+        throw new ConflictException(
+          'Нельзя изменить номер существующей блокировки.',
+        );
+    }
+    const stays = await db
+      .select({
+        id: reservations.id,
+        roomId: reservations.roomId,
+        arrivalDate: reservations.arrivalDate,
+        departureDate: reservations.departureDate,
+      })
+      .from(reservations)
+      .where(
+        and(
+          eq(reservations.propertyId, dto.propertyId),
+          eq(reservations.roomTypeId, room.roomTypeId),
+          notInArray(reservations.status, [
+            'cancelled',
+            'no_show',
+            'checked_out',
+          ]),
+          gt(reservations.departureDate, dto.startDate),
+        ),
+      )
+      .limit(5001);
+    if (stays.length > 5000)
+      throw new BadRequestException(
+        'Слишком много будущих броней для безопасной проверки блокировки.',
+      );
+    const conflicts = stays.filter((s: any) => s.roomId === room.id);
+    const checkOut = stays.reduce(
+      (end: string, s: any) => (s.departureDate > end ? s.departureDate : end),
+      dto.endDate,
+    );
+    const nights = stayDates(dto.startDate, checkOut);
+    if (nights.length > 730)
+      throw new BadRequestException(
+        'Горизонт проверки превышает 730 ночей. Требуется отдельная проверка будущего инвентаря.',
+      );
+    if (!this.availability)
+      throw new Error('Canonical AvailabilityService is required');
+    const capacity = await this.availability.searchAvailability(
+      dto.propertyId,
+      dto.startDate,
+      checkOut,
+      room.roomTypeId,
+      db,
+      {
+        excludeInventoryBlockId: id,
+        includeCapacity: true,
+        additionalBlocks: ['out_of_order', 'out_of_service'].includes(
+          room.status,
+        )
+          ? []
+          : [
+              {
+                roomId: room.id,
+                roomTypeId: room.roomTypeId,
+                startDate: dto.startDate,
+              },
+            ],
+      },
+    );
+    const shortages = capacity.filter(
+      (row) => (row.capacityShortfall ?? 0) > 0,
+    );
+    return {
+      canApply: conflicts.length === 0 && shortages.length === 0,
+      conflictingReservationIds: conflicts.map((s: any) => s.id),
+      shortages,
+      plannedStartDate: dto.startDate,
+      expectedEndDate: dto.endDate,
+      releaseRequired: true,
+      physicalRoomStatus: room.status,
+    };
+  }
+  async saveInventoryBlock(
+    dto: InventoryBlockDto,
+    id?: string,
+    actor?: AuditActor,
+  ) {
+    this.validateInventoryBlock(dto);
+    return this.mutate(
+      dto.propertyId,
+      id,
+      dto,
+      actor,
+      id ? 'inventory_block.update' : 'inventory_block.create',
+      async (tx, current, room, events) => {
+        if (
+          current &&
+          (current.status !== 'active' || dto.expectedRevision === undefined)
+        )
+          throw new ConflictException(
+            'Обновите активную блокировку перед изменением.',
+          );
+        if (current && current.roomId !== dto.roomId)
+          throw new ConflictException('Нельзя изменить номер блокировки.');
+        if (current && dto.startDate > current.startDate) {
+          const [settings] = await tx.select({ timezone: properties.timezone }).from(properties).where(eq(properties.id, dto.propertyId));
+          const today = new Intl.DateTimeFormat('sv-SE', { timeZone: settings.timezone ?? 'UTC' }).format(new Date());
+          if (current.startDate <= today) throw new ConflictException('Нельзя отложить уже действующую блокировку. Для открытия номера подтвердите Return-to-Service.');
+        }
+        if (dto.maintenanceTicketId) {
+          const ticket = await this.ticket(
+            dto.maintenanceTicketId,
+            dto.propertyId,
+            tx,
+          );
+          if (ticket.roomId !== room.id)
+            throw new BadRequestException('Ремонт относится к другому номеру.');
+        }
+        const preview = await this.previewInventoryBlock(dto, id, tx, room);
+        if (!preview.canApply)
+          throw new ConflictException({
+            code: 'INVENTORY_BLOCK_CONFLICT',
+            message:
+              'Блокировка конфликтует с существующими бронями или инвентарём.',
+            preview,
+          });
+        const values = {
+          startDate: dto.startDate,
+          endDate: dto.endDate,
+          kind: dto.kind,
+          reason: dto.reason.trim(),
+          maintenanceTicketId: dto.maintenanceTicketId ?? null,
+          updatedAt: new Date(),
+        };
+        const [next] = current
+          ? await tx
+              .update(roomInventoryBlocks)
+              .set({ ...values, revision: current.revision + 1 })
+              .where(
+                and(
+                  eq(roomInventoryBlocks.id, id!),
+                  eq(roomInventoryBlocks.propertyId, dto.propertyId),
+                ),
+              )
+              .returning()
+          : await tx
+              .insert(roomInventoryBlocks)
+              .values({
+                ...values,
+                roomId: room.id,
+                propertyId: dto.propertyId,
+              })
+              .returning();
+        await this.inventoryBlockEvent(
+          tx,
+          next,
+          current,
+          actor,
+          id ? 'update' : 'create',
+          events,
+        );
+        return next;
+      },
+      { inventoryBlock: true },
+    );
+  }
+  async returnInventoryBlock(
+    id: string,
+    dto: InventoryReturnDto,
+    actor?: AuditActor,
+  ) {
+    if (!dto.reason?.trim() || !dto.idempotencyKey?.trim())
+      throw new BadRequestException('Укажите причину и ключ возврата.');
+    return this.mutate(
+      dto.propertyId,
+      id,
+      dto,
+      actor,
+      'inventory_block.return',
+      async (tx, current, room, events) => {
+        if (current.status !== 'active' || dto.expectedRevision === undefined)
+          throw new ConflictException(
+            'Блокировка уже снята или версия не указана.',
+          );
+        const [property] = await tx
+          .select({ timezone: properties.timezone })
+          .from(properties)
+          .where(eq(properties.id, dto.propertyId));
+        const today = new Intl.DateTimeFormat('sv-SE', {
+          timeZone: property.timezone ?? 'UTC',
+        }).format(new Date());
+        const [readiness] = await this.roomStatus.operationalReadiness(
+          dto.propertyId,
+          today,
+          tx,
+          [room.id],
+          id,
+        );
+        const reasons = readiness!.reasons.filter(
+          (reason) => !reason.code.startsWith('planned_'),
+        );
+        const repairs = await tx
+          .select({ id: maintenanceTickets.id })
+          .from(maintenanceTickets)
+          .where(
+            and(
+              eq(maintenanceTickets.propertyId, dto.propertyId),
+              eq(maintenanceTickets.roomId, room.id),
+              inArray(maintenanceTickets.status, [
+                'open',
+                'assigned',
+                'in_progress',
+                'waiting_parts',
+              ]),
+            ),
+          );
+        if (reasons.length || repairs.length)
+          throw new ConflictException({
+            code: 'RETURN_NOT_READY',
+            message:
+              'Возврат не разрешён: завершите ремонт, уборку и необходимые инспекции.',
+            reasons,
+            maintenanceTicketIds: repairs.map((row: any) => row.id),
+          });
+        const [next] = await tx
+          .update(roomInventoryBlocks)
+          .set({
+            status: 'released',
+            releasedAt: new Date(),
+            revision: current.revision + 1,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(roomInventoryBlocks.id, id),
+              eq(roomInventoryBlocks.propertyId, dto.propertyId),
+            ),
+          )
+          .returning();
+        await this.inventoryBlockEvent(
+          tx,
+          next,
+          current,
+          actor,
+          'return_to_service',
+          events,
+          dto.reason.trim(),
+        );
+        const remaining = await tx
+          .select({
+            id: roomInventoryBlocks.id,
+            startDate: roomInventoryBlocks.startDate,
+          })
+          .from(roomInventoryBlocks)
+          .where(
+            and(
+              eq(roomInventoryBlocks.propertyId, dto.propertyId),
+              eq(roomInventoryBlocks.roomId, room.id),
+              eq(roomInventoryBlocks.status, 'active'),
+            ),
+          );
+        return {
+          ...next,
+          remainingBlockingBlockIds: remaining.map((row: any) => row.id),
+          availableNow: remaining.every((row: any) => row.startDate > today),
+        };
+      },
+      { inventoryBlock: true },
+    );
+  }
+  private async inventoryBlockEvent(
+    tx: any,
+    next: any,
+    previous: any,
+    actor: AuditActor | undefined,
+    action: string,
+    events: string[],
+    reason?: string,
+  ) {
+    await tx.insert(auditLogs).values({
+      propertyId: next.propertyId,
+      entityType: 'room_inventory_block',
+      entityId: next.id,
+      action,
+      description: reason ?? next.reason,
+      previousValue: previous ? publicRecord(previous) : null,
+      newValue: publicRecord(next),
+      ...actorFields(actor),
+    });
+    const eventId = randomUUID();
+    await this.outbox.persist(
+      tx,
+      {
+        propertyId: next.propertyId,
+        event: 'room.inventory_block_changed' as any,
+        entityType: 'room_inventory_block',
+        entityId: next.id,
+        timestamp: new Date().toISOString(),
+        data: {
+          blockId: next.id,
+          roomId: next.roomId,
+          kind: next.kind,
+          startDate: next.startDate,
+          expectedEndDate: next.endDate,
+          status: next.status,
+          revision: next.revision,
+          action,
+        },
+      },
+      eventId,
+    );
+    events.push(eventId);
+  }
+  async inventoryBlocks(propertyId: string, roomId?: string) {
+    const [property] = await this.db
+      .select({ timezone: properties.timezone })
+      .from(properties)
+      .where(eq(properties.id, propertyId));
+    if (!property) throw new NotFoundException('Объект не найден.');
+    const today = new Intl.DateTimeFormat('sv-SE', {
+      timeZone: property.timezone ?? 'UTC',
+    }).format(new Date());
+    const rows = await this.db
+      .select({
+        block: roomInventoryBlocks,
+        roomNumber: rooms.number,
+        physicalRoomStatus: rooms.status,
+      })
+      .from(roomInventoryBlocks)
+      .innerJoin(
+        rooms,
+        and(
+          eq(rooms.id, roomInventoryBlocks.roomId),
+          eq(rooms.propertyId, propertyId),
+        ),
+      )
+      .where(
+        and(
+          eq(roomInventoryBlocks.propertyId, propertyId),
+          eq(roomInventoryBlocks.status, 'active'),
+          roomId ? eq(roomInventoryBlocks.roomId, roomId) : undefined,
+        ),
+      )
+      .orderBy(desc(roomInventoryBlocks.createdAt))
+      .limit(1001);
+    if (rows.length > 1000)
+      throw new BadRequestException(
+        'Выберите номер для просмотра более 1000 активных блокировок.',
+      );
+    return rows.map((row: any) => ({
+      ...row,
+      overdue: row.block.endDate <= today,
+      releaseRequired: true,
+    }));
+  }
+  async inventoryBlockDetail(id: string, propertyId: string) {
+    const block = await this.inventoryBlock(id, propertyId);
+    const room = await this.roomStatus.getRoomStatus(block.roomId, propertyId);
+    const history = await this.db
+      .select({
+        id: auditLogs.id,
+        action: auditLogs.action,
+        occurredAt: auditLogs.occurredAt,
+        description: auditLogs.description,
+        userEmail: auditLogs.userEmail,
+        userId: auditLogs.userId,
+        previousValue: auditLogs.previousValue,
+        newValue: auditLogs.newValue,
+      })
+      .from(auditLogs)
+      .where(
+        and(
+          eq(auditLogs.propertyId, propertyId),
+          eq(auditLogs.entityType, 'room_inventory_block'),
+          eq(auditLogs.entityId, id),
+          not(like(auditLogs.description, 'Webhook event:%')),
+        ),
+      )
+      .orderBy(desc(auditLogs.occurredAt))
+      .limit(100);
+    return { block, room, history };
   }
   private listConditions(dto: ListMaintenanceTicketsDto) {
     const conditions = [eq(maintenanceTickets.propertyId, dto.propertyId)];
@@ -678,8 +1141,11 @@ export class MaintenanceService {
       );
     return conditions;
   }
-  async list(dto: ListMaintenanceTicketsDto, paging?:{page:number;limit:number}) {
-    const query=this.db
+  async list(
+    dto: ListMaintenanceTicketsDto,
+    paging?: { page: number; limit: number },
+  ) {
+    const query = this.db
       .select({
         ticket: maintenanceTickets,
         roomNumber: rooms.number,
@@ -695,14 +1161,34 @@ export class MaintenanceService {
       )
       .leftJoin(users, eq(users.id, maintenanceTickets.assigneeId))
       .where(and(...this.listConditions(dto)))
-      .orderBy(desc(maintenanceTickets.createdAt),desc(maintenanceTickets.id));
-    return paging ? query.limit(paging.limit).offset((paging.page-1)*paging.limit) : query;
+      .orderBy(desc(maintenanceTickets.createdAt), desc(maintenanceTickets.id));
+    return paging
+      ? query.limit(paging.limit).offset((paging.page - 1) * paging.limit)
+      : query;
   }
-  async page(dto:ListMaintenanceTicketsDto & {page?:number;limit?:number}) {
-    const page=dto.page??1,limit=dto.limit??50;
-    if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>100) throw new BadRequestException('Укажите корректную страницу и размер от 1 до 100.');
-    const [data,[count]]=await Promise.all([this.list(dto,{page,limit}),this.db.select({total:sql<number>`count(*)::int`}).from(maintenanceTickets).where(and(...this.listConditions(dto)))]);
-    return {data,total:count.total,page,limit};
+  async page(
+    dto: ListMaintenanceTicketsDto & { page?: number; limit?: number },
+  ) {
+    const page = dto.page ?? 1,
+      limit = dto.limit ?? 50;
+    if (
+      !Number.isInteger(page) ||
+      page < 1 ||
+      !Number.isInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    )
+      throw new BadRequestException(
+        'Укажите корректную страницу и размер от 1 до 100.',
+      );
+    const [data, [count]] = await Promise.all([
+      this.list(dto, { page, limit }),
+      this.db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(maintenanceTickets)
+        .where(and(...this.listConditions(dto))),
+    ]);
+    return { data, total: count.total, page, limit };
   }
   async findById(id: string, propertyId: string) {
     const [row] = await this.db
@@ -731,10 +1217,15 @@ export class MaintenanceService {
     // Public timeline projection mirrors the guest workspace: internal bigint sequence is not an API field.
     const history = await this.db
       .select({
-        id: auditLogs.id, action: auditLogs.action, entityType: auditLogs.entityType,
-        entityId: auditLogs.entityId, description: auditLogs.description,
-        occurredAt: auditLogs.occurredAt, userEmail: auditLogs.userEmail,
-        previousValue: auditLogs.previousValue, newValue: auditLogs.newValue,
+        id: auditLogs.id,
+        action: auditLogs.action,
+        entityType: auditLogs.entityType,
+        entityId: auditLogs.entityId,
+        description: auditLogs.description,
+        occurredAt: auditLogs.occurredAt,
+        userEmail: auditLogs.userEmail,
+        previousValue: auditLogs.previousValue,
+        newValue: auditLogs.newValue,
       })
       .from(auditLogs)
       .where(
@@ -781,17 +1272,15 @@ export class MaintenanceService {
         .from(properties)
         .where(eq(properties.id, propertyId));
       if (!property) throw new NotFoundException('Объект не найден.');
-      await tx
-        .insert(auditLogs)
-        .values({
-          propertyId,
-          entityType: 'maintenance_request',
-          entityId: randomUUID(),
-          action: 'create',
-          description: 'maintenance.request:' + key,
-          newValue: { closed: true },
-          ...actorFields(actor),
-        });
+      await tx.insert(auditLogs).values({
+        propertyId,
+        entityType: 'maintenance_request',
+        entityId: randomUUID(),
+        action: 'create',
+        description: 'maintenance.request:' + key,
+        newValue: { closed: true },
+        ...actorFields(actor),
+      });
       return { state: 'closed' };
     });
   }

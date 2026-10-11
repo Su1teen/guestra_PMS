@@ -17,6 +17,7 @@ import { useProperty } from '../context/PropertyContext';
 import { useAuth } from '../context/AuthContext';
 import Modal from '../components/ui/Modal';
 import MaintenanceWorkspace from '../components/operations/MaintenanceWorkspace';
+import RoomInventoryBlocks from '../components/operations/RoomInventoryBlocks';
 import StatusBadge from '../components/ui/StatusBadge';
 import { formatMoney } from '../lib/money';
 import { errorMessage } from '../lib/error-message';
@@ -326,6 +327,7 @@ export default function Operations() {
       )}
       {tab === 'maintenance' && (
         <div className="space-y-3">
+        {hasPropertyScope&&<RoomInventoryBlocks propertyId={propertyId!} rooms={rooms}/>}
         {ticketsQuery.isLoading && <p role="status">Загрузка заявок…</p>}
         {ticketsQuery.isError && <p role="alert" className="text-sm text-red-700">{errorMessage(ticketsQuery.error)} <button onClick={()=>ticketsQuery.refetch()} className="underline">Повторить</button></p>}
         {!ticketsQuery.isLoading && !ticketsQuery.isError && <>
@@ -351,6 +353,10 @@ export default function Operations() {
           propertyId={propertyId}
           ticketId={expandedTicket ?? undefined}
           rooms={rooms}
+          onPlanInventoryBlock={ticket=>{
+            setExpandedTicket(null);setCreateKind(null);
+            setParams(previous=>{const next=new URLSearchParams(previous);next.delete('ticketId');next.set('tab','maintenance');next.set('newBlockRoomId',ticket.roomId);next.set('blockTicketId',ticket.id);return next;});
+          }}
           assignees={assignees}
           reservationId={params.get('reservationId') ?? undefined}
           onClose={() => {

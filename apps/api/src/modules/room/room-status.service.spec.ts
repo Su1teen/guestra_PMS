@@ -3,7 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { RoomStatusService } from './room-status.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { DRIZZLE } from '../../database/database.module';
-import { maintenanceTickets } from '@telivityhaip/database';
+import { maintenanceTickets, roomInventoryBlocks, housekeepingTasks, properties } from '@telivityhaip/database';
 
 const mockRoom = {
   id: 'room-001',
@@ -20,9 +20,9 @@ function createMockDb(returnData: any[] = [mockRoom]) {
       from: vi.fn().mockImplementation((table: any) => ({
         where: vi.fn().mockReturnValue({
           then: (resolve: any) =>
-            resolve(table === maintenanceTickets ? [] : returnData),
+            resolve([maintenanceTickets, roomInventoryBlocks, housekeepingTasks].includes(table) ? [] : table === properties ? [{timezone:'UTC'}] : returnData),
           for: vi.fn().mockResolvedValue(returnData),
-          limit: vi.fn().mockResolvedValue(table === maintenanceTickets ? [] : returnData),
+          limit: vi.fn().mockResolvedValue([maintenanceTickets, roomInventoryBlocks, housekeepingTasks].includes(table) ? [] : table === properties ? [{timezone:'UTC'}] : returnData),
           groupBy: vi.fn().mockResolvedValue(returnData),
         }),
       })),

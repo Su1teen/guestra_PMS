@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatMoney } from '../lib/money';
-import { Routes, Route, useNavigate, useParams } from 'react-router-dom';
+import { Routes, Route, useNavigate, useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   useReactTable,
@@ -729,6 +729,12 @@ function AvailabilityCalendar() {
   const roomTypes: { id: string; name: string }[] = calendarQuery.data?.roomTypes ?? [];
   const reservations: Reservation[] = calendarQuery.data?.reservations ?? [];
   const blocks: { roomTypeId: string; startDate: string; endDate: string }[] = calendarQuery.data?.blocks ?? [];
+  const inventoryBlocks: Array<{id:string;roomId:string;startDate:string;endDate:string;kind:string;reason:string;overdue:boolean}> = calendarQuery.data?.inventoryBlocks ?? [];
+  const inventoryByRoom=useMemo(()=>{
+    const index=new Map<string,typeof inventoryBlocks>();
+    for(const block of inventoryBlocks) index.set(block.roomId,[...(index.get(block.roomId)??[]),block]);
+    return index;
+  },[inventoryBlocks]);
   const reservationsByRoom = useMemo(() => {
     const map = new Map<string, Reservation[]>();
     for (const reservation of reservations) if (reservation.roomId) {
@@ -764,10 +770,11 @@ function AvailabilityCalendar() {
       if (getResForCell(room.id, date)) return 'booked';
       if ((availabilityByNight.get(room.roomTypeId + ':' + date) ?? Infinity) <= 0) return 'blocked';
       if (room.status && UNSELLABLE_ROOM_STATUSES.includes(room.status)) return 'blocked';
+      if (inventoryByRoom.get(room.id)?.some(block => block.startDate <= date)) return 'blocked';
       if (room.status === 'vacant_dirty' && date === todayKey) return 'dirty';
       return 'free';
     },
-    [getResForCell, todayKey, availabilityByNight],
+    [getResForCell, todayKey, availabilityByNight, inventoryByRoom],
   );
 
   const rangeKeys = useCallback((from: string, to: string) => {
@@ -863,6 +870,7 @@ function AvailabilityCalendar() {
       <div className="mb-3 flex flex-wrap items-center gap-3 text-sm"><input type="date" aria-label={t('reservations.arrival')} value={dayKeys[0]} onChange={e => { if (e.target.value) setStartDate(new Date(e.target.value + 'T00:00:00')); }} className="rounded-lg border p-2"/><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label={t('reservations.status')} className="rounded-lg border p-2"><option value="">{t('reservationWorkspace.allStatuses')}</option>{['pending','confirmed','assigned','checked_in','stayover','due_out'].map(s => <option key={s} value={s}>{t('reservations.statuses.' + s)}</option>)}</select><label className="flex items-center gap-2"><input type="checkbox" checked={accessibleOnly} onChange={e => setAccessibleOnly(e.target.checked)}/>{t('reservationWorkspace.accessible')}</label></div>
       {hasPermission('rateplans.read') && <div className="mb-3 flex flex-wrap items-center gap-3 text-sm"><label className="flex items-center gap-2"><input type="checkbox" checked={priceMode} onChange={e => setPriceMode(e.target.checked)}/>{t('reservationWorkspace.priceMode')}</label>{priceMode && <><select value={previewRatePlan} onChange={e => setPreviewRatePlan(e.target.value)} aria-label={t('reservations.ratePlan')} className="rounded-lg border p-2"><option value="">{t('reservations.tape.selectRatePlan')}</option>{(plansQuery.data ?? []).map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><p className="text-xs text-gray-500">{t('reservationWorkspace.pricePreview')}</p></>}</div>}
       {(plansQuery.isError || pricesQuery.isError) && <QueryError onRetry={() => { void plansQuery.refetch(); if (previewRatePlan) void pricesQuery.refetch(); }}/>}
+      {inventoryBlocks.length > 0 && <div className="mb-3 flex flex-wrap gap-2 rounded-lg bg-orange-50 p-3 text-xs text-orange-800" aria-label="Плановые блокировки номеров">{inventoryBlocks.map(block=><Link key={block.id} className="rounded border border-orange-200 px-2 py-1 underline" to={'/operations?tab=maintenance&propertyId='+propertyId+'&blockId='+block.id}>{rooms.find(room=>room.id===block.roomId)?.number ?? 'Номер'} · {block.kind} · {block.startDate} → {block.endDate} · {block.overdue?'Просрочена блокировка / Требуется подтверждение':'До подтверждённого возврата'}</Link>)}</div>}
       {blocks.length > 0 && <p className="mb-3 rounded-lg bg-orange-50 p-3 text-xs text-orange-800">{t('reservationWorkspace.icalPool', { count: blocks.length })}</p>}
       {calendarQuery.isError && <QueryError onRetry={() => void calendarQuery.refetch()}/>}
       {calendarQuery.isPending && <p role="status" className="mb-4 text-sm">{t('common.loading')}</p>}

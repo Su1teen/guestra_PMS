@@ -22,6 +22,7 @@ import {
   staffRequestFences,
   housekeepingTasks,
   maintenanceTickets,
+  roomInventoryBlocks,
 } from '@telivityhaip/database';
 import { OperationsService } from '../operations/operations.service';
 import { ReportsService } from '../reports/reports.service';
@@ -35,6 +36,9 @@ import { FolioService } from '../folio/folio.service';
 import { RoomStatusService } from '../room/room-status.service';
 import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 import { GuestService } from '../guest/guest.service';
+import { BookingEngineService } from '../booking-engine/booking-engine.service';
+import { InboundReservationService } from '../channel/inbound-reservation.service';
+import { MaintenanceService } from '../maintenance/maintenance.service';
 
 // Real SQL, locks, transactions, pricing and folios. Only external delivery is a port double.
 describe.runIf(process.env.PMS_LIVE_PG === '1')(
@@ -50,11 +54,17 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
     const reservationService = new ReservationService(db, new AvailabilityService(db), new FolioService(db, webhooks as any, taxes),
     new RoomStatusService(db, webhooks as any), {} as any, webhooks as any, {} as any, {} as any, {} as any, rates, outbox);
     const staff = new StaffReservationService(db, reservationService, rates, taxes, outbox);
+    const maintenance=new MaintenanceService(db,new RoomStatusService(db,webhooks as any),outbox,new AvailabilityService(db));
+    const channel=new InboundReservationService(db,{} as any,{getAdapter:()=>({confirmReservation:vi.fn()})} as any,{pushAvailability:vi.fn()} as any,webhooks as any,new AvailabilityService(db),new RoomStatusService(db,webhooks as any));
+    const conn={propertyId:ids.property,id:randomUUID(),roomTypeMapping:[{channelRoomCode:'STD',roomTypeId:ids.type}],ratePlanMapping:[{channelRateCode:'TX',ratePlanId:ids.rate}]};
+    const channelInput=()=>({externalConfirmation:randomUUID(),channelCode:'test',channelRoomCode:'STD',channelRateCode:'TX',arrivalDate:input.checkIn,departureDate:input.checkOut,totalAmount:200,currencyCode:'KZT',adults:1,guestFirstName:'Тест',status:'new'});
+    const plannedBlock=(extra:any={})=>({propertyId:ids.property,roomId:ids.room,startDate:'2027-05-02',endDate:'2027-05-03',kind:'OOO' as const,reason:'Плановый ремонт',idempotencyKey:randomUUID(),...extra});
     const input = { propertyId: ids.property, guestId: ids.guest, roomTypeId: ids.type, ratePlanId: ids.rate,
     checkIn: '2027-05-01', checkOut: '2027-05-03', expectedTotal: '200.00', currencyCode: 'KZT', adults: 1, roomId: ids.room };
     const create = (changes = {}) => staff.create({ ...input, requestId: randomUUID(), ...changes });
 
     async function clearStays() {
+      await db.delete(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId,ids.property));
       await db
         .delete(housekeepingTasks)
         .where(eq(housekeepingTasks.propertyId, ids.property));
@@ -105,6 +115,70 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
     await client.end();
   });
 
+    it('serializes a planned block with purchase of the final unit and leaves no orphan booking or block',async()=>{
+      const results=await Promise.allSettled([create({roomId:undefined}),maintenance.saveInventoryBlock(plannedBlock())]);
+      expect(results.filter(row=>row.status==='fulfilled')).toHaveLength(1);
+      const stays=await db.select().from(reservations).where(eq(reservations.propertyId,ids.property));
+      const blocks=await db.select().from(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId,ids.property));
+      expect(stays.length+blocks.length).toBe(1);
+      expect(await db.select().from(bookings).where(eq(bookings.propertyId,ids.property))).toHaveLength(stays.length);
+      expect(await db.select().from(folios).where(eq(folios.propertyId,ids.property))).toHaveLength(stays.length);
+    });
+    it('serializes inbound channel purchase with planned inventory for the final unit',async()=>{
+      const guestLookup=vi.spyOn(channel as any,'findOrCreateGuestTx').mockResolvedValue({id:ids.guest});
+      try {
+        const outcomes=await Promise.allSettled([(channel as any).handleNewReservation(conn,channelInput()),maintenance.saveInventoryBlock(plannedBlock())]);
+        expect(outcomes.filter(row=>row.status==='fulfilled')).toHaveLength(1);
+        const stays=await db.select().from(reservations).where(eq(reservations.propertyId,ids.property));
+        const blocks=await db.select().from(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId,ids.property));
+        expect(stays.length+blocks.length).toBe(1);
+        expect(await db.select().from(bookings).where(eq(bookings.propertyId,ids.property))).toHaveLength(stays.length);
+      } finally {guestLookup.mockRestore();}
+    });
+    it('rejects channel amendment of an assigned blocked room even when its category has spare inventory',async()=>{
+      await db.update(rooms).set({isActive:true}).where(eq(rooms.id,ids.target));
+      const stay=await create({checkOut:'2027-05-02',expectedTotal:'100.00'});
+      await maintenance.saveInventoryBlock(plannedBlock());
+      await expect((channel as any).handleModification(conn,{...channelInput(),status:'modified'},{id:stay.bookingId})).rejects.toMatchObject({response:{code:'ROOM_INVENTORY_BLOCKED'}});
+      const [stored]=await db.select().from(reservations).where(eq(reservations.id,stay.id));
+      expect(stored.departureDate).toBe('2027-05-02');expect(stored.totalAmount).toBe('100.00');
+    });
+    it('rejects planned physical-room conflicts in preview and repeats the capacity check before saving',async()=>{
+      const stay=await create();
+      const preview=await maintenance.previewInventoryBlock(plannedBlock());
+      expect(preview.canApply).toBe(false);expect(preview.conflictingReservationIds).toEqual([stay.id]);
+      await expect(maintenance.saveInventoryBlock(plannedBlock())).rejects.toMatchObject({response:{code:'INVENTORY_BLOCK_CONFLICT'}});
+      expect(await db.select().from(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId,ids.property))).toHaveLength(0);
+    });
+    it('prevents assignment, move and check-in through a clean-labelled room with a block later in the stay',async()=>{
+      await db.update(rooms).set({isActive:true}).where(eq(rooms.id,ids.target));
+      const stay=await create({roomId:undefined});
+      await maintenance.saveInventoryBlock(plannedBlock());
+      const specificRoom = await (BookingEngineService.prototype as any).inspectSpecificRoom.call({}, ids.property, {roomId:ids.room,roomTypeId:ids.type,checkIn:input.checkIn,checkOut:input.checkOut}, db, false);
+      expect(specificRoom.available).toBe(false);expect(specificRoom.reason).toContain('возврата');
+      await expect(reservationService.assignRoom(stay.id,ids.property,{roomId:ids.room})).rejects.toMatchObject({response:{code:'ROOM_INVENTORY_BLOCKED'}});
+      await reservationService.assignRoom(stay.id,ids.property,{roomId:ids.target});
+      await expect(reservationService.moveRoom(stay.id,ids.property,{roomId:ids.room})).rejects.toMatchObject({response:{code:'ROOM_INVENTORY_BLOCKED'}});
+      // Existing/legacy assignment fixture proves check-in itself enforces the whole stay,
+      // rather than trusting the UI or a previous assignment check.
+      await db.update(reservations).set({roomId:ids.room}).where(eq(reservations.id,stay.id));
+      await expect(reservationService.checkIn(stay.id,ids.property)).rejects.toMatchObject({response:{code:'ROOM_INVENTORY_BLOCKED'}});
+      const [stored]=await db.select().from(reservations).where(eq(reservations.id,stay.id));
+      expect(stored.status).toBe('assigned');expect(stored.totalAmount).toBe('200.00');
+      const calendar=await new ReservationCalendarService(db,new AvailabilityService(db)).range({propertyId:ids.property,checkIn:'2027-05-01',checkOut:'2027-05-05'});
+      expect(calendar.inventoryBlocks).toHaveLength(1);expect(calendar.inventoryBlocks[0].endDate).toBe('2027-05-03');
+      expect(calendar.availability.find((row:any)=>row.date==='2027-05-04')?.available).toBe(1);
+    });
+    it('rejects a stale amendment snapshot after an intervening room move without changing accepted pricing',async()=>{
+      const stay=await create();const original=await (reservationService as any).findByIdRaw(stay.id,ids.property);
+      await db.update(rooms).set({isActive:true}).where(eq(rooms.id,ids.target));
+      await db.update(reservations).set({roomId:ids.target,updatedAt:new Date(+original.updatedAt+1000)}).where(eq(reservations.id,stay.id));
+      const stale=vi.spyOn(reservationService as any,'findByIdRaw').mockResolvedValueOnce(original);
+      try {await expect(reservationService.modify(stay.id,ids.property,{specialRequests:'Обновление'})).rejects.toMatchObject({status:409});}
+      finally {stale.mockRestore();}
+      const [stored]=await db.select().from(reservations).where(eq(reservations.id,stay.id));
+      expect(stored.roomId).toBe(ids.target);expect(stored.acceptedPricingSnapshot).toEqual(original.acceptedPricingSnapshot);expect(stored.specialRequests).toBe(original.specialRequests);
+    });
     it('allows exactly one concurrent purchase of the last room, without orphan booking/folio/outbox', async () => {
       const results = await Promise.allSettled([create(), create()]);
       expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);

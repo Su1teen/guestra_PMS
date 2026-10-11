@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Inject } from '@nestjs/common';
 import { eq, and, ne, notInArray, sql, lt, gt } from 'drizzle-orm';
-import { reservations, roomTypes, properties, rooms, icalBlocks, icalFeeds } from '@telivityhaip/database';
+import { reservations, roomTypes, properties, rooms, icalBlocks, icalFeeds, roomInventoryBlocks } from '@telivityhaip/database';
+import { activeInventoryBlockConditions } from '../room/room-inventory-policy';
 import { stayDates } from '@telivityhaip/shared';
 import { DRIZZLE } from '../../database/database.module';
 
@@ -12,6 +13,7 @@ export interface AvailabilityResult {
   sold: number;
   available: number;
   overbookingBuffer: number;
+  capacityShortfall?: number;
 }
 
 /** Re-exported for existing call sites; canonical definition lives in @telivityhaip/shared. */
@@ -55,7 +57,7 @@ export class AvailabilityService {
     checkOut: string,
     roomTypeId?: string,
     db?: any,
-    options?: { excludeReservationId?: string },
+    options?: { excludeReservationId?: string; excludeInventoryBlockId?:string; includeCapacity?: boolean; additionalBlocks?: Array<{roomId:string;roomTypeId:string;startDate:string}> },
   ): Promise<AvailabilityResult[]> {
     const conn = db ?? this.db;
     const requestedDates = stayDates(checkIn, checkOut);
@@ -130,6 +132,15 @@ export class AvailabilityService {
     );
     const blockedByType = new Map<string, number>(roomCountRows.map((r: any) => [r.roomTypeId, Number(r.blocked ?? 0)]));
 
+    // Count physical rooms once, even when several planned reasons overlap. Actual OOO/OOS
+    // rooms are already excluded above. End dates cannot silently release planned inventory.
+    const planned = await conn.select({ roomId: roomInventoryBlocks.roomId,
+      roomTypeId: rooms.roomTypeId, startDate: roomInventoryBlocks.startDate })
+      .from(roomInventoryBlocks).innerJoin(rooms, and(eq(rooms.id, roomInventoryBlocks.roomId),
+        eq(rooms.propertyId, propertyId), eq(rooms.isActive, true),
+        notInArray(rooms.status, ['out_of_order','out_of_service'])))
+      .where(activeInventoryBlockConditions(propertyId, checkOut, undefined, options?.excludeInventoryBlockId));
+
     // Active import feeds reduce availability as one busy unit per feed/date.
     // Counting distinct feedIds avoids double-counting overlapping events from
     // the same external calendar.
@@ -187,7 +198,9 @@ export class AvailabilityService {
         ).size;
 
         // An OOO/OOS physical room stays outside sellable inventory until the established manual return.
-        const sellableRooms = Math.max(0, totalRooms - (blockedByType.get(type.id) ?? 0));
+        const plannedCount = new Set([...planned, ...(options?.additionalBlocks ?? [])]
+          .filter((b:any) => b.roomTypeId === type.id && b.startDate <= dateStr).map((b:any) => b.roomId)).size;
+        const sellableRooms = Math.max(0, totalRooms - (blockedByType.get(type.id) ?? 0) - plannedCount);
         const overbookingBuffer = Math.floor(sellableRooms * (overbookingPct / 100));
         const available = sellableRooms + overbookingBuffer - sold - importedBusy;
 
@@ -199,6 +212,7 @@ export class AvailabilityService {
           sold: sold + importedBusy,
           available: Math.max(0, available),
           overbookingBuffer,
+          ...(options?.includeCapacity ? { capacityShortfall: Math.max(0, -available) } : {}),
         });
       }
     }

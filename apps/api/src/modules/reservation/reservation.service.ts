@@ -343,6 +343,7 @@ export class ReservationService {
         propertyId,
         reservation.arrivalDate,
         tx,
+        reservation.departureDate,
       );
 
       const conflicts = await tx
@@ -403,6 +404,7 @@ export class ReservationService {
         propertyId,
         reservation.status === 'assigned' ? reservation.arrivalDate : undefined,
         tx,
+        reservation.departureDate,
       );
       const overlaps = await tx.select({ id: reservations.id }).from(reservations).where(and(
         eq(reservations.propertyId, propertyId), eq(reservations.roomId, dto.roomId), ne(reservations.id, id),
@@ -634,6 +636,7 @@ export class ReservationService {
           propertyId,
           undefined,
           tx,
+          reservation.departureDate,
         );
         roomNumber = room.number;
         const [overlap] = await tx.select({ id: reservations.id }).from(reservations).where(and(
@@ -1232,12 +1235,20 @@ export class ReservationService {
     // Use the same room-type inventory mutex as canonical creation so a modify
     // cannot race another create/modify for the final unit.
     const updated: ReservationRow = await this.db.transaction(async (tx: any) => {
+      // Match existing amendment/move ordering: reservation -> inventory type -> room.
+      // An intervening move must not leave the new dates checked against the old room.
+      const [current]=await tx.select().from(reservations).where(and(eq(reservations.id,id),eq(reservations.propertyId,propertyId))).for('update');
+      if(!current||String(current.updatedAt)!==String(reservation.updatedAt)) throw new ConflictException('Бронь изменилась. Обновите данные перед изменением проживания.');
       if (arrivalChanged || departureChanged || roomTypeChanged) {
         const newArrival = (dto.arrivalDate ?? reservation.arrivalDate) as string;
         const newDeparture = (dto.departureDate ?? reservation.departureDate) as string;
         const newRoomTypeId = (dto.roomTypeId ?? reservation.roomTypeId) as string;
 
         await this.lockInventory(propertyId, newRoomTypeId, tx);
+        if (reservation.roomId) {
+          await this.roomStatusService.lockRoom(reservation.roomId, propertyId, tx);
+          await this.roomStatusService.assertInventoryAvailable(reservation.roomId, propertyId, newDeparture, tx);
+        }
 
         const availability = await this.availabilityService.searchAvailability(
           reservation.propertyId,
@@ -1335,6 +1346,10 @@ export class ReservationService {
       );
     }
     const dates = stayDates(dto.arrivalDate, dto.departureDate);
+    if (lockedReservation.roomId) {
+      await this.roomStatusService.lockRoom(lockedReservation.roomId, propertyId, tx);
+      await this.roomStatusService.assertInventoryAvailable(lockedReservation.roomId, propertyId, dto.departureDate, tx);
+    }
     if (
       acceptedPricingSnapshot.currencyCode !== lockedReservation.currencyCode
       || acceptedPricingSnapshot.grandTotal !== new Decimal(dto.totalAmount).toFixed(2)

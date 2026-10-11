@@ -25,6 +25,10 @@ import {
 import { MaintenanceService } from './maintenance.service';
 import { PermissionsService } from '../auth/permissions.service';
 import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
+import {
+  InventoryBlockDto,
+  InventoryReturnDto,
+} from './dto/inventory-block.dto';
 
 @ApiTags('maintenance')
 @Controller('maintenance')
@@ -98,16 +102,111 @@ export class MaintenanceController {
   @Get()
   @RequirePermissions('maintenance.view')
   @ApiOperation({ summary: 'List maintenance tickets with SLA filters' })
-  list(@Query() dto: ListMaintenanceTicketsDto) { return this.service.list(dto); }
+  list(@Query() dto: ListMaintenanceTicketsDto) {
+    return this.service.list(dto);
+  }
 
   @Get('page')
   @RequirePermissions('maintenance.view')
-  page(@Query() dto:MaintenancePageDto) { return this.service.page(dto); }
+  page(@Query() dto: MaintenancePageDto) {
+    return this.service.page(dto);
+  }
 
+  @Get('inventory-blocks')
+  @RequirePermissions('maintenance.view', 'rooms.read')
+  @ApiOperation({
+    summary:
+      'Read active planned room blocks; expected end never releases inventory',
+  })
+  inventoryBlocks(
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Query('roomId', new ParseUUIDPipe({ optional: true })) roomId?: string,
+  ) {
+    return this.service.inventoryBlocks(propertyId, roomId);
+  }
+  @Post('inventory-blocks/preview')
+  @RequirePermissions('maintenance.view', 'rooms.write')
+  @ApiOperation({
+    summary:
+      'Preview conflicts and canonical capacity without reserving inventory',
+  })
+  previewInventoryBlock(
+    @Body() dto: InventoryBlockDto,
+    @Query('blockId', new ParseUUIDPipe({ optional: true })) blockId?: string,
+  ) {
+    return this.service.previewInventoryBlock(dto, blockId);
+  }
+  @Post('inventory-blocks')
+  @RequirePermissions('maintenance.create', 'rooms.write')
+  @ApiOperation({
+    summary:
+      'Create a planned OOO/OOS block atomically without changing physical room status',
+  })
+  async createInventoryBlock(
+    @Body() dto: InventoryBlockDto,
+    @AuditActorCtx() actor: AuditActor,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    return this.service.saveInventoryBlock(
+      dto,
+      undefined,
+      await this.actor(dto.propertyId, user, actor, true),
+    );
+  }
+  @Patch('inventory-blocks/:id')
+  @RequirePermissions('maintenance.update', 'rooms.write')
+  @ApiOperation({
+    summary: 'Revise an active planned block with revision and idempotency',
+  })
+  async updateInventoryBlock(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: InventoryBlockDto,
+    @AuditActorCtx() actor: AuditActor,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    return this.service.saveInventoryBlock(
+      dto,
+      id,
+      await this.actor(dto.propertyId, user, actor, true),
+    );
+  }
+  @Post('inventory-blocks/:id/return-to-service')
+  @RequirePermissions('maintenance.close', 'rooms.write')
+  @ApiOperation({
+    summary:
+      'Explicit early or overdue return after repair, cleaning and inspection checks',
+  })
+  async returnInventoryBlock(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: InventoryReturnDto,
+    @AuditActorCtx() actor: AuditActor,
+    @CurrentUser() user?: AuthUser,
+  ) {
+    return this.service.returnInventoryBlock(
+      id,
+      dto,
+      await this.actor(dto.propertyId, user, actor, true),
+    );
+  }
+  @Get('inventory-blocks/:id')
+  @RequirePermissions('maintenance.view', 'rooms.read')
+  @ApiOperation({
+    summary:
+      'Read a scoped planned block and its public audit history, including released blocks',
+  })
+  inventoryBlockDetail(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) {
+    return this.service.inventoryBlockDetail(id, propertyId);
+  }
   @Get(':id')
   @RequirePermissions('maintenance.view')
   @ApiQuery({ name: 'propertyId', required: true })
-  get(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string) {
+  get(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) {
     return this.service.findById(id, propertyId);
   }
 

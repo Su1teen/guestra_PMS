@@ -79,6 +79,7 @@ describe('InboundReservationService', () => {
             .mockResolvedValueOnce([{ id: 'res-1', bookingId: 'booking-1', guestId: 'guest-1' }]),
         })),
       })),
+      execute: vi.fn().mockResolvedValue([{id:"rt-1"}]),
       update: vi.fn().mockReturnValue({
         set: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -119,6 +120,7 @@ describe('InboundReservationService', () => {
       mockAriService,
       mockWebhookService,
       mockAvailabilityService,
+      {lockRoom:vi.fn(),assertInventoryAvailable:vi.fn()} as any,
     );
   });
 
@@ -306,6 +308,7 @@ describe('InboundReservationService', () => {
             if (callCount === 3) return Promise.resolve([{ id: 'res-1', bookingId: 'booking-1', guestId: 'guest-1' }]);
             if (callCount === 4) return Promise.resolve([{ id: 'rt-1' }]);  // roomTypes FK OK
             if (callCount === 5) return Promise.resolve([{ id: 'rp-1' }]);  // ratePlans FK OK
+            if (callCount === 6) return {for: vi.fn().mockResolvedValue([{id:'res-1',bookingId:'booking-1',guestId:'guest-1'}])};
             return Promise.resolve([]);
           }),
         }),

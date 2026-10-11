@@ -51,4 +51,11 @@ describe('Modal', () => {
       rects.mockRestore();
     }
   });
+  it('keeps keyboard focus on the busy panel when no enabled control remains', () => {
+    const { rerender } = render(<Modal open onClose={() => {}} title="Return"><button>Confirm return</button></Modal>);
+    screen.getByRole('button', { name: 'Confirm return' }).focus();
+    rerender(<Modal open closeDisabled onClose={() => {}} title="Return"><p>Saving</p></Modal>);
+    fireEvent.keyDown(document.body, { key: 'Tab' });
+    expect(screen.getByRole('dialog')).toHaveFocus();
+  });
 });

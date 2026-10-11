@@ -31,6 +31,7 @@ import {
   maintenanceTickets,
   auditLogs,
   domainEventOutbox,
+  roomInventoryBlocks,
 } from '@telivityhaip/database';
 import { HousekeepingService } from '../housekeeping/housekeeping.service';
 import { MaintenanceService } from '../maintenance/maintenance.service';
@@ -43,6 +44,7 @@ import { MaintenanceController } from '../maintenance/maintenance.controller';
 import { ConfigService } from '@nestjs/config';
 import { PermissionsService } from '../auth/permissions.service';
 import { PermissionsGuard } from '../auth/permissions.guard';
+import { AvailabilityService } from '../reservation/availability.service';
 
 // This principal is a test fixture, not a verification of Keycloak/JWKS.
 class TestIdentityGuard {
@@ -73,7 +75,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
     };
     const roomState = new RoomStatusService(db, hook as any),
       outbox = new DomainEventOutboxService(db, hook as any);
-    const maintenance = new MaintenanceService(db, roomState, outbox),
+    const maintenance = new MaintenanceService(db, roomState, outbox, new AvailabilityService(db)),
       hk = new HousekeepingService(db, hook as any, roomState, outbox);
     let ticketId: string,
       directory: string,
@@ -90,6 +92,10 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         'housekeeping.manage',
         'maintenance.view',
         'maintenance.update',
+        'maintenance.create',
+        'maintenance.close',
+        'rooms.read',
+        'rooms.write',
       ],
       worker: ['housekeeping.read', 'housekeeping.execute'],
       second: ['housekeeping.read', 'housekeeping.execute'],
@@ -205,6 +211,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
       for (const table of [
         domainEventOutbox,
         auditLogs,
+        roomInventoryBlocks,
         maintenanceTickets,
         housekeepingTasks,
       ])
@@ -236,6 +243,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
       for (const table of [
         domainEventOutbox,
         auditLogs,
+        roomInventoryBlocks,
         maintenanceTickets,
         housekeepingTasks,
         users,
@@ -247,6 +255,31 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         await db.delete(properties).where(eq(properties.id, id));
       await client.end();
       if (directory) await rm(directory, { recursive: true, force: true });
+    });
+    it('enforces planned-block inventory grants and property isolation over real HTTP',async()=>{
+      const input={propertyId:ids.property,roomId:ids.room,maintenanceTicketId:ticketId,startDate:'2026-01-01',endDate:'2026-01-03',kind:'OOS',reason:'Осмотр',idempotencyKey:randomUUID()};
+      principal='reader';await request(app.getHttpServer()).post('/maintenance/inventory-blocks').set('x-test-user','reader').send(input).expect(403);
+      principal='manager';const response=await request(app.getHttpServer()).post('/maintenance/inventory-blocks').set('x-test-user','manager').send(input).expect(201);
+      expect(response.body.kind).toBe('OOS');expect(response.body.maintenanceTicketId).toBe(ticketId);
+      await request(app.getHttpServer()).get('/maintenance/inventory-blocks/'+response.body.id).query({propertyId:ids.other}).set('x-test-user','manager').expect(403);
+      const detail=await request(app.getHttpServer()).get('/maintenance/inventory-blocks/'+response.body.id).query({propertyId:ids.property}).set('x-test-user','manager').expect(200);
+      expect(detail.body.room.status).toBe('guest_ready');expect(detail.body.history[0].userId).toBe(ids.worker);expect(detail.body.history[0]).not.toHaveProperty('timelineSequence');
+      expect(detail.body.history).toHaveLength(1);expect(detail.body.history[0].description).toBe('Осмотр');
+      principal='reader';await request(app.getHttpServer()).post('/maintenance/inventory-blocks/'+response.body.id+'/return-to-service').set('x-test-user','reader').send({propertyId:ids.property,reason:'Возврат',idempotencyKey:randomUUID(),expectedRevision:1}).expect(403);
+    });
+    it('retains an expired block on a rejected HTTP return and records an authorized replayable return after repair',async()=>{
+      const block=await maintenance.saveInventoryBlock({propertyId:ids.property,roomId:ids.room,startDate:'2026-01-01',endDate:'2026-01-03',kind:'OOO',reason:'Осмотр',idempotencyKey:randomUUID()});
+      const path='/maintenance/inventory-blocks/'+block.id+'/return-to-service';
+      const input={propertyId:ids.property,reason:'Проверено сотрудником',idempotencyKey:randomUUID(),expectedRevision:1};
+      await request(app.getHttpServer()).post(path).set('x-test-user','manager').send(input).expect(409);
+      expect((await maintenance.inventoryBlockDetail(block.id,ids.property)).block.status).toBe('active');
+      await maintenance.update(ticketId,ids.property,{status:'resolved',resolution:'Осмотр окончен'});
+      const returned=await request(app.getHttpServer()).post(path).set('x-test-user','manager').send(input).expect(201);
+      const replay=await request(app.getHttpServer()).post(path).set('x-test-user','manager').send(input).expect(201);
+      expect(replay.body).toEqual(returned.body);expect(returned.body.status).toBe('released');
+      const detail=await request(app.getHttpServer()).get('/maintenance/inventory-blocks/'+block.id).query({propertyId:ids.property}).set('x-test-user','manager').expect(200);
+      expect(detail.body.history.filter((row:any)=>row.action==='return_to_service')).toHaveLength(1);
+      expect(detail.body.history.find((row:any)=>row.action==='return_to_service').description).toBe(input.reason);
     });
     it('rejects anonymous, wrong-property and read-only uploads without persisting a manifest', async () => {
       await request(app.getHttpServer())

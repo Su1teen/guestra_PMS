@@ -49,6 +49,7 @@ type Props = {
   assignees: Assignee[];
   rooms?: Array<{ id: string; number: string }>;
   reservationId?: string;
+  onPlanInventoryBlock?: (ticket:any)=>void;
 };
 const inputClass =
   'w-full min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm disabled:bg-gray-50';
@@ -271,6 +272,7 @@ export default function MaintenanceWorkspace(props: Props) {
       wide
     >
       <div className="space-y-4">
+        {ticket?.roomId&&props.onPlanInventoryBlock&&hasPermission('maintenance.create','rooms.write')&&<button disabled={busy||!!pending} onClick={()=>props.onPlanInventoryBlock!(ticket)} className="rounded-lg border border-orange-200 px-3 py-2 text-sm text-orange-800">Планировать OOO/OOS для этого номера</button>}
         {props.ticketId && query.isLoading && (
           <p role="status">Загрузка заявки…</p>
         )}

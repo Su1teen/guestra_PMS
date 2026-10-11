@@ -19,10 +19,12 @@ import {
   auditLogs,
   domainEventOutbox,
   roomInventoryBlocks,
+  housekeepingTasks,
 } from '@telivityhaip/database';
 import { MaintenanceService } from './maintenance.service';
 import { RoomStatusService } from '../room/room-status.service';
 import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
+import { AvailabilityService } from '../reservation/availability.service';
 
 describe.runIf(process.env.PMS_LIVE_PG === '1')(
   'Maintenance operations on real PostgreSQL',
@@ -41,7 +43,9 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
     };
     const roomState = new RoomStatusService(db, hook as any);
     const outbox = new DomainEventOutboxService(db, hook as any);
-    const service = new MaintenanceService(db, roomState, outbox);
+    const availability = new AvailabilityService(db);
+    const service = new MaintenanceService(db, roomState, outbox, availability);
+    const blockInput = (extra:any={})=>({propertyId:ids.property,roomId:ids.room,startDate:'2026-01-01',endDate:'2026-01-03',kind:'OOO' as const,reason:'Плановый ремонт',idempotencyKey:randomUUID(),...extra});
     const dto = (extra: any = {}) => ({
       propertyId: ids.property,
       roomId: ids.room,
@@ -95,6 +99,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         domainEventOutbox,
         auditLogs,
         roomInventoryBlocks,
+        housekeepingTasks,
         maintenanceTickets,
       ])
         await db.delete(table).where(eq(table.propertyId, ids.property));
@@ -108,6 +113,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
         domainEventOutbox,
         auditLogs,
         roomInventoryBlocks,
+        housekeepingTasks,
         maintenanceTickets,
         rooms,
         roomTypes,
@@ -116,6 +122,69 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')(
       for (const id of [ids.property, ids.other])
         await db.delete(properties).where(eq(properties.id, id));
       await client.end();
+    });
+    it('retains expired planned inventory without changing physical status and counts overlapping reasons once',async()=>{
+      const request=blockInput();
+      const [a,b]=await Promise.all([service.saveInventoryBlock(request),service.saveInventoryBlock(request)]);
+      expect(a).toEqual(b);expect(await rows(roomInventoryBlocks)).toHaveLength(1);
+      await service.saveInventoryBlock(blockInput({kind:'OOS'}));
+      expect((await room()).status).toBe('guest_ready');
+      await expect(roomState.markOccupied(ids.room, ids.property)).rejects.toMatchObject({response:{code:'ROOM_NOT_READY'}});
+      expect((await service.inventoryBlocks(ids.property))[0].overdue).toBe(true);
+      expect((await availability.searchAvailability(ids.property,'2027-05-01','2027-05-02'))[0].available).toBe(0);
+      expect((await availability.searchAvailability(ids.property,'2025-12-01','2025-12-02'))[0].available).toBe(1);
+      expect(await rows(domainEventOutbox)).toHaveLength(2);
+    });
+    it('supports explicit early return and retains other active reasons until their own authorized return',async()=>{
+      const a=await service.saveInventoryBlock(blockInput()); const b=await service.saveInventoryBlock(blockInput({kind:'OOS'}));
+      const first=await service.returnInventoryBlock(a.id,{propertyId:ids.property,reason:'Готовность проверена',idempotencyKey:randomUUID(),expectedRevision:1});
+      expect(first.availableNow).toBe(false);expect(first.remainingBlockingBlockIds).toEqual([b.id]);
+      expect((await availability.searchAvailability(ids.property,'2027-05-01','2027-05-02'))[0].available).toBe(0);
+      const future=await service.saveInventoryBlock(blockInput({startDate:'2028-01-01',endDate:'2028-01-03'}));
+      await service.returnInventoryBlock(future.id,{propertyId:ids.property,reason:'Досрочно проверено',idempotencyKey:randomUUID(),expectedRevision:1});
+      const returned=await service.returnInventoryBlock(b.id,{propertyId:ids.property,reason:'Инспекция пройдена',idempotencyKey:randomUUID(),expectedRevision:1});
+      expect(returned.availableNow).toBe(true);expect((await room()).status).toBe('guest_ready');
+      expect((await availability.searchAvailability(ids.property,'2029-01-01','2029-01-02'))[0].available).toBe(1);
+    });
+    it('rejects planned return while dirty, awaiting inspection or with unresolved nonblocking repair',async()=>{
+      const block=await service.saveInventoryBlock(blockInput());
+      const returnRequest={propertyId:ids.property,reason:'Проверка',idempotencyKey:randomUUID(),expectedRevision:1};
+      await db.update(rooms).set({status:'vacant_dirty'}).where(eq(rooms.id,ids.room));
+      await expect(service.returnInventoryBlock(block.id,returnRequest)).rejects.toMatchObject({response:{code:'RETURN_NOT_READY'}});
+      await db.update(rooms).set({status:'guest_ready'}).where(eq(rooms.id,ids.room));
+      await db.insert(housekeepingTasks).values({propertyId:ids.property,roomId:ids.room,type:'checkout',status:'completed',serviceDate:new Date('2026-01-01'),checklist:[]});
+      await expect(service.returnInventoryBlock(block.id,returnRequest)).rejects.toMatchObject({status:409});
+      await db.delete(housekeepingTasks).where(eq(housekeepingTasks.propertyId,ids.property));
+      await service.create(dto());
+      await expect(service.returnInventoryBlock(block.id,returnRequest)).rejects.toMatchObject({status:409});
+      expect((await rows(roomInventoryBlocks))[0].status).toBe('active');
+    });
+    it('serializes planned updates and return, rejects stale versions and replays the original return response',async()=>{
+      const original=await service.saveInventoryBlock(blockInput());
+      const outcomes=await Promise.allSettled(['Первая','Вторая'].map(reason=>service.saveInventoryBlock(blockInput({reason,expectedRevision:1}),original.id)));
+      expect(outcomes.filter(row=>row.status==='fulfilled')).toHaveLength(1);
+      const request={propertyId:ids.property,reason:'Проверка',idempotencyKey:randomUUID(),expectedRevision:2};
+      const [a,b]=await Promise.all([service.returnInventoryBlock(original.id,request),service.returnInventoryBlock(original.id,request)]);
+      expect(a).toEqual(b);expect(a.revision).toBe(3);
+      expect((await rows(auditLogs)).filter((row:any)=>row.entityType==='room_inventory_block'&&row.action==='return_to_service')).toHaveLength(1);
+    });
+    it('rolls back planned block, audit and receipt when durable event persistence fails',async()=>{
+      vi.spyOn(outbox,'persist').mockRejectedValueOnce(new Error('outbox unavailable'));
+      await expect(service.saveInventoryBlock(blockInput())).rejects.toThrow('outbox unavailable');
+      expect(await rows(roomInventoryBlocks)).toHaveLength(0);expect(await rows(auditLogs)).toHaveLength(0);
+    });
+    it('rejects foreign planned ownership, invalid dates and changed idempotent payload',async()=>{
+      await expect(service.saveInventoryBlock(blockInput({propertyId:ids.other}))).rejects.toMatchObject({status:404});
+      await expect(service.saveInventoryBlock(blockInput({endDate:'2025-12-31'}))).rejects.toMatchObject({status:400});
+      const request=blockInput();const block=await service.saveInventoryBlock(request);
+      await expect(service.saveInventoryBlock({...request,kind:'OOS'})).rejects.toMatchObject({response:{code:'IDEMPOTENCY_CONFLICT'}});
+      await expect(service.returnInventoryBlock(block.id,{propertyId:ids.other,reason:'Чужой',expectedRevision:1,idempotencyKey:randomUUID()})).rejects.toMatchObject({status:404});
+    });
+    it('prevents postponing an already active block as a bypass of authorized return',async()=>{
+      const request=blockInput();const block=await service.saveInventoryBlock(request);
+      await expect(service.saveInventoryBlock({...request,startDate:'2028-01-01',endDate:'2028-01-03',expectedRevision:1,idempotencyKey:randomUUID()},block.id)).rejects.toMatchObject({status:409});
+      expect((await service.inventoryBlockDetail(block.id,ids.property)).block.startDate).toBe('2026-01-01');
+      expect((await availability.searchAvailability(ids.property,'2027-05-01','2027-05-02'))[0].available).toBe(0);
     });
     it('pages a scoped filtered queue without dropping rows beyond the old 500 limit',async()=>{
       await db.insert(maintenanceTickets).values(Array.from({length:505},(_,index)=>({propertyId:ids.property,roomId:ids.room,category:'other',title:'Очередь '+index,description:'Работа',priority:index%2?'high':'normal'})));

@@ -5,7 +5,7 @@ import { ReservationCalendarService } from './reservation-calendar.service';
 describe('complete calendar window', () => {
   it('keeps more than 100 stays and uses one tenant-scoped repeatable-read snapshot', async () => {
     const stays = Array.from({ length: 125 }, (_, i) => ({ id: String(i), firstName: 'Иван', lastName: 'Петров' }));
-    const results = [[{ id: 'room' }], [{ id: 'type' }], stays, []];
+    const results = [[{ id: 'room' }], [{ id: 'type' }], stays, [], [{timezone:'UTC'}], []];
     const conditions: any[] = [];
     const tx: any = { select: vi.fn(() => {
       const rows = results.shift();

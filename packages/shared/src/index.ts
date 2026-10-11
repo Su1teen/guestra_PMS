@@ -104,6 +104,7 @@ export const WEBHOOK_EVENTS = {
 
   // Room events
   'room.status_changed': 'room.status_changed',
+  'room.inventory_block_changed': 'room.inventory_block_changed',
 
   // Housekeeping events
   'housekeeping.task_assigned': 'housekeeping.task_assigned',

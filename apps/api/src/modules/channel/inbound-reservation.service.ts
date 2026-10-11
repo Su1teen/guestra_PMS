@@ -1,5 +1,5 @@
 import { Injectable, Inject, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, sql } from 'drizzle-orm';
 import { bookings, reservations, guests, channelConnections, roomTypes, ratePlans } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { ChannelService } from './channel.service';
@@ -7,6 +7,7 @@ import { ChannelAdapterFactory } from './channel-adapter.factory';
 import { AriService } from './ari.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { AvailabilityService } from '../reservation/availability.service';
+import { RoomStatusService } from '../room/room-status.service';
 import { generateConfirmationToken } from '../connect/connect-booking.service';
 import type { ChannelReservation } from './channel-adapter.interface';
 
@@ -19,6 +20,7 @@ export class InboundReservationService {
     private readonly ariService: AriService,
     private readonly webhookService: WebhookService,
     private readonly availabilityService: AvailabilityService,
+    private readonly roomStatusService: RoomStatusService,
   ) {}
 
   /**
@@ -125,6 +127,7 @@ export class InboundReservationService {
     let created: { guest: any; booking: any; pmsReservation: any };
     try {
       created = await this.db.transaction(async (tx: any) => {
+      await tx.execute(sql`select id from ${roomTypes} where ${roomTypes.id} = ${roomTypeId} and ${roomTypes.propertyId} = ${propertyId} for update`);
       const availability = await this.availabilityService.searchAvailability(
         propertyId,
         reservation.arrivalDate,
@@ -271,6 +274,15 @@ export class InboundReservationService {
     const nights = Math.ceil((departure.getTime() - arrival.getTime()) / (1000 * 60 * 60 * 24));
 
     const [updated] = await this.db.transaction(async (tx: any) => {
+      const [current] = await tx.select().from(reservations).where(and(eq(reservations.id, existingReservation.id), eq(reservations.propertyId, propertyId))).for('update');
+      if (!current || String(current.updatedAt) !== String(existingReservation.updatedAt)) throw new ConflictException('Бронь изменилась. Повторите обработку изменения канала.');
+      if (['cancelled','checked_out','no_show'].includes(current.status)) throw new ConflictException('Нельзя изменять завершённую бронь через канал.');
+      if (current.roomId && current.roomTypeId !== roomTypeId) throw new ConflictException('Сначала освободите назначенный номер перед изменением категории.');
+      await tx.execute(sql`select id from ${roomTypes} where ${roomTypes.id} = ${roomTypeId} and ${roomTypes.propertyId} = ${propertyId} for update`);
+      if (current.roomId) {
+        await this.roomStatusService.lockRoom(current.roomId, propertyId, tx);
+        await this.roomStatusService.assertInventoryAvailable(current.roomId, propertyId, reservation.departureDate, tx);
+      }
       const availability = await this.availabilityService.searchAvailability(
         propertyId,
         reservation.arrivalDate,

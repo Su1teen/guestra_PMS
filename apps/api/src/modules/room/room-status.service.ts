@@ -13,11 +13,13 @@ import {
   housekeepingTasks,
   maintenanceTickets,
   properties,
+  roomInventoryBlocks,
 } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { WebhookService } from '../webhook/webhook.service';
 import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 import { randomUUID } from 'node:crypto';
+import { activeInventoryBlockConditions, dayAfter } from './room-inventory-policy';
 
 type RoomStatus =
   | 'vacant_clean'
@@ -144,6 +146,8 @@ export class RoomStatusService {
         );
     }
 
+    if (newStatus === 'occupied') await this.assertReady(roomId, propertyId, undefined, tx);
+
     const updates: Record<string, unknown> = {
       status: newStatus,
       updatedAt: new Date(),
@@ -230,9 +234,10 @@ export class RoomStatusService {
     serviceDate: string,
     db: any = this.db,
     roomIds?: string[],
+    excludeInventoryBlockId?: string,
   ): Promise<RoomReadiness[]> {
     if (roomIds?.length === 0) return [];
-    const [inventory, cleaning, repairs] = await Promise.all([
+    const [inventory, cleaning, repairs, planned] = await Promise.all([
       db.select({ id: rooms.id, status: rooms.status, isActive: rooms.isActive }).from(rooms).where(
           and(
             eq(rooms.propertyId, propertyId),
@@ -257,6 +262,7 @@ export class RoomStatusService {
       ),
           ),
         ),
+      db.select().from(roomInventoryBlocks).where(activeInventoryBlockConditions(propertyId, dayAfter(serviceDate), roomIds, excludeInventoryBlockId)),
     ]);
     const cleaningByRoom = new Map<string,any[]>();
     const repairsByRoom = new Map<string,any[]>();
@@ -295,9 +301,27 @@ export class RoomStatusService {
             .map((t) => t.id),
         });
       if (room.status === 'occupied') reasons.push({ code: 'occupied', label: 'Номер занят' });
+      const blocks = planned.filter((b:any) => b.roomId === room.id);
+      for (const kind of ['OOO','OOS']) {
+        const matching = blocks.filter((b:any) => b.kind === kind);
+        if (matching.length) reasons.push({ code: 'planned_' + kind.toLowerCase(),
+          label: matching.some((b:any) => b.endDate <= serviceDate)
+            ? kind + ': просрочена блокировка / требуется подтверждение'
+            : kind + ': требуется подтверждённый возврат в эксплуатацию',
+          entityIds: matching.map((b:any) => b.id) });
+      }
       return { roomId: room.id, status: room.status, ready: ['vacant_clean','guest_ready'].includes(room.status) && reasons.length === 0, reasons,
-        operational: room.isActive && !['out_of_order','out_of_service'].includes(room.status) && tickets.length === 0 };
+        operational: room.isActive && !['out_of_order','out_of_service'].includes(room.status) && tickets.length === 0 && blocks.length === 0 };
     });
+  }
+
+  /** All room operations call this under their physical-room lock for the entire remaining stay. */
+  async assertInventoryAvailable(roomId: string, propertyId: string, departureDate: string, tx: any) {
+    const blocks = await tx.select({ id: roomInventoryBlocks.id, kind: roomInventoryBlocks.kind,
+      startDate: roomInventoryBlocks.startDate, endDate: roomInventoryBlocks.endDate })
+      .from(roomInventoryBlocks).where(activeInventoryBlockConditions(propertyId, departureDate, [roomId]));
+    if (blocks.length) throw new ConflictException({ code:'ROOM_INVENTORY_BLOCKED',
+      message:'Номер недоступен до подтверждённого возврата в эксплуатацию.', blocks });
   }
 
   /** Call after acquiring the physical room lock in the operation's transaction. */
@@ -306,7 +330,9 @@ export class RoomStatusService {
     propertyId: string,
     serviceDate: string | undefined,
     tx: any,
+    departureDate?: string,
   ) {
+    if (departureDate) await this.assertInventoryAvailable(roomId, propertyId, departureDate, tx);
     if (!serviceDate) {
       const [property] = await tx
         .select({ timezone: properties.timezone })
