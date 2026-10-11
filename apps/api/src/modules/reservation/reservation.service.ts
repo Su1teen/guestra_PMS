@@ -1355,6 +1355,7 @@ export class ReservationService {
         ratePlan: ratePlans,
         room: rooms,
         confirmationNumber: bookings.confirmationNumber,
+        source: bookings.source,
       })
       .from(reservations)
       .leftJoin(guests, eq(reservations.guestId, guests.id))

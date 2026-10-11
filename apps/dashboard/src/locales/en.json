@@ -715,6 +715,7 @@
     "voidSuccess": "Authorization voided"
   },
   "frontDesk": {
+    "viewProfile": "View profile",
     "activeNotes": "{{count}} active notes",
     "addNote": "Add note",
     "addNotePlaceholder": "Front-desk handover note…",

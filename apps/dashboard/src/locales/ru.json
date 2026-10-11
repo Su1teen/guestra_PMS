@@ -715,6 +715,7 @@
     "voidSuccess": "Авторизация отменена"
   },
   "frontDesk": {
+    "viewProfile": "Открыть профиль",
     "activeNotes": "Активных заметок: {{count}}",
     "addNote": "Добавить заметку",
     "addNotePlaceholder": "Заметка для передачи смены на ресепшене…",

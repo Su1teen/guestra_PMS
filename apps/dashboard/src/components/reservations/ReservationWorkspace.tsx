@@ -42,7 +42,7 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
   });
   const envelope = query.data?.data ?? query.data;
   const reservation: Reservation | undefined = envelope?.reservation ? {
-    ...envelope.reservation, confirmationNumber: envelope.confirmationNumber,
+    ...envelope.reservation, confirmationNumber: envelope.confirmationNumber, source: envelope.source,
     guest: envelope.guest, roomNumber: envelope.room?.number,
     roomTypeName: envelope.roomType?.name, ratePlanName: envelope.ratePlan?.name,
   } : envelope?.id ? envelope : initial;
@@ -133,7 +133,7 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
             <Detail label={t('reservations.room')} value={reservation.roomNumber ?? t('reservations.unassigned')}/><Detail label={t('reservations.roomType')} value={reservation.roomTypeName ?? '—'}/>
             <Detail label={t('reservations.ratePlan')} value={reservation.ratePlanName ?? '—'}/><Detail label={t('reservations.total')} value={reservation.totalAmount != null ? formatMoney(reservation.totalAmount, reservation.currencyCode ?? currencyCode) : '—'}/>
             <Detail label={t('reservations.adults')} value={String(reservation.adults ?? '—')}/><Detail label={t('reservations.children')} value={String(reservation.children ?? 0)}/>
-            <Detail label={t('reservations.source')} value={t('reservationWorkspace.sources.' + (reservation.source ?? 'direct'), { defaultValue: t('reservationWorkspace.unknownStatus') })}/>
+            <Detail label={t('reservations.source')} value={t('reservationWorkspace.sources.' + (reservation.source ?? 'unknown'), { defaultValue: t('reservationWorkspace.unknownStatus') })}/>
           </div>
           {doorPin && <Detail label={t('frontDesk.doorPin')} value={doorPin}/>}
           {guestId && propertyId && hasPermission('guests.read') && <GuestContextSummary key={propertyId + guestId}

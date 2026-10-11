@@ -272,6 +272,15 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     } finally { webhooks.dispatchPersisted.mockResolvedValue(undefined); }
   });
 
+  it('retains the booking source in the property-scoped reservation detail', async () => {
+    const stay = await create();
+    await db.update(bookings).set({ source: 'ota' }).where(eq(bookings.id, stay.bookingId));
+    const detail = await reservationService.findById(stay.id, ids.property);
+    expect(detail.source).toBe('ota');
+    expect(detail.reservation.id).toBe(stay.id);
+    await expect(reservationService.findById(stay.id, randomUUID())).rejects.toThrow();
+  });
+
   it('returns a complete 31-night calendar for 300 rooms and 900 stays without list pagination', async () => {
     const extraRooms = Array.from({ length: 300 }, (_, index) => ({ id: randomUUID(), propertyId: ids.property, roomTypeId: ids.type, number: String(1000 + index), status: 'vacant_clean' as const }));
     await db.insert(rooms).values(extraRooms);
