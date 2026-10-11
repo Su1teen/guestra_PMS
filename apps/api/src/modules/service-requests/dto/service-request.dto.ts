@@ -217,7 +217,7 @@ export class CreateTaskFromRequestDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsString()
+  @IsDateString()
   serviceDate?: string;
 }
 

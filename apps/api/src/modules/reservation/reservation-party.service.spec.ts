@@ -19,7 +19,10 @@ describe('ReservationPartyService', () => {
   let svc: ReservationPartyService;
   let db: any;
   let webhook: { emit: ReturnType<typeof vi.fn> };
-  let roomStatus: { markOccupied: ReturnType<typeof vi.fn> };
+  let roomStatus: {
+    assertReady: ReturnType<typeof vi.fn>;
+    markOccupied: ReturnType<typeof vi.fn>
+  };
 
   const sourceReservation = {
     id: RES_A,
@@ -43,7 +46,10 @@ describe('ReservationPartyService', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     webhook = { emit: vi.fn().mockResolvedValue(undefined) };
-    roomStatus = { markOccupied: vi.fn().mockResolvedValue({}) };
+    roomStatus = {
+      assertReady: vi.fn().mockResolvedValue({ ready: true }),
+      markOccupied: vi.fn().mockResolvedValue({}),
+    };
 
     db = {
       select: vi.fn(),

@@ -20,6 +20,7 @@ describe('ReservationService.moveRoom', () => {
   let current: any;
   let overlaps: any[];
   const roomStatus = {
+    assertReady: vi.fn().mockResolvedValue({ ready: true }),
     markOccupied: vi.fn().mockResolvedValue({}),
     markVacantDirty: vi.fn().mockResolvedValue({}),
   };
@@ -44,14 +45,19 @@ describe('ReservationService.moveRoom', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
-    current = { ...reservation }; overlaps = [];
+    current = { ...reservation };
+    overlaps = [];
     db = {
       transaction: async (fn: any) => fn(db),
       select: vi.fn((fields?: any) => {
         let table: any;
-        const chain: any = { from: (value: any) => { table = value; return chain; }, where: () => chain, orderBy: () => chain,
+        const chain: any = {
+          from: (value: any) => { table = value; return chain; },
+          where: () => chain,
+          orderBy: () => chain,
           for: async () => table === rooms ? [targetRoom, { id: 'room-old', status: 'occupied' }] : [current],
-          limit: async () => fields ? overlaps : [] };
+          limit: async () => (fields ? overlaps : []),
+        };
         return chain;
       }),
       update: vi.fn().mockReturnValue({
@@ -94,7 +100,6 @@ describe('ReservationService.moveRoom', () => {
     }).compile();
 
     svc = module.get(ReservationService);
-
   });
 
   it('moves in-house guest and flips room statuses', async () => {

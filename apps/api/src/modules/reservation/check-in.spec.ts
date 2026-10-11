@@ -73,6 +73,7 @@ const mockFolioService = {
 };
 
 const mockRoomStatusService = {
+  assertReady: vi.fn().mockResolvedValue({ ready: true }),
   markOccupied: vi.fn().mockResolvedValue({ ...mockRoom, status: 'occupied' }),
   markVacantDirty: vi.fn(),
 };

@@ -295,7 +295,12 @@ export class ReservationService {
     return updated;
   }
 
-  async assignRoom(id: string, propertyId: string, dto: AssignRoomDto, transaction?: any) {
+  async assignRoom(
+    id: string,
+    propertyId: string,
+    dto: AssignRoomDto,
+    transaction?: any,
+  ) {
     const assign = async (tx: any) => {
       const lockedReservations = await tx
         .select()
@@ -332,6 +337,13 @@ export class ReservationService {
           `Room ${dto.roomId} is not available (status: ${room.status}). Must be 'guest_ready' or 'vacant_clean'.`,
         );
       }
+
+      await this.roomStatusService.assertReady(
+        room.id,
+        propertyId,
+        reservation.arrivalDate,
+        tx,
+      );
 
       const conflicts = await tx
         .select({ id: reservations.id })
@@ -386,6 +398,12 @@ export class ReservationService {
       if (!target?.isActive) throw new NotFoundException('Room not found or inactive in this property');
       if (target.roomTypeId !== reservation.roomTypeId) throw new BadRequestException('Target room does not match the booked room type');
       if (!['guest_ready','vacant_clean'].includes(target.status)) throw new BadRequestException('Target room is not available');
+      await this.roomStatusService.assertReady(
+        target.id,
+        propertyId,
+        reservation.status === 'assigned' ? reservation.arrivalDate : undefined,
+        tx,
+      );
       const overlaps = await tx.select({ id: reservations.id }).from(reservations).where(and(
         eq(reservations.propertyId, propertyId), eq(reservations.roomId, dto.roomId), ne(reservations.id, id),
         notInArray(reservations.status, ['cancelled','no_show','checked_out'] as any),
@@ -572,8 +590,7 @@ export class ReservationService {
     const roomEventId = randomUUID();
     const checkinEventId = randomUUID();
     const { reservation, updated, folio, roomId, previousRoomStatus, roomNumber, isEarlyCheckin } = await this.db.transaction(async (tx: any) => {
-      const [reservation] = await tx.select().from(reservations)
-        .where(and(eq(reservations.id, id), eq(reservations.propertyId, propertyId))).for('update');
+      const [reservation] = await tx.select().from(reservations).where(and(eq(reservations.id, id), eq(reservations.propertyId, propertyId))).for('update');
       if (!reservation) throw new NotFoundException('Reservation not found');
       assertTransition(reservation.status as ReservationStatus, 'checked_in');
 
@@ -601,10 +618,10 @@ export class ReservationService {
           throw new NotFoundException('Номер не найден или неактивен в этом объекте');
         }
         if (room.roomTypeId !== reservation.roomTypeId) {
-          throw new BadRequestException(
-            `Room ${dto.roomId} is type ${room.roomTypeId}, but reservation requires type ${reservation.roomTypeId}`,
-          );
-        }
+        throw new BadRequestException(
+          `Room ${dto.roomId} is type ${room.roomTypeId}, but reservation requires type ${reservation.roomTypeId}`,
+        );
+      }
         const allowedStatuses = ['guest_ready', 'vacant_clean'];
         if (!allowedStatuses.includes(room.status)) {
           throw new BadRequestException(
@@ -612,6 +629,12 @@ export class ReservationService {
           );
         }
         previousRoomStatus = room.status;
+        await this.roomStatusService.assertReady(
+          room.id,
+          propertyId,
+          undefined,
+          tx,
+        );
         roomNumber = room.number;
         const [overlap] = await tx.select({ id: reservations.id }).from(reservations).where(and(
           eq(reservations.propertyId, propertyId), eq(reservations.roomId, roomId), ne(reservations.id, id),
@@ -629,16 +652,16 @@ export class ReservationService {
       // ID capture (encrypted)
       let guestIdDocument: Record<string, string> | undefined;
       if (dto.idNumber) {
-        const encrypted = this.encryptIdNumber(dto.idNumber);
-        guestIdDocument = {
-          type: dto.idType ?? 'unknown',
-          encryptedNumber: encrypted.encrypted,
-          iv: encrypted.iv,
-          authTag: encrypted.authTag,
-          country: dto.idCountry ?? '',
-          expiry: dto.idExpiry ?? '',
-        };
-      }
+      const encrypted = this.encryptIdNumber(dto.idNumber);
+      guestIdDocument = {
+        type: dto.idType ?? 'unknown',
+        encryptedNumber: encrypted.encrypted,
+        iv: encrypted.iv,
+        authTag: encrypted.authTag,
+        country: dto.idCountry ?? '',
+        expiry: dto.idExpiry ?? '',
+      };
+    }
 
       // Early check-in detection
       const [property] = await tx
@@ -686,9 +709,9 @@ export class ReservationService {
       if (earlyCheckinFee) updateData['earlyCheckinFee'] = earlyCheckinFee;
       if (dto.registrationSigned) updateData['registrationSignedAt'] = now;
       if (dto.registrationData) {
-        updateData['registrationData'] = dto.registrationData;
-        updateData['registrationSubmittedAt'] = now;
-      }
+      updateData['registrationData'] = dto.registrationData;
+      updateData['registrationSubmittedAt'] = now;
+    }
       if (dto.specialRequests) {
         updateData['specialRequests'] = reservation.specialRequests
           ? `${reservation.specialRequests}\n${dto.specialRequests}`
@@ -1126,7 +1149,9 @@ export class ReservationService {
 
     const data = rows.map((r: any) => ({
       ...r.reservation,
-      guestName: r.guestFirstName ? `${r.guestFirstName} ${r.guestLastName}` : null,
+      guestName: r.guestFirstName
+        ? `${r.guestFirstName} ${r.guestLastName}`
+        : null,
       roomTypeName: r.roomTypeName,
       reasonHint: 'no_room_assigned',
     }));
@@ -1459,7 +1484,9 @@ export class ReservationService {
     const data = rows.map((r: any) => ({
       ...r.reservation,
       confirmationNumber: r.confirmationNumber ?? null,
-      guestName: r.guestFirstName ? `${r.guestFirstName} ${r.guestLastName}` : null,
+      guestName: r.guestFirstName
+        ? `${r.guestFirstName} ${r.guestLastName}`
+        : null,
       guest: r.guestFirstName
         ? {
             firstName: r.guestFirstName,
