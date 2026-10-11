@@ -1,7 +1,13 @@
-import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  OnModuleInit,
+  Logger,
+  NotImplementedException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { StorageDriver, PutOptions, PutResult } from './storage.driver';
 import { LocalDriver } from './local.driver';
+import { resolve, relative, sep } from 'node:path';
 
 /**
  * Selects and delegates to a storage driver based on env configuration.
@@ -14,10 +20,33 @@ import { LocalDriver } from './local.driver';
 export class StorageService implements OnModuleInit, StorageDriver {
   private readonly logger = new Logger(StorageService.name);
   private driver: StorageDriver = new LocalDriver();
+  private privateDriver: StorageDriver = new LocalDriver();
 
   constructor(private readonly config: ConfigService) {}
 
   async onModuleInit(): Promise<void> {
+    const privateRoot = this.config.get<string>('PRIVATE_STORAGE_DIR');
+    if (privateRoot) {
+      const root = resolve(privateRoot);
+      const publicRoots = ['dashboard', 'booking'].map((app) =>
+        resolve(__dirname, '../../../../../', app, 'dist'),
+      );
+      if (
+        publicRoots.some((publicRoot) => {
+          const path = relative(publicRoot, root);
+          return (
+            path === '' ||
+            (!path.startsWith('..' + sep) &&
+              path !== '..' &&
+              !path.includes(':'))
+          );
+        })
+      )
+        throw new Error(
+          'PRIVATE_STORAGE_DIR должен находиться вне публичных каталогов приложения.',
+        );
+    }
+    this.privateDriver = new LocalDriver(privateRoot);
     if (this.config.get<string>('STORAGE_DRIVER') !== 's3') {
       return;
     }
@@ -55,5 +84,26 @@ export class StorageService implements OnModuleInit, StorageDriver {
 
   delete(storageKey: string): Promise<void> {
     return this.driver.delete(storageKey);
+  }
+  get privateConfigured(): boolean {
+    return this.privateDriver.privateConfigured === true;
+  }
+  async putPrivate(
+    buffer: Buffer,
+    storageKey: string,
+    contentType: string,
+  ): Promise<void> {
+    if (!this.privateConfigured || !this.privateDriver.putPrivate)
+      throw new NotImplementedException(
+        'Приватное хранилище фотографий не настроено.',
+      );
+    await this.privateDriver.putPrivate(buffer, storageKey, contentType);
+  }
+  async readPrivate(storageKey: string): Promise<Buffer> {
+    if (!this.privateConfigured || !this.privateDriver.readPrivate)
+      throw new NotImplementedException(
+        'Приватное хранилище фотографий не настроено.',
+      );
+    return this.privateDriver.readPrivate(storageKey);
   }
 }

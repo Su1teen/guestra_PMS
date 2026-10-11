@@ -188,6 +188,7 @@ export const WEBHOOK_EVENTS = {
   'reservation.service_posted': 'reservation.service_posted',
   'staff_shift.updated': 'staff_shift.updated',
   'housekeeping.task_inspected': 'housekeeping.task_inspected',
+  'housekeeping.task_updated': 'housekeeping.task_updated',
   'service_booking.created': 'service_booking.created',
   'service_booking.rescheduled': 'service_booking.rescheduled',
   'service_booking.cancelled': 'service_booking.cancelled',

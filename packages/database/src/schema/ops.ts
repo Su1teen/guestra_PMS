@@ -1,4 +1,17 @@
-import { pgTable, uuid, varchar, text, timestamp, pgEnum, integer, jsonb, boolean, index, uniqueIndex } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  text,
+  timestamp,
+  pgEnum,
+  integer,
+  jsonb,
+  boolean,
+  index,
+  uniqueIndex,
+  type AnyPgColumn,
+} from 'drizzle-orm/pg-core';
 import { properties } from './property.js';
 import { rooms } from './room.js';
 import { reservations } from './reservation.js';
@@ -75,45 +88,52 @@ export const serviceRequestTypeEnum = pgEnum('service_request_type', [
 /**
  * Guest or staff service requests that may spawn or link to a housekeeping task.
  */
-export const serviceRequests = pgTable('service_requests', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  propertyId: uuid('property_id').notNull().references(() => properties.id),
-  roomId: uuid('room_id').references(() => rooms.id),
-  reservationId: uuid('reservation_id').references(() => reservations.id),
-  guestId: uuid('guest_id').references(() => guests.id),
-  type: serviceRequestTypeEnum('type').notNull(),
-  category: varchar('category', { length: 80 }),
-  department: varchar('department', { length: 80 }),
-  priority: integer('priority').notNull().default(0),
-  status: serviceRequestStatusEnum('status').notNull().default('open'),
-  title: varchar('title', { length: 255 }).notNull(),
-  description: text('description'),
-  linkedTaskId: uuid('linked_task_id').references(() => housekeepingTasks.id),
-  requestedBy: uuid('requested_by'),
-  assigneeId: uuid('assignee_id').references(() => users.id),
-  dueAt: timestamp('due_at', { withTimezone: true }),
-  startedAt: timestamp('started_at', { withTimezone: true }),
-  completedAt: timestamp('completed_at', { withTimezone: true }),
-  slaDeadline: timestamp('sla_deadline', { withTimezone: true }),
-  comments: jsonb('comments').$type<Array<{
+export const serviceRequests = pgTable(
+  'service_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    propertyId: uuid('property_id').notNull().references(() => properties.id),
+    roomId: uuid('room_id').references(() => rooms.id),
+    reservationId: uuid('reservation_id').references(() => reservations.id),
+    guestId: uuid('guest_id').references(() => guests.id),
+    type: serviceRequestTypeEnum('type').notNull(),
+    category: varchar('category', { length: 80 }),
+    department: varchar('department', { length: 80 }),
+    priority: integer('priority').notNull().default(0),
+    status: serviceRequestStatusEnum('status').notNull().default('open'),
+    title: varchar('title', { length: 255 }).notNull(),
+    description: text('description'),
+    linkedTaskId: uuid('linked_task_id').references(() => housekeepingTasks.id),
+    linkedMaintenanceTicketId: uuid('linked_maintenance_ticket_id').references(
+      (): AnyPgColumn => maintenanceTickets.id,
+    ),
+    requestedBy: uuid('requested_by'),
+    assigneeId: uuid('assignee_id').references(() => users.id),
+    dueAt: timestamp('due_at', { withTimezone: true }),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    slaDeadline: timestamp('sla_deadline', { withTimezone: true }),
+    comments: jsonb('comments').$type<Array<{
     id: string;
     body: string;
     authorId?: string | null;
     createdAt: string;
   }>>().notNull().default([]),
-  attachments: jsonb('attachments').$type<Array<{
+    attachments: jsonb('attachments').$type<Array<{
     url: string;
     name?: string;
     contentType?: string;
   }>>().notNull().default([]),
-  createdBy: uuid('created_by').references(() => users.id),
-  completedBy: uuid('completed_by').references(() => users.id),
-  sourceChannel: varchar('source_channel', { length: 40 }).notNull().default('front_desk'),
-  idempotencyKey: varchar('idempotency_key', { length: 200 }),
-  integrationContext: jsonb('integration_context').$type<Record<string, unknown>>(),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [uniqueIndex('service_requests_property_idempotency_unique').on(t.propertyId, t.idempotencyKey)]);
+    createdBy: uuid('created_by').references(() => users.id),
+    completedBy: uuid('completed_by').references(() => users.id),
+    sourceChannel: varchar('source_channel', { length: 40 }).notNull().default('front_desk'),
+    idempotencyKey: varchar('idempotency_key', { length: 200 }),
+    integrationContext: jsonb('integration_context').$type<Record<string, unknown>>(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('service_requests_property_idempotency_unique').on(t.propertyId, t.idempotencyKey)],
+);
 
 export const maintenanceCategoryEnum = pgEnum('maintenance_category', [
   'hvac',
@@ -151,41 +171,54 @@ export const maintenanceStatusEnum = pgEnum('maintenance_status', [
  * explicitly confirmed, at which point the established room workflow sends it
  * to vacant_dirty for housekeeping/inspection.
  */
-export const maintenanceTickets = pgTable('maintenance_tickets', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  propertyId: uuid('property_id').notNull().references(() => properties.id),
-  roomId: uuid('room_id').references(() => rooms.id),
-  reservationId: uuid('reservation_id').references(() => reservations.id),
-  guestId: uuid('guest_id').references(() => guests.id),
-  category: maintenanceCategoryEnum('category').notNull().default('other'),
-  title: varchar('title', { length: 255 }).notNull(),
-  description: text('description').notNull(),
-  priority: maintenancePriorityEnum('priority').notNull().default('normal'),
-  status: maintenanceStatusEnum('status').notNull().default('open'),
-  department: varchar('department', { length: 80 }).notNull().default('maintenance'),
-  assigneeId: uuid('assignee_id').references(() => users.id),
-  reportedBy: uuid('reported_by').references(() => users.id),
-  startedAt: timestamp('started_at', { withTimezone: true }),
-  completedAt: timestamp('completed_at', { withTimezone: true }),
-  slaDeadline: timestamp('sla_deadline', { withTimezone: true }),
-  resolution: text('resolution'),
-  comments: jsonb('comments').$type<Array<{
+export const maintenanceTickets = pgTable(
+  'maintenance_tickets',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    propertyId: uuid('property_id').notNull().references(() => properties.id),
+    roomId: uuid('room_id').references(() => rooms.id),
+    reservationId: uuid('reservation_id').references(() => reservations.id),
+    guestId: uuid('guest_id').references(() => guests.id),
+    category: maintenanceCategoryEnum('category').notNull().default('other'),
+    title: varchar('title', { length: 255 }).notNull(),
+    description: text('description').notNull(),
+    priority: maintenancePriorityEnum('priority').notNull().default('normal'),
+    status: maintenanceStatusEnum('status').notNull().default('open'),
+    department: varchar('department', { length: 80 }).notNull().default('maintenance'),
+    assigneeId: uuid('assignee_id').references(() => users.id),
+    reportedBy: uuid('reported_by').references(() => users.id),
+    startedAt: timestamp('started_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+    slaDeadline: timestamp('sla_deadline', { withTimezone: true }),
+    resolution: text('resolution'),
+    comments: jsonb('comments').$type<Array<{
     id: string;
     body: string;
     authorId?: string | null;
     createdAt: string;
   }>>().notNull().default([]),
-  attachments: jsonb('attachments').$type<Array<{
-    url: string;
-    name?: string;
-    contentType?: string;
-  }>>().notNull().default([]),
-  blocksInventory: boolean('blocks_inventory').notNull().default(false),
-  returnToServiceRequired: boolean('return_to_service_required').notNull().default(false),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [
+    attachments: jsonb('attachments').$type<
+        Array<{
+          url?: string;
+          id?: string;
+          storageKey?: string;
+          size?: number;
+          sha256?: string;
+          name?: string;
+          contentType?: string;
+        }>
+      >()
+      .notNull()
+      .default([]),
+    blocksInventory: boolean('blocks_inventory').notNull().default(false),
+    returnToServiceRequired: boolean('return_to_service_required').notNull().default(false),
+    revision: integer('revision').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
   index('maintenance_tickets_property_status_idx').on(t.propertyId, t.status),
   index('maintenance_tickets_property_room_idx').on(t.propertyId, t.roomId),
   index('maintenance_tickets_property_sla_idx').on(t.propertyId, t.slaDeadline),
-]);
+],
+);

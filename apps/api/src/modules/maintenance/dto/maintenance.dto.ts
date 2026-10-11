@@ -7,7 +7,11 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  IsInt,
+  Min,
+  Max,
 } from 'class-validator';
+import { Type,Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export const MAINTENANCE_CATEGORIES = [
@@ -19,7 +23,24 @@ export const MAINTENANCE_STATUSES = [
   'open', 'assigned', 'in_progress', 'waiting_parts', 'resolved', 'closed', 'cancelled',
 ] as const;
 
-export class CreateMaintenanceTicketDto {
+export class MaintenanceMutationDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  idempotencyKey?: string;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  expectedRevision?: number;
+}
+export class MaintenanceRequestDto {
+  @ApiProperty() @IsUUID() propertyId!: string;
+  @ApiProperty() @IsString() @MaxLength(200) idempotencyKey!: string;
+}
+
+export class CreateMaintenanceTicketDto extends MaintenanceMutationDto {
   @ApiProperty() @IsUUID() propertyId!: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() roomId?: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() reservationId?: string;
@@ -35,7 +56,7 @@ export class CreateMaintenanceTicketDto {
   @ApiPropertyOptional({ default: false }) @IsOptional() @IsBoolean() blocksInventory?: boolean;
 }
 
-export class UpdateMaintenanceTicketDto {
+export class UpdateMaintenanceTicketDto extends MaintenanceMutationDto {
   @ApiPropertyOptional({ enum: MAINTENANCE_CATEGORIES })
   @IsOptional() @IsEnum(MAINTENANCE_CATEGORIES) category?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(255) title?: string;
@@ -61,22 +82,20 @@ export class ListMaintenanceTicketsDto {
   @ApiPropertyOptional({ enum: MAINTENANCE_STATUSES })
   @IsOptional() @IsEnum(MAINTENANCE_STATUSES) status?: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() assigneeId?: string;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() overdue?: boolean;
+  @ApiPropertyOptional() @IsOptional() @Transform(({value})=>value==='true'?true:value==='false'?false:value) @IsBoolean() overdue?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(80) department?:string;
+}
+export class MaintenancePageDto extends ListMaintenanceTicketsDto {
+  @ApiPropertyOptional() @IsOptional() @Type(()=>Number) @IsInt() @Min(1) page=1;
+  @ApiPropertyOptional() @IsOptional() @Type(()=>Number) @IsInt() @Min(1) @Max(100) limit=50;
 }
 
-export class MaintenanceCommentDto {
+export class MaintenanceCommentDto extends MaintenanceMutationDto {
   @ApiProperty() @IsUUID() propertyId!: string;
-  @ApiProperty() @IsString() body!: string;
+  @ApiProperty() @IsString() @MaxLength(10000) body!: string;
 }
 
-export class MaintenanceAttachmentDto {
-  @ApiProperty() @IsUUID() propertyId!: string;
-  @ApiProperty() @IsString() url!: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() name?: string;
-  @ApiPropertyOptional() @IsOptional() @IsString() contentType?: string;
-}
-
-export class ReturnToServiceDto {
+export class ReturnToServiceDto extends MaintenanceMutationDto {
   @ApiProperty() @IsUUID() propertyId!: string;
   @ApiPropertyOptional({ description: 'Optional inspection/engineering note' })
   @IsOptional() @IsString() note?: string;

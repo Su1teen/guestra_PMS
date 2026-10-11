@@ -11,6 +11,7 @@ import { PropertyModule } from './modules/property/property.module';
 import { RoomModule } from './modules/room/room.module';
 import { GuestModule } from './modules/guest/guest.module';
 import { MediaModule } from './modules/media/media.module';
+import { OperationalAttachmentsModule } from './modules/media/operational-attachments.module';
 import { ReservationModule } from './modules/reservation/reservation.module';
 import { FolioModule } from './modules/folio/folio.module';
 import { RatePlanModule } from './modules/rate-plan/rate-plan.module';
@@ -73,6 +74,7 @@ const imports: any[] = [
   RoomModule,
   GuestModule,
   MediaModule,
+  OperationalAttachmentsModule,
   ReservationModule,
   FolioModule,
   RatePlanModule,
