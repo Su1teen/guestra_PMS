@@ -4,14 +4,15 @@ import {
   Query,
   ParseUUIDPipe,
 } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiQuery } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiQuery, ApiOkResponse } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { ReportsService } from './reports.service';
 import { PortfolioPropertyResolver } from './portfolio-property-resolver';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
 import { ReportQueryDto } from './dto/report-query.dto';
-import { resolveReportDate } from './resolve-report-date';
+import { DailyRevenueResponseDto, FinancialSummaryResponseDto, ManagementSummaryResponseDto,
+  RevenuePeriodsResponseDto, RevenueTrendResponseDto, ReportRangeDto } from './dto/financial-report.dto';
 
 @ApiTags('reports')
 @Controller('reports')
@@ -41,10 +42,13 @@ export class ReportsController {
     return {
       reports: [
         'daily-revenue',
+        'management-summary',
         'occupancy',
         'financial-summary',
         'trial-balance',
         'occupancy-trend',
+        'revenue-trend',
+        'revenue-periods',
         'pickup',
         'booking-pace',
       ],
@@ -53,6 +57,7 @@ export class ReportsController {
 
   @Get('/daily-revenue')
   @ApiOperation({ summary: 'Daily revenue report' })
+  @ApiOkResponse({ type: DailyRevenueResponseDto })
   @ApiQuery({ name: 'propertyId', required: true })
   @ApiQuery({ name: 'date', required: true })
   async getDailyRevenue(
@@ -65,10 +70,11 @@ export class ReportsController {
   @Get('/management-summary')
   @RequirePermissions('management_dashboard.view')
   @ApiOperation({ summary: 'Management dashboard + Daily Revenue Report cockpit' })
+  @ApiOkResponse({ type: ManagementSummaryResponseDto })
   async getManagementSummary(
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
     @Query('date') date: string,
-  ) { return this.reportsService.getManagementSummary(propertyId, resolveReportDate(date)); }
+  ) { return this.reportsService.getManagementSummary(propertyId, date); }
 
   @Get('/occupancy')
   @ApiOperation({ summary: 'Occupancy report' })
@@ -76,17 +82,18 @@ export class ReportsController {
   @ApiQuery({
     name: 'date',
     required: false,
-    description: 'Report date (YYYY-MM-DD). Defaults to today when omitted.',
+    description: 'Business date YYYY-MM-DD. Defaults to operational business date in the property timezone.',
   })
   async getOccupancy(@Query() query: ReportQueryDto) {
     return this.reportsService.getOccupancy(
       query.propertyId,
-      resolveReportDate(query.date),
+      query.date,
     );
   }
 
   @Get('/financial-summary')
   @ApiOperation({ summary: 'Financial summary (Manager\'s Report)' })
+  @ApiOkResponse({ type: FinancialSummaryResponseDto })
   @ApiQuery({ name: 'propertyId', required: true })
   @ApiQuery({ name: 'date', required: true })
   async getFinancialSummary(
@@ -109,6 +116,7 @@ export class ReportsController {
 
   @Get('/occupancy-trend')
   @ApiOperation({ summary: 'Occupancy trend report over date range' })
+  @ApiOkResponse({ type: RevenueTrendResponseDto })
   @ApiQuery({ name: 'propertyId', required: true })
   @ApiQuery({ name: 'startDate', required: true })
   @ApiQuery({ name: 'endDate', required: true })
@@ -118,6 +126,20 @@ export class ReportsController {
     @Query('endDate') endDate: string,
   ) {
     return this.reportsService.getOccupancyTrend(propertyId, startDate, endDate);
+  }
+
+  @Get('/revenue-trend')
+  @ApiOperation({ summary: 'Signed earned revenue and inventory trend (same source as occupancy trend)' })
+  @ApiOkResponse({ type: RevenueTrendResponseDto })
+  async getRevenueTrend(@Query() query: ReportRangeDto) {
+    return this.reportsService.getOccupancyTrend(query.propertyId, query.startDate, query.endDate);
+  }
+
+  @Get('/revenue-periods')
+  @ApiOperation({ summary: 'Calendar actuals, booking metrics and explicit unavailable forecast/plan/GOP' })
+  @ApiOkResponse({ type: RevenuePeriodsResponseDto })
+  async getRevenuePeriods(@Query() query: ReportQueryDto) {
+    return this.reportsService.getRevenuePeriods(query.propertyId, query.date);
   }
 
   @Get('/pickup')

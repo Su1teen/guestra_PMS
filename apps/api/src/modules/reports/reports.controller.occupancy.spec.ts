@@ -32,7 +32,7 @@ describe('ReportsController occupancy', () => {
     vi.useRealTimers();
   });
 
-  it('defaults date to today when omitted', async () => {
+  it('delegates omitted date to the property-local operational date resolver', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-08-09T12:00:00Z'));
 
@@ -42,7 +42,7 @@ describe('ReportsController occupancy', () => {
 
     expect(getOccupancy).toHaveBeenCalledWith(
       'a0000001-0000-4000-a000-000000000001',
-      '2026-08-09',
+      undefined,
     );
   });
 
