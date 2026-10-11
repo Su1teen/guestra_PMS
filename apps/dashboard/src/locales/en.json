@@ -4,6 +4,8 @@
     "back": "Back without changes"
   },
   "staffRecovery": {
+    "close": "Close attempt and create a new booking",
+    "new": "Create a new booking",
     "pending": "A booking request has no confirmed response. Check its result first.",
     "committed": "The booking was saved. No second booking is needed.",
     "unconfirmed": "No saved booking was found yet. The request may still be running. Check again; the request is never resubmitted automatically after reload.",

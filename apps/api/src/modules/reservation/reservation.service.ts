@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ConflictException,
   forwardRef,
+  Optional,
 } from '@nestjs/common';
 import {
   eq,
@@ -32,6 +33,7 @@ import {
 import { FolioService } from '../folio/folio.service';
 import { RoomStatusService } from '../room/room-status.service';
 import { PaymentService } from '../payment/payment.service';
+import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { AncillaryService } from '../ancillary/ancillary.service';
 import { PolicyService } from '../policy/policy.service';
@@ -49,7 +51,7 @@ import { CheckOutDto } from './dto/check-out.dto';
 import { GroupCheckInDto } from './dto/group-check-in.dto';
 import { BulkActionDto } from './dto/bulk-action.dto';
 import { ListUnassignedDto } from './dto/list-unassigned.dto';
-import { createCipheriv, randomBytes } from 'crypto';
+import { createCipheriv, randomBytes, randomUUID } from 'crypto';
 import { generateConfirmationNumber } from '../../common/crypto/confirmation-number';
 import type { AcceptedPricingSnapshot } from '@telivityhaip/database';
 
@@ -77,6 +79,7 @@ export class ReservationService {
     private readonly policyService: PolicyService,
     private readonly depositSettlementService: DepositSettlementService,
     private readonly ratePlanService: RatePlanService,
+    @Optional() private readonly eventOutbox?: DomainEventOutboxService,
   ) {}
 
   async create(
@@ -566,142 +569,167 @@ export class ReservationService {
   }
 
   async checkIn(id: string, propertyId: string, dto: CheckInDto = {}) {
-    const reservation = await this.findByIdRaw(id, propertyId);
-    assertTransition(reservation.status as ReservationStatus, 'checked_in');
+    const roomEventId = randomUUID();
+    const checkinEventId = randomUUID();
+    const { reservation, updated, folio, roomId, previousRoomStatus, roomNumber, isEarlyCheckin } = await this.db.transaction(async (tx: any) => {
+      const [reservation] = await tx.select().from(reservations)
+        .where(and(eq(reservations.id, id), eq(reservations.propertyId, propertyId))).for('update');
+      if (!reservation) throw new NotFoundException('Reservation not found');
+      assertTransition(reservation.status as ReservationStatus, 'checked_in');
 
-    // DNR check
-    const [guest] = await this.db
-      .select()
-      .from(guests)
-      .where(eq(guests.id, reservation.guestId));
-    if (guest?.isDnr) {
-      throw new BadRequestException(
-        `Cannot check in: guest is on the Do Not Rent list`,
-      );
-    }
-
-    // Room validation
-    const roomId = dto.roomId ?? reservation.roomId;
-    if (dto.roomId) {
-      const [room] = await this.db
+      // DNR check
+      const [guest] = await tx
         .select()
-        .from(rooms)
-        .where(and(eq(rooms.id, dto.roomId), eq(rooms.propertyId, reservation.propertyId)));
-      if (!room) {
-        throw new NotFoundException(`Room ${dto.roomId} not found in this property`);
-      }
-      if (room.roomTypeId !== reservation.roomTypeId) {
+        .from(guests)
+        .where(eq(guests.id, reservation.guestId));
+      if (guest?.isDnr) {
         throw new BadRequestException(
-          `Room ${dto.roomId} is type ${room.roomTypeId}, but reservation requires type ${reservation.roomTypeId}`,
+          `Cannot check in: guest is on the Do Not Rent list`,
         );
       }
-      const allowedStatuses = ['guest_ready', 'vacant_clean'];
-      if (!allowedStatuses.includes(room.status)) {
+
+      // Room validation
+      const roomId = dto.roomId ?? reservation.roomId;
+      let previousRoomStatus: string | undefined;
+      let roomNumber: string | undefined;
+      if (roomId) {
+        const [room] = await tx
+          .select()
+          .from(rooms)
+          .where(and(eq(rooms.id, roomId), eq(rooms.propertyId, reservation.propertyId))).for('update');
+        if (!room?.isActive) {
+          throw new NotFoundException('Номер не найден или неактивен в этом объекте');
+        }
+        if (room.roomTypeId !== reservation.roomTypeId) {
+          throw new BadRequestException(
+            `Room ${dto.roomId} is type ${room.roomTypeId}, but reservation requires type ${reservation.roomTypeId}`,
+          );
+        }
+        const allowedStatuses = ['guest_ready', 'vacant_clean'];
+        if (!allowedStatuses.includes(room.status)) {
+          throw new BadRequestException(
+            `Room ${dto.roomId} is not available (status: ${room.status})`,
+          );
+        }
+        previousRoomStatus = room.status;
+        roomNumber = room.number;
+        const [overlap] = await tx.select({ id: reservations.id }).from(reservations).where(and(
+          eq(reservations.propertyId, propertyId), eq(reservations.roomId, roomId), ne(reservations.id, id),
+          notInArray(reservations.status, ['cancelled', 'no_show', 'checked_out'] as any),
+          lt(reservations.arrivalDate, reservation.departureDate), gt(reservations.departureDate, reservation.arrivalDate),
+        )).limit(1);
+        if (overlap) throw new ConflictException('Номер занят другой бронью на эти даты');
+      }
+      if (!roomId) {
         throw new BadRequestException(
-          `Room ${dto.roomId} is not available (status: ${room.status})`,
+          'No room assigned — assign a room first or provide roomId',
         );
       }
-    }
-    if (!roomId) {
-      throw new BadRequestException(
-        'No room assigned — assign a room first or provide roomId',
-      );
-    }
 
-    // ID capture (encrypted)
-    let guestIdDocument: Record<string, string> | undefined;
-    if (dto.idNumber) {
-      const encrypted = this.encryptIdNumber(dto.idNumber);
-      guestIdDocument = {
-        type: dto.idType ?? 'unknown',
-        encryptedNumber: encrypted.encrypted,
-        iv: encrypted.iv,
-        authTag: encrypted.authTag,
-        country: dto.idCountry ?? '',
-        expiry: dto.idExpiry ?? '',
-      };
-    }
+      // ID capture (encrypted)
+      let guestIdDocument: Record<string, string> | undefined;
+      if (dto.idNumber) {
+        const encrypted = this.encryptIdNumber(dto.idNumber);
+        guestIdDocument = {
+          type: dto.idType ?? 'unknown',
+          encryptedNumber: encrypted.encrypted,
+          iv: encrypted.iv,
+          authTag: encrypted.authTag,
+          country: dto.idCountry ?? '',
+          expiry: dto.idExpiry ?? '',
+        };
+      }
 
-    // Early check-in detection
-    const [property] = await this.db
-      .select()
-      .from(properties)
-      .where(eq(properties.id, reservation.propertyId));
-    const now = new Date();
-    let isEarlyCheckin = false;
-    let earlyCheckinFee: string | undefined;
+      // Early check-in detection
+      const [property] = await tx
+        .select()
+        .from(properties)
+        .where(eq(properties.id, reservation.propertyId));
+      const now = new Date();
+      let isEarlyCheckin = false;
+      let earlyCheckinFee: string | undefined;
 
-    if (property?.guestRegistrationRequired && !dto.registrationSigned) {
-      throw new BadRequestException(
-        'Guest registration card must be signed before check-in for this property',
-      );
-    }
+      if (property?.guestRegistrationRequired && !dto.registrationSigned) {
+        throw new BadRequestException(
+          'Guest registration card must be signed before check-in for this property',
+        );
+      }
 
-    if (property) {
-      const checkInTime = property.checkInTime ?? '15:00';
-      const [hours, minutes] = checkInTime.split(':').map(Number);
-      const propertyNow = new Date(
-        now.toLocaleString('en-US', { timeZone: property.timezone ?? 'UTC' }),
-      );
-      const standardCheckIn = new Date(propertyNow);
-      standardCheckIn.setHours(hours, minutes, 0, 0);
+      if (property) {
+        const checkInTime = property.checkInTime ?? '15:00';
+        const [hours, minutes] = checkInTime.split(':').map(Number);
+        const propertyNow = new Date(
+          now.toLocaleString('en-US', { timeZone: property.timezone ?? 'UTC' }),
+        );
+        const standardCheckIn = new Date(propertyNow);
+        standardCheckIn.setHours(hours, minutes, 0, 0);
 
-      if (propertyNow < standardCheckIn) {
-        isEarlyCheckin = true;
-        const settings = property.settings as any;
-        if (settings?.earlyCheckInFee && settings.earlyCheckInFee > 0) {
-          earlyCheckinFee = String(settings.earlyCheckInFee);
+        if (propertyNow < standardCheckIn) {
+          isEarlyCheckin = true;
+          const settings = property.settings as any;
+          if (settings?.earlyCheckInFee && settings.earlyCheckInFee > 0) {
+            earlyCheckinFee = String(settings.earlyCheckInFee);
+          }
         }
       }
-    }
 
-    // Update reservation
-    const updateData: Record<string, unknown> = {
-      status: 'checked_in',
-      checkedInAt: now,
-      actualArrivalTime: now,
-      roomId,
-      isEarlyCheckin,
-      updatedAt: now,
-    };
-    if (guestIdDocument) updateData['guestIdDocument'] = guestIdDocument;
-    if (earlyCheckinFee) updateData['earlyCheckinFee'] = earlyCheckinFee;
-    if (dto.registrationSigned) updateData['registrationSignedAt'] = now;
-    if (dto.registrationData) {
-      updateData['registrationData'] = dto.registrationData;
-      updateData['registrationSubmittedAt'] = now;
-    }
-    if (dto.specialRequests) {
-      updateData['specialRequests'] = reservation.specialRequests
-        ? `${reservation.specialRequests}\n${dto.specialRequests}`
-        : dto.specialRequests;
-    }
+      // Update reservation
+      const updateData: Record<string, unknown> = {
+        status: 'checked_in',
+        checkedInAt: now,
+        actualArrivalTime: now,
+        roomId,
+        isEarlyCheckin,
+        updatedAt: now,
+      };
+      if (guestIdDocument) updateData['guestIdDocument'] = guestIdDocument;
+      if (earlyCheckinFee) updateData['earlyCheckinFee'] = earlyCheckinFee;
+      if (dto.registrationSigned) updateData['registrationSignedAt'] = now;
+      if (dto.registrationData) {
+        updateData['registrationData'] = dto.registrationData;
+        updateData['registrationSubmittedAt'] = now;
+      }
+      if (dto.specialRequests) {
+        updateData['specialRequests'] = reservation.specialRequests
+          ? `${reservation.specialRequests}\n${dto.specialRequests}`
+          : dto.specialRequests;
+      }
 
-    // Bug 2: atomic claim — only assigned reservations may check in, and
-    // only one concurrent check-in can win. Side effects (folio, payment,
-    // room transition, webhook) run ONLY if the claim succeeded.
-    const updated = await this.claimTransition(
-      id,
-      propertyId,
-      ['assigned'],
-      updateData,
-      'checked_in',
-    );
+      // Bug 2: atomic claim — only assigned reservations may check in, and
+      // only one concurrent check-in can win. Side effects (folio, payment,
+      // room transition, webhook) run ONLY if the claim succeeded.
+      const [updated] = await tx.update(reservations).set(updateData).where(and(
+        eq(reservations.id, id), eq(reservations.propertyId, propertyId), eq(reservations.status, 'assigned'),
+      )).returning();
+      if (!updated) throw new ConflictException('Состояние брони изменилось во время заселения');
+      await this.roomStatusService.markOccupied(roomId, propertyId, tx);
 
-    // Auto-create guest folio on check-in
-    const folio = await this.folioService.createAutoFolio(updated);
+      // Auto-create guest folio on check-in
+      const folio = await this.folioService.createAutoFolio(updated, tx);
 
-    // Post early check-in fee to folio
-    if (earlyCheckinFee) {
-      await this.folioService.postCharge(folio.id, {
-        propertyId: reservation.propertyId,
-        type: 'fee',
-        description: 'Early check-in fee',
-        amount: earlyCheckinFee,
-        currencyCode: reservation.currencyCode,
-        serviceDate: now.toISOString(),
-      });
-    }
+      // Post early check-in fee to folio
+      if (earlyCheckinFee) {
+        await this.folioService.postCharge(folio.id, {
+          propertyId: reservation.propertyId,
+          type: 'fee',
+          description: 'Early check-in fee',
+          amount: earlyCheckinFee,
+          currencyCode: reservation.currencyCode,
+          serviceDate: now.toISOString(),
+        }, tx);
+      }
+
+      if (this.eventOutbox) {
+        const timestamp = new Date().toISOString();
+        await this.eventOutbox.persist(tx, { event: 'room.status_changed', entityType: 'room', entityId: roomId,
+          propertyId, timestamp, data: { previousStatus: previousRoomStatus, newStatus: 'occupied', roomNumber } }, roomEventId);
+        await this.eventOutbox.persist(tx, { event: 'reservation.checked_in', entityType: 'reservation', entityId: updated.id,
+          propertyId, timestamp, data: { roomId, folioId: folio.id, isEarlyCheckin } }, checkinEventId);
+      }
+      return { reservation, updated, folio, roomId, previousRoomStatus, roomNumber, isEarlyCheckin };
+    });
+    if (!this.eventOutbox) await this.webhookService.emit('room.status_changed', 'room', roomId,
+      { previousStatus: previousRoomStatus, newStatus: 'occupied', roomNumber }, propertyId);
 
     // Deposit authorization (if token provided and not skipped)
     // Accept paymentMethodId (Stripe Elements) as alias for gatewayPaymentToken
@@ -727,9 +755,6 @@ export class ReservationService {
       }
     }
 
-    // Mark room occupied
-    await this.roomStatusService.markOccupied(roomId, reservation.propertyId);
-
     // Attach package components (if any) and post once / included-in-rate extras
     try {
       await this.ancillaryService.ensurePackageComponents(updated.id, propertyId);
@@ -745,8 +770,13 @@ export class ReservationService {
       // Deposit apply failure must not block check-in
     }
 
-    // Emit webhook
-    await this.webhookService.emit(
+    // Outbox rows commit with the stay. A failed dispatch must not make a committed check-in look rejected.
+    if (this.eventOutbox) {
+      try {
+        await this.eventOutbox.deliver(propertyId, roomEventId);
+        await this.eventOutbox.deliver(propertyId, checkinEventId);
+      } catch { /* Existing outbox recovery retries committed events. */ }
+    } else await this.webhookService.emit(
       'reservation.checked_in',
       'reservation',
       updated.id,

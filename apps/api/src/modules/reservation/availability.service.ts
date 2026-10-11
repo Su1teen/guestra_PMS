@@ -114,6 +114,7 @@ export class AvailabilityService {
       .select({
         roomTypeId: rooms.roomTypeId,
         count: sql<number>`count(*)`,
+        blocked: sql<number>`count(*) filter (where ${rooms.status} in ('out_of_order', 'out_of_service'))`,
       })
       .from(rooms)
       .where(
@@ -127,6 +128,7 @@ export class AvailabilityService {
     const roomCountByType = new Map<string, number>(
       roomCountRows.map((r: any) => [r.roomTypeId, Number(r.count ?? 0)]),
     );
+    const blockedByType = new Map<string, number>(roomCountRows.map((r: any) => [r.roomTypeId, Number(r.blocked ?? 0)]));
 
     // Active import feeds reduce availability as one busy unit per feed/date.
     // Counting distinct feedIds avoids double-counting overlapping events from
@@ -184,8 +186,10 @@ export class AvailabilityService {
             .map((b: any) => b.feedId),
         ).size;
 
-        const overbookingBuffer = Math.floor(totalRooms * (overbookingPct / 100));
-        const available = totalRooms + overbookingBuffer - sold - importedBusy;
+        // An OOO/OOS physical room stays outside sellable inventory until the established manual return.
+        const sellableRooms = Math.max(0, totalRooms - (blockedByType.get(type.id) ?? 0));
+        const overbookingBuffer = Math.floor(sellableRooms * (overbookingPct / 100));
+        const available = sellableRooms + overbookingBuffer - sold - importedBusy;
 
         results.push({
           roomTypeId: type.id,

@@ -1335,6 +1335,9 @@ export async function pushSchema(databaseUrl: string = DATABASE_URL) {
 )`));
   await db.execute(sql.raw(`CREATE UNIQUE INDEX IF NOT EXISTS domain_event_outbox_property_event_unique ON domain_event_outbox (property_id, logical_event_id)`));
   await db.execute(sql.raw(`CREATE INDEX IF NOT EXISTS domain_event_outbox_pending_idx ON domain_event_outbox (delivered_at, available_at)`));
+  await db.execute(sql.raw(`CREATE TABLE IF NOT EXISTS staff_request_fences (
+    property_id uuid NOT NULL REFERENCES properties(id), request_id uuid NOT NULL,
+    closed_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (property_id, request_id))`));
   await db.execute(sql.raw(`ALTER TABLE staff_notifications ADD COLUMN IF NOT EXISTS deduplication_key varchar(200)`));
   await db.execute(sql.raw(`ALTER TABLE staff_notifications ADD COLUMN IF NOT EXISTS required_permission varchar(100)`));
   await db.execute(sql.raw(`CREATE UNIQUE INDEX IF NOT EXISTS staff_notifications_property_dedup_unique ON staff_notifications (property_id, deduplication_key)`));
