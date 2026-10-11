@@ -7,6 +7,7 @@ import { RoomStatusService } from '../room/room-status.service';
 
 const mockWebhookService = { emit: vi.fn().mockResolvedValue(undefined) };
 const mockRoomStatusService = {
+  lockRoom: vi.fn().mockResolvedValue({ id: 'room-001' }),
   transitionStatus: vi.fn().mockResolvedValue({ id: 'room-001', status: 'clean' }),
   getRoomStatus: vi.fn().mockResolvedValue({ id: 'room-001', number: '101', status: 'vacant_dirty' }),
   getRoomsByStatus: vi.fn().mockResolvedValue([]),
@@ -39,10 +40,11 @@ function createCompletionDb(options: {
   const propertySettings = options.propertySettings ?? { requireInspection: true };
 
   let selectCallCount = 0;
-  return {
+  const db: any = {
     select: vi.fn().mockImplementation(() => ({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
+          for() { return this; },
           then: (resolve: any) => {
             selectCallCount++;
             // Call 1: findByIdRaw (task lookup)
@@ -92,6 +94,8 @@ function createCompletionDb(options: {
       }),
     }),
   };
+  db.transaction = vi.fn((callback: any) => callback(db));
+  return db;
 }
 
 async function createService(db: any) {
@@ -127,7 +131,7 @@ describe('HousekeepingService — Completion & Inspection', () => {
     const svc = await createService(db);
     await svc.completeTask('task-001', 'prop-001', {});
     expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith(
-      'room-001', 'prop-001', 'clean',
+      'room-001', 'prop-001', 'clean', undefined, db,
     );
   });
 
@@ -138,7 +142,7 @@ describe('HousekeepingService — Completion & Inspection', () => {
     await svc.completeTask('task-001', 'prop-001', {});
     // transitionStatus should NOT be called for vacant_dirty→clean since room is already clean
     expect(mockRoomStatusService.transitionStatus).not.toHaveBeenCalledWith(
-      'room-001', 'prop-001', 'clean',
+      'room-001', 'prop-001', 'clean', undefined, db,
     );
   });
 
@@ -179,15 +183,16 @@ describe('HousekeepingService — Completion & Inspection', () => {
     const svc = await createService(db);
     await svc.completeTask('task-001', 'prop-001', {});
     // Should transition: clean → inspected → guest_ready
-    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'clean');
-    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'inspected');
-    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'guest_ready');
+    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'clean', undefined, db);
+    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'inspected', undefined, db);
+    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'guest_ready', undefined, db);
     // Task status should be inspected
     const setCall = db.update.mock.results[0].value.set.mock.calls[0][0];
     expect(setCall.status).toBe('inspected');
   });
 
   it('should pass inspection and transition room to guest_ready', async () => {
+    mockRoomStatusService.getRoomStatus.mockResolvedValueOnce({ id: 'room-001', number: '101', status: 'clean' });
     const completedTask = { ...baseTask, status: 'completed', completedAt: new Date() };
     const db = createCompletionDb({ task: completedTask });
     db.update = vi.fn().mockReturnValue({
@@ -205,8 +210,8 @@ describe('HousekeepingService — Completion & Inspection', () => {
       passed: true,
     });
     expect(result.status).toBe('inspected');
-    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'inspected');
-    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'guest_ready');
+    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'inspected', undefined, db);
+    expect(mockRoomStatusService.transitionStatus).toHaveBeenCalledWith('room-001', 'prop-001', 'guest_ready', undefined, db);
   });
 
   it('should fail inspection and reset task to pending', async () => {

@@ -135,6 +135,9 @@ describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
           sql,
           'webhook_deliveries_property_subscription_logical_event_unique',
         )).toBe(true);
+        // The fresh release path must install the database-level overlap fence,
+        // not only the ORM table shape. Live operation tests exercise this lock.
+        expect(await sql`SELECT contype FROM pg_constraint WHERE conrelid = 'staff_shifts'::regclass AND conname = 'staff_shifts_user_interval_excl'`).toEqual([{contype:'x'}]);
 
         const applied = await getAppliedMigrationVersions(sql);
         expect(applied.has(FIRST_TRACKED_MIGRATION_VERSION)).toBe(true);

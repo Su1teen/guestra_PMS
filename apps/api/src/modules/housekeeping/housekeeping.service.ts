@@ -4,12 +4,40 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Optional,
+  ForbiddenException,
 } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
-import { eq, and, sql, desc, asc, inArray, gte, lt, lte, gt } from 'drizzle-orm';
-import { housekeepingTasks, rooms, reservations, guests, properties, roomTypes } from '@telivityhaip/database';
+import {
+  eq,
+  and,
+  sql,
+  desc,
+  asc,
+  inArray,
+  gte,
+  lt,
+  lte,
+  gt,
+} from 'drizzle-orm';
+import {
+  auditLogs,
+  housekeepingTasks,
+  rooms,
+  reservations,
+  guests,
+  properties,
+  roomTypes,
+} from '@telivityhaip/database';
+import { randomUUID } from 'node:crypto';
+import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
+import { actorFields, type AuditActor } from '../../common/audit/audit-actor';
+import { StaffShiftService } from './staff-shift.service';
 import { DRIZZLE } from '../../database/database.module';
-import { WebhookService, type WebhookPayload } from '../webhook/webhook.service';
+import {
+  WebhookService,
+  type WebhookPayload,
+} from '../webhook/webhook.service';
 import { RoomStatusService } from '../room/room-status.service';
 import { type CreateTaskDto } from './dto/create-task.dto';
 import { type UpdateTaskDto } from './dto/update-task.dto';
@@ -30,27 +58,37 @@ export class HousekeepingService {
     @Inject(DRIZZLE) private readonly db: any,
     private readonly webhookService: WebhookService,
     private readonly roomStatusService: RoomStatusService,
+    @Optional() private readonly outbox?: DomainEventOutboxService,
+    @Optional() private readonly shifts?: StaffShiftService,
   ) {}
 
-  async create(dto: CreateTaskDto) {
+  async create(dto: CreateTaskDto, db: any = this.db) {
     // FK ownership (security audit #6): verify roomId belongs to dto.propertyId
     // BEFORE generating the checklist or inserting the task. Without this, a
     // caller at property A could create a housekeeping task pointing at a room
     // in property B (and the checklist generator would happily read B's room
     // metadata — though the inner generate() lookups are now also scoped).
-    const [room] = await this.db
+    const [room] = await db
       .select({ id: rooms.id })
       .from(rooms)
-      .where(and(eq(rooms.id, dto.roomId), eq(rooms.propertyId, dto.propertyId)));
+      .where(
+        and(eq(rooms.id, dto.roomId), eq(rooms.propertyId, dto.propertyId)),
+      );
     if (!room) {
-      throw new BadRequestException(`room ${dto.roomId} not found in this property`);
+      throw new BadRequestException(
+        `room ${dto.roomId} not found in this property`,
+      );
     }
 
     let checklist = dto.checklist;
     let priority = dto.priority ?? 0;
 
     if (!checklist) {
-      const generated = await this.generateChecklist(dto.type, dto.roomId, dto.propertyId);
+      const generated = await this.generateChecklist(
+        dto.type,
+        dto.roomId,
+        dto.propertyId,
+      );
       checklist = generated.items;
       if (generated.isVip && priority <= 0) {
         priority = 5;
@@ -62,7 +100,7 @@ export class HousekeepingService {
       }
     }
 
-    const [task] = await this.db
+    const [task] = await db
       .insert(housekeepingTasks)
       .values({
         propertyId: dto.propertyId,
@@ -114,13 +152,15 @@ export class HousekeepingService {
       eq(housekeepingTasks.propertyId, dto.propertyId),
     ];
 
-    if (dto.status) conditions.push(eq(housekeepingTasks.status, dto.status as any));
+    if (dto.status)
+      conditions.push(eq(housekeepingTasks.status, dto.status as any));
     if (dto.type) conditions.push(eq(housekeepingTasks.type, dto.type as any));
-    if (dto.assignedTo) conditions.push(eq(housekeepingTasks.assignedTo, dto.assignedTo));
+    if (dto.assignedTo)
+      conditions.push(eq(housekeepingTasks.assignedTo, dto.assignedTo));
     if (dto.serviceDate) {
-      const dayStart = new Date(dto.serviceDate + 'T00:00:00');
+      const dayStart = new Date(dto.serviceDate + 'T00:00:00Z');
       const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayEnd.getDate() + 1);
+      dayEnd.setUTCDate(dayEnd.getUTCDate() + 1);
       conditions.push(gte(housekeepingTasks.serviceDate, dayStart));
       conditions.push(lt(housekeepingTasks.serviceDate, dayEnd));
     }
@@ -140,7 +180,10 @@ export class HousekeepingService {
         .from(housekeepingTasks)
         .leftJoin(rooms, eq(housekeepingTasks.roomId, rooms.id))
         .where(whereClause)
-        .orderBy(desc(housekeepingTasks.priority), asc(housekeepingTasks.serviceDate))
+        .orderBy(
+          desc(housekeepingTasks.priority),
+          asc(housekeepingTasks.serviceDate),
+        )
         .limit(limit)
         .offset(offset),
       this.db
@@ -162,34 +205,62 @@ export class HousekeepingService {
     };
   }
 
-  async update(id: string, propertyId: string, dto: UpdateTaskDto) {
-    const task = await this.findByIdRaw(id, propertyId);
-
-    if (task.status === 'completed' || task.status === 'inspected') {
-      throw new BadRequestException(
-        `Cannot update task in '${task.status}' status`,
+  private assertWorker(task: any, workerId?: string) {
+    if (workerId && task.assignedTo !== workerId)
+      throw new ForbiddenException(
+        'Задача больше не назначена этому сотруднику. Обновите список.',
       );
-    }
-
-    const updates: Record<string, unknown> = { updatedAt: new Date() };
-    if (dto.priority !== undefined) updates['priority'] = dto.priority;
-    if (dto.notes !== undefined) updates['notes'] = dto.notes;
-    if (dto.maintenanceRequired !== undefined) updates['maintenanceRequired'] = dto.maintenanceRequired;
-    if (dto.maintenanceNotes !== undefined) updates['maintenanceNotes'] = dto.maintenanceNotes;
-    if (dto.checklist !== undefined) updates['checklist'] = dto.checklist;
-
-    const [updated] = await this.db
-      .update(housekeepingTasks)
-      .set(updates)
-      .where(
-        and(
-          eq(housekeepingTasks.id, id),
-          eq(housekeepingTasks.propertyId, propertyId),
-        ),
-      )
-      .returning();
-
-    return updated;
+  }
+  private assertWorkerChecklist(
+    task: any,
+    checklist: UpdateTaskDto['checklist'],
+    workerId?: string,
+  ) {
+    if (
+      workerId &&
+      checklist &&
+      (checklist.length !== (task.checklist ?? []).length ||
+        checklist.some((v, i) => v.item !== task.checklist[i]?.item))
+    )
+      throw new ForbiddenException(
+        'Состав чек-листа меняет руководитель. Сотрудник отмечает выполнение пунктов.',
+      );
+  }
+  async update(
+    id: string,
+    propertyId: string,
+    dto: UpdateTaskDto,
+    workerId?: string,
+    actor?: AuditActor,
+  ) {
+    return this.db.transaction(async (tx: any) => {
+      const task = await this.findByIdRaw(id, propertyId, tx, true);
+      this.assertWorker(task, workerId);
+      this.assertWorkerChecklist(task, dto.checklist, workerId);
+      if (['completed', 'inspected'].includes(task.status))
+        throw new BadRequestException('Завершённую задачу изменяет инспектор.');
+      const values: Record<string, unknown> = { updatedAt: new Date() };
+      for (const key of [
+        'priority',
+        'notes',
+        'maintenanceRequired',
+        'maintenanceNotes',
+        'checklist',
+      ] as const)
+        if (dto[key] !== undefined) values[key] = dto[key];
+      const [updated] = await tx
+        .update(housekeepingTasks)
+        .set(values)
+        .where(
+          and(
+            eq(housekeepingTasks.id, id),
+            eq(housekeepingTasks.propertyId, propertyId),
+          ),
+        )
+        .returning();
+      await this.taskAudit(tx, task, updated, 'update', actor);
+      return updated;
+    });
   }
 
   async delete(id: string, propertyId: string) {
@@ -214,65 +285,112 @@ export class HousekeepingService {
     return { deleted: true };
   }
 
-  async assign(taskId: string, propertyId: string, dto: AssignTaskDto) {
-    const task = await this.findByIdRaw(taskId, propertyId);
-
-    if (task.status !== 'pending') {
-      throw new BadRequestException(
-        `Cannot assign task in '${task.status}' status — must be pending`,
+  async assign(
+    taskId: string,
+    propertyId: string,
+    dto: AssignTaskDto,
+    actor?: AuditActor,
+  ) {
+    const ids: string[] = [];
+    const updated = await this.db.transaction(async (tx: any) => {
+      // Serialize shift edits and assignment capacity at this property before taking task locks.
+      if (this.shifts) await this.shifts.lockAssignments(propertyId, tx);
+      const task = await this.findByIdRaw(taskId, propertyId, tx, true);
+      if (task.status !== 'pending')
+        throw new ConflictException(
+          'Задача уже назначена или её статус изменился.',
+        );
+      if (this.shifts) {
+        const staff = await this.shifts.availability(
+          propertyId,
+          new Date(task.serviceDate).toISOString().slice(0, 10),
+          tx,
+        );
+        const worker = staff.find((u: any) => u.id === dto.assignedTo);
+        if (!worker?.available)
+          throw new ConflictException({
+            code: 'STAFF_UNAVAILABLE',
+            message:
+              'Нет подтверждённого рабочего времени на эту дату или достигнут лимит незавершённых задач.',
+          });
+      }
+      const row = await this.claimTaskTransition(
+        taskId,
+        propertyId,
+        ['pending'],
+        {
+          assignedTo: dto.assignedTo,
+          assignedAt: new Date(),
+          status: 'assigned',
+          updatedAt: new Date(),
+        },
+        'assigned',
+        tx,
       );
-    }
-
-    // Bug 5: atomic conditional claim. Two concurrent assigns both pass the
-    // read-then-check above, but only one UPDATE with status='pending'
-    // matches. The loser raises ConflictException with precise detail.
-    const updated = await this.claimTaskTransition(
-      taskId,
-      propertyId,
-      ['pending'],
-      {
-        assignedTo: dto.assignedTo,
-        assignedAt: new Date(),
-        status: 'assigned',
-        updatedAt: new Date(),
-      },
-      'assigned',
+      await this.taskAudit(tx, task, row, 'assign', actor);
+      await this.recordEvent(
+        tx,
+        propertyId,
+        'housekeeping.task_assigned',
+        'housekeeping_task',
+        taskId,
+        { assignedTo: dto.assignedTo, roomId: task.roomId, type: task.type },
+        ids,
+      );
+      return row;
+    });
+    await this.deliverEvents(propertyId, ids, () =>
+      this.webhookService.emit(
+        'housekeeping.task_assigned',
+        'housekeeping_task',
+        taskId,
+        {
+          assignedTo: dto.assignedTo,
+          roomId: updated.roomId,
+          type: updated.type,
+        },
+        propertyId,
+      ),
     );
-
-    await this.webhookService.emit(
-      'housekeeping.task_assigned',
-      'housekeeping_task',
-      updated.id,
-      { assignedTo: dto.assignedTo, roomId: task.roomId, type: task.type },
-      propertyId,
-    );
-
     return updated;
   }
-
-  async startTask(taskId: string, propertyId: string) {
-    const task = await this.findByIdRaw(taskId, propertyId);
-
-    if (task.status !== 'assigned') {
-      throw new BadRequestException(
-        `Cannot start task in '${task.status}' status — must be assigned`,
+  async startTask(
+    taskId: string,
+    propertyId: string,
+    workerId?: string,
+    actor?: AuditActor,
+  ) {
+    return this.db.transaction(async (tx: any) => {
+      if (this.shifts) await this.shifts.lockAssignments(propertyId, tx);
+      const task = await this.findByIdRaw(taskId, propertyId, tx, true);
+      this.assertWorker(task, workerId);
+      if (task.status !== 'assigned')
+        throw new BadRequestException(
+          'Начать можно только назначенную задачу.',
+        );
+      if (workerId && this.shifts) {
+        const staff = await this.shifts.availability(
+          propertyId,
+          new Date(task.serviceDate).toISOString().slice(0, 10),
+          tx,
+        );
+        if (!staff.find((u: any) => u.id === workerId)?.workingNow)
+          throw new ConflictException({
+            code: 'OUTSIDE_WORKING_SHIFT',
+            message: 'Начать задачу можно в подтверждённую смену вне перерыва.',
+          });
+      }
+      const row = await this.claimTaskTransition(
+        taskId,
+        propertyId,
+        ['assigned'],
+        { status: 'in_progress', startedAt: new Date(), updatedAt: new Date() },
+        'in_progress',
+        tx,
       );
-    }
-
-    // Bug 5: atomic claim
-    const updated = await this.claimTaskTransition(
-      taskId,
-      propertyId,
-      ['assigned'],
-      {
-        status: 'in_progress',
-        startedAt: new Date(),
-        updatedAt: new Date(),
-      },
-      'in_progress',
-    );
-
-    return updated;
+      await this.taskAudit(tx, task, row, 'start', actor);
+      return row;
+    });
   }
 
   async unassign(taskId: string, propertyId: string) {
@@ -301,7 +419,7 @@ export class HousekeepingService {
     return updated;
   }
 
-  async autoAssign(dto: AutoAssignDto) {
+  async autoAssign(dto: AutoAssignDto, actor?: AuditActor) {
     // Get all pending tasks for this property + date, joined with rooms for sorting
     const tasks = await this.db
       .select({
@@ -332,14 +450,32 @@ export class HousekeepingService {
     // webhook after — handled inside assign().
     let assigned = 0;
     for (let i = 0; i < tasks.length; i++) {
-      const housekeeper = dto.housekeepers[i % dto.housekeepers.length]!;
+      const available = this.shifts
+        ? (await this.shifts.availability(dto.propertyId, dto.serviceDate))
+            .filter((u: any) => u.available && dto.housekeepers.includes(u.id))
+            .sort(
+              (a: any, b: any) => a.load - b.load || a.id.localeCompare(b.id),
+            )
+        : [];
+      const housekeeper = this.shifts
+        ? available[0]?.id
+        : dto.housekeepers[i % dto.housekeepers.length];
+      if (!housekeeper) break;
       try {
-        await this.assign(tasks[i]!.taskId, dto.propertyId, { assignedTo: housekeeper });
+        await this.assign(
+          tasks[i]!.taskId,
+          dto.propertyId,
+          { assignedTo: housekeeper },
+          actor,
+        );
         assigned++;
       } catch (err: any) {
         // Task was already claimed by a concurrent caller, or transitioned
         // out of 'pending' between the select and the update — skip.
-        if (err instanceof ConflictException || err instanceof BadRequestException) {
+        if (
+          err instanceof ConflictException ||
+          err instanceof BadRequestException
+        ) {
           continue;
         }
         throw err;
@@ -349,143 +485,314 @@ export class HousekeepingService {
     return { assigned, total: tasks.length };
   }
 
-  async completeTask(taskId: string, propertyId: string, dto: CompleteTaskDto = {}) {
-    const task = await this.findByIdRaw(taskId, propertyId);
-
-    if (task.status !== 'in_progress') {
-      throw new BadRequestException(
-        `Cannot complete task in '${task.status}' status — must be in_progress`,
-      );
+  private async deliverEvents(
+    propertyId: string,
+    ids: string[],
+    fallback?: () => Promise<unknown>,
+  ) {
+    if (!this.outbox) {
+      await fallback?.();
+      return;
     }
-
-    const updates: Record<string, unknown> = {
-      status: 'completed',
-      completedAt: new Date(),
-      updatedAt: new Date(),
-    };
-    if (dto.checklist) updates['checklist'] = dto.checklist;
-    if (dto.notes !== undefined) updates['notes'] = dto.notes;
-    if (dto.maintenanceRequired !== undefined) updates['maintenanceRequired'] = dto.maintenanceRequired;
-    if (dto.maintenanceNotes !== undefined) updates['maintenanceNotes'] = dto.maintenanceNotes;
-
-    // Check if property requires inspection (needed before claim so we know
-    // which terminal status to set atomically)
-    const [property] = await this.db
-      .select({ settings: properties.settings })
-      .from(properties)
-      .where(eq(properties.id, propertyId));
-
-    const requireInspection = (property?.settings as any)?.requireInspection ?? true;
-    if (!requireInspection) {
-      // Skip inspection — go straight to inspected
-      updates['status'] = 'inspected';
-      updates['inspectedAt'] = new Date();
+    for (const id of ids) {
+      try {
+        await this.outbox.deliver(propertyId, id);
+      } catch {
+        /* Durable outbox retries delivery after commit. */
+      }
     }
+  }
 
-    // Bug 5: atomic claim FIRST — only a task still in_progress may
-    // complete, and only one concurrent completion wins. Side effects
-    // (room transitions, maintenance task, webhook) run after the claim.
-    const updated = await this.claimTaskTransition(
-      taskId,
-      propertyId,
-      ['in_progress'],
-      updates,
-      (updates['status'] as string),
-    );
-
-    // Transition room: vacant_dirty → clean (skip if already clean, e.g. after failed inspection)
-    const roomStatus = await this.roomStatusService.getRoomStatus(task.roomId, propertyId);
-    if (roomStatus.status === 'vacant_dirty') {
-      await this.roomStatusService.transitionStatus(task.roomId, propertyId, 'clean');
-    }
-
-    if (!requireInspection) {
-      await this.roomStatusService.transitionStatus(task.roomId, propertyId, 'inspected');
-      await this.roomStatusService.transitionStatus(task.roomId, propertyId, 'guest_ready');
-    }
-
-    await this.webhookService.emit(
-      'housekeeping.task_completed',
-      'housekeeping_task',
-      updated.id,
-      { roomId: task.roomId, type: task.type, maintenanceRequired: dto.maintenanceRequired ?? false },
-      propertyId,
-    );
-
-    // Auto-create maintenance task if flagged
-    if (dto.maintenanceRequired) {
-      await this.create({
+  private async recordEvent(
+    tx: any,
+    propertyId: string,
+    event: string,
+    entityType: string,
+    entityId: string,
+    data: Record<string, unknown>,
+    ids: string[],
+  ) {
+    if (!this.outbox) return;
+    const id = randomUUID();
+    await this.outbox.persist(
+      tx,
+      {
+        event: event as any,
+        entityType,
+        entityId,
         propertyId,
-        roomId: task.roomId,
-        type: 'maintenance',
-        priority: 5,
-        serviceDate: new Date().toISOString().split('T')[0]!,
-        notes: dto.maintenanceNotes,
-      });
-    }
+        timestamp: new Date().toISOString(),
+        data,
+      },
+      id,
+    );
+    ids.push(id);
+  }
 
+  private async taskAudit(
+    tx: any,
+    previous: any,
+    next: any,
+    action: string,
+    actor?: AuditActor,
+  ) {
+    await tx
+      .insert(auditLogs)
+      .values({
+        propertyId: previous.propertyId,
+        entityType: 'housekeeping_task',
+        entityId: previous.id,
+        action,
+        previousValue: previous,
+        newValue: next,
+        description: action,
+        ...actorFields(actor),
+      });
+  }
+
+  async completeTask(
+    taskId: string,
+    propertyId: string,
+    dto: CompleteTaskDto = {},
+    actor?: AuditActor,
+    workerId?: string,
+  ) {
+    const ids: string[] = [];
+    const updated = await this.db.transaction(async (tx: any) => {
+      const task = await this.findByIdRaw(taskId, propertyId, tx, true);
+      this.assertWorker(task, workerId);
+      this.assertWorkerChecklist(task, dto.checklist, workerId);
+      if (task.status !== 'in_progress')
+        throw new BadRequestException(
+          `Cannot complete task in '${task.status}' status — must be in_progress`,
+        );
+      await this.roomStatusService.lockRoom(task.roomId, propertyId, tx);
+      const [property] = await tx
+        .select({
+          settings: properties.settings,
+          timezone: properties.timezone,
+        })
+        .from(properties)
+        .where(eq(properties.id, propertyId));
+      const requireInspection =
+        (property?.settings as any)?.requireInspection ?? true;
+      const values: Record<string, unknown> = {
+        status: requireInspection ? 'completed' : 'inspected',
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      };
+      if (!requireInspection) values['inspectedAt'] = new Date();
+      for (const key of [
+        'checklist',
+        'notes',
+        'maintenanceRequired',
+        'maintenanceNotes',
+      ] as const)
+        if (dto[key] !== undefined) values[key] = dto[key];
+      const result = await this.claimTaskTransition(
+        taskId,
+        propertyId,
+        ['in_progress'],
+        values,
+        values['status'] as string,
+        tx,
+      );
+      const room = await this.roomStatusService.getRoomStatus(
+        task.roomId,
+        propertyId,
+        tx,
+      );
+      let status = room.status;
+      const transition = async (
+        next: 'clean' | 'inspected' | 'guest_ready',
+      ) => {
+        await this.roomStatusService.transitionStatus(
+          task.roomId,
+          propertyId,
+          next,
+          undefined,
+          tx,
+        );
+        await this.recordEvent(
+          tx,
+          propertyId,
+          'room.status_changed',
+          'room',
+          task.roomId,
+          { previousStatus: status, newStatus: next, roomNumber: room.number },
+          ids,
+        );
+        status = next;
+      };
+      // Stayover work keeps an occupied room occupied. Repairs never return OOO/OOS inventory to sale.
+      if (task.type !== 'maintenance' && status === 'vacant_dirty')
+        await transition('clean');
+      if (
+        task.type !== 'maintenance' &&
+        !requireInspection &&
+        status === 'clean'
+      ) {
+        await transition('inspected');
+        await transition('guest_ready');
+      }
+      if (dto.maintenanceRequired) {
+        const parts = Object.fromEntries(
+          new Intl.DateTimeFormat('en', {
+            timeZone: property?.timezone ?? 'UTC',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+          })
+            .formatToParts(new Date())
+            .map((p) => [p.type, p.value]),
+        );
+        await this.create(
+          {
+            propertyId,
+            roomId: task.roomId,
+            type: 'maintenance',
+            priority: 5,
+            serviceDate:
+              parts['year'] + '-' + parts['month'] + '-' + parts['day'],
+            notes: dto.maintenanceNotes,
+          },
+          tx,
+        );
+      }
+      await this.taskAudit(tx, task, result, 'complete', actor);
+      await this.recordEvent(
+        tx,
+        propertyId,
+        'housekeeping.task_completed',
+        'housekeeping_task',
+        taskId,
+        {
+          roomId: task.roomId,
+          type: task.type,
+          maintenanceRequired: dto.maintenanceRequired ?? false,
+        },
+        ids,
+      );
+      return result;
+    });
+    await this.deliverEvents(propertyId, ids, () =>
+      this.webhookService.emit(
+        'housekeeping.task_completed',
+        'housekeeping_task',
+        taskId,
+        {
+          roomId: updated.roomId,
+          type: updated.type,
+          maintenanceRequired: dto.maintenanceRequired ?? false,
+        },
+        propertyId,
+      ),
+    );
     return updated;
   }
 
-  async inspectTask(taskId: string, propertyId: string, dto: InspectTaskDto) {
-    const task = await this.findByIdRaw(taskId, propertyId);
-
-    if (task.status !== 'completed') {
-      throw new BadRequestException(
-        `Cannot inspect task in '${task.status}' status — must be completed`,
-      );
-    }
-
-    if (dto.passed) {
-      const updates: Record<string, unknown> = {
-        status: 'inspected',
-        inspectedBy: dto.inspectedBy,
-        inspectedAt: new Date(),
-        updatedAt: new Date(),
-      };
-      if (dto.checklist) updates['checklist'] = dto.checklist;
-      if (dto.notes !== undefined) updates['notes'] = dto.notes;
-
-      // Bug 5: atomic claim from 'completed'
+  async inspectTask(
+    taskId: string,
+    propertyId: string,
+    dto: InspectTaskDto,
+    actor?: AuditActor,
+  ) {
+    const ids: string[] = [];
+    const result = await this.db.transaction(async (tx: any) => {
+      const task = await this.findByIdRaw(taskId, propertyId, tx, true);
+      if (task.status !== 'completed')
+        throw new BadRequestException(
+          `Cannot inspect task in '${task.status}' status — must be completed`,
+        );
+      await this.roomStatusService.lockRoom(task.roomId, propertyId, tx);
+      const values: Record<string, unknown> = dto.passed
+        ? {
+            status: 'inspected',
+            inspectedBy: dto.inspectedBy,
+            inspectedAt: new Date(),
+            updatedAt: new Date(),
+          }
+        : {
+            status: 'pending',
+            assignedTo: null,
+            assignedAt: null,
+            startedAt: null,
+            completedAt: null,
+            updatedAt: new Date(),
+          };
+      if (dto.checklist) values['checklist'] = dto.checklist;
+      if (dto.notes !== undefined)
+        values['notes'] = dto.passed
+          ? dto.notes
+          : 'Замечания инспектора: ' +
+            dto.notes +
+            (task.notes ? '\n' + task.notes : '');
       const updated = await this.claimTaskTransition(
         taskId,
         propertyId,
         ['completed'],
-        updates,
-        'inspected',
+        values,
+        values['status'] as string,
+        tx,
       );
-
-      // Transition room: clean → inspected → guest_ready
-      await this.roomStatusService.transitionStatus(task.roomId, propertyId, 'inspected');
-      await this.roomStatusService.transitionStatus(task.roomId, propertyId, 'guest_ready');
-
+      const room = await this.roomStatusService.getRoomStatus(
+        task.roomId,
+        propertyId,
+        tx,
+      );
+      if (
+        dto.passed &&
+        task.type !== 'maintenance' &&
+        room.status === 'clean'
+      ) {
+        await this.roomStatusService.transitionStatus(
+          task.roomId,
+          propertyId,
+          'inspected',
+          undefined,
+          tx,
+        );
+        await this.roomStatusService.transitionStatus(
+          task.roomId,
+          propertyId,
+          'guest_ready',
+          undefined,
+          tx,
+        );
+        await this.recordEvent(
+          tx,
+          propertyId,
+          'room.status_changed',
+          'room',
+          task.roomId,
+          {
+            previousStatus: 'clean',
+            newStatus: 'guest_ready',
+            roomNumber: room.number,
+          },
+          ids,
+        );
+      }
+      await this.taskAudit(
+        tx,
+        task,
+        updated,
+        dto.passed ? 'inspect_passed' : 'inspect_failed',
+        actor,
+      );
+      await this.recordEvent(
+        tx,
+        propertyId,
+        'housekeeping.task_inspected',
+        'housekeeping_task',
+        taskId,
+        { roomId: task.roomId, passed: dto.passed, status: updated.status },
+        ids,
+      );
       return updated;
-    }
-
-    // Failed inspection — reset task for re-cleaning
-    const updates: Record<string, unknown> = {
-      status: 'pending',
-      assignedTo: null,
-      assignedAt: null,
-      startedAt: null,
-      completedAt: null,
-      updatedAt: new Date(),
-    };
-    if (dto.notes) {
-      updates['notes'] = `Inspector notes: ${dto.notes}${task.notes ? `\n${task.notes}` : ''}`;
-    }
-
-    // Bug 5: atomic claim from 'completed'
-    const updated = await this.claimTaskTransition(
-      taskId,
-      propertyId,
-      ['completed'],
-      updates,
-      'pending',
-    );
-
-    // Room stays at 'clean' — no transition (clean → vacant_dirty not valid)
-    return updated;
+    });
+    await this.deliverEvents(propertyId, ids);
+    return result;
   }
 
   async skipTask(taskId: string, propertyId: string, reason?: string) {
@@ -523,12 +830,14 @@ export class HousekeepingService {
     allowedFromStatuses: string[],
     updateData: Record<string, unknown>,
     targetStatus: string,
+    db: any = this.db,
   ) {
-    const statusCondition = allowedFromStatuses.length === 1
-      ? eq(housekeepingTasks.status, allowedFromStatuses[0]! as any)
-      : inArray(housekeepingTasks.status, allowedFromStatuses as any);
+    const statusCondition =
+      allowedFromStatuses.length === 1
+        ? eq(housekeepingTasks.status, allowedFromStatuses[0]! as any)
+        : inArray(housekeepingTasks.status, allowedFromStatuses as any);
 
-    const claimed = await this.db
+    const claimed = await db
       .update(housekeepingTasks)
       .set(updateData)
       .where(
@@ -544,7 +853,7 @@ export class HousekeepingService {
       return claimed[0];
     }
 
-    const [current] = await this.db
+    const [current] = await db
       .select()
       .from(housekeepingTasks)
       .where(
@@ -558,7 +867,7 @@ export class HousekeepingService {
     }
     throw new ConflictException(
       `Cannot transition task from '${current.status}' to '${targetStatus}' ` +
-      `(concurrent modification? expected one of: ${allowedFromStatuses.join(', ')})`,
+        `(concurrent modification? expected one of: ${allowedFromStatuses.join(', ')})`,
     );
   }
 
@@ -566,7 +875,10 @@ export class HousekeepingService {
   // roomId comes from the request body, so without an `eq(...propertyId)` filter a
   // caller at property A could pass a roomId from property B and leak that room's
   // ADA status / next-guest VIP level (cross-tenant IDOR).
-  private async nextGuestIsVip(roomId: string, propertyId: string): Promise<boolean> {
+  private async nextGuestIsVip(
+    roomId: string,
+    propertyId: string,
+  ): Promise<boolean> {
     const [nextReservation] = await this.db
       .select({ vipLevel: guests.vipLevel })
       .from(reservations)
@@ -588,7 +900,10 @@ export class HousekeepingService {
     taskType: string,
     roomId: string,
     propertyId: string,
-  ): Promise<{ items: Array<{ item: string; checked: boolean; notes?: string }>; isVip: boolean }> {
+  ): Promise<{
+    items: Array<{ item: string; checked: boolean; notes?: string }>;
+    isVip: boolean;
+  }> {
     const template = CHECKLIST_TEMPLATES[taskType];
     if (!template) return { items: [], isVip: false };
 
@@ -617,7 +932,8 @@ export class HousekeepingService {
     const { dayStart, dayEnd } = this.serviceDateDayRange(resolvedDate);
 
     // Room summary
-    const roomSummaryRaw = await this.roomStatusService.getPropertyRoomSummary(propertyId);
+    const roomSummaryRaw =
+      await this.roomStatusService.getPropertyRoomSummary(propertyId);
     const roomSummary: Record<string, number> = {
       total: 0,
       vacant_clean: 0,
@@ -652,7 +968,13 @@ export class HousekeepingService {
       .groupBy(housekeepingTasks.status);
 
     const taskSummary: Record<string, number> = {
-      total: 0, pending: 0, assigned: 0, in_progress: 0, completed: 0, inspected: 0, skipped: 0,
+      total: 0,
+      pending: 0,
+      assigned: 0,
+      in_progress: 0,
+      completed: 0,
+      inspected: 0,
+      skipped: 0,
     };
     for (const row of taskSummaryRaw) {
       const count = Number(row.count);
@@ -709,7 +1031,9 @@ export class HousekeepingService {
       taskSummary,
       housekeeperSummary: housekeeperSummary.map((h: any) => ({
         ...h,
-        avgTurnTimeMinutes: h.avgTurnTimeMinutes ? Number(h.avgTurnTimeMinutes) : null,
+        avgTurnTimeMinutes: h.avgTurnTimeMinutes
+          ? Number(h.avgTurnTimeMinutes)
+          : null,
       })),
       urgentRooms: urgentRooms.map((r: any) => ({
         roomId: r.roomId,
@@ -724,7 +1048,11 @@ export class HousekeepingService {
   }
 
   async getAnalytics(propertyId: string, startDate?: string, endDate?: string) {
-    const period = await this.resolveAnalyticsPeriod(propertyId, startDate, endDate);
+    const period = await this.resolveAnalyticsPeriod(
+      propertyId,
+      startDate,
+      endDate,
+    );
     const { dayStart } = this.serviceDateDayRange(period.start);
     const { dayEnd } = this.serviceDateDayRange(period.end);
 
@@ -736,16 +1064,18 @@ export class HousekeepingService {
     );
 
     // Overall metrics
-    const metrics = (await this.db
-      .select({
-        avgTurnTimeMinutes: sql<number>`avg(extract(epoch from (${housekeepingTasks.completedAt} - ${housekeepingTasks.startedAt})) / 60)`,
-        medianTurnTimeMinutes: sql<number>`percentile_cont(0.5) within group (order by extract(epoch from (${housekeepingTasks.completedAt} - ${housekeepingTasks.startedAt})) / 60)`,
-        totalTasksCompleted: sql<number>`count(*)::int`,
-        maintenanceIssueCount: sql<number>`count(*) filter (where ${housekeepingTasks.maintenanceRequired} = true)::int`,
-        inspectedCount: sql<number>`count(*) filter (where ${housekeepingTasks.status} = 'inspected')::int`,
-      })
-      .from(housekeepingTasks)
-      .where(baseWhere))[0] ?? {
+    const metrics = (
+      await this.db
+        .select({
+          avgTurnTimeMinutes: sql<number>`avg(extract(epoch from (${housekeepingTasks.completedAt} - ${housekeepingTasks.startedAt})) / 60)`,
+          medianTurnTimeMinutes: sql<number>`percentile_cont(0.5) within group (order by extract(epoch from (${housekeepingTasks.completedAt} - ${housekeepingTasks.startedAt})) / 60)`,
+          totalTasksCompleted: sql<number>`count(*)::int`,
+          maintenanceIssueCount: sql<number>`count(*) filter (where ${housekeepingTasks.maintenanceRequired} = true)::int`,
+          inspectedCount: sql<number>`count(*) filter (where ${housekeepingTasks.status} = 'inspected')::int`,
+        })
+        .from(housekeepingTasks)
+        .where(baseWhere)
+    )[0] ?? {
       avgTurnTimeMinutes: 0,
       medianTurnTimeMinutes: 0,
       totalTasksCompleted: 0,
@@ -789,14 +1119,14 @@ export class HousekeepingService {
         avgTurnTimeMinutes: sql<number>`avg(extract(epoch from (${housekeepingTasks.completedAt} - ${housekeepingTasks.startedAt})) / 60)`,
       })
       .from(housekeepingTasks)
-      .where(
-        and(baseWhere, sql`${housekeepingTasks.assignedTo} is not null`),
-      )
+      .where(and(baseWhere, sql`${housekeepingTasks.assignedTo} is not null`))
       .groupBy(housekeepingTasks.assignedTo);
 
     const total = Number(metrics.totalTasksCompleted ?? 0);
-    const inspectionPassRate = total > 0 ? Number(metrics.inspectedCount ?? 0) / total : 0;
-    const maintenanceIssueRate = total > 0 ? Number(metrics.maintenanceIssueCount ?? 0) / total : 0;
+    const inspectionPassRate =
+      total > 0 ? Number(metrics.inspectedCount ?? 0) / total : 0;
+    const maintenanceIssueRate =
+      total > 0 ? Number(metrics.maintenanceIssueCount ?? 0) / total : 0;
 
     // Distinct housekeepers
     const housekeeperCount = byHousekeeper.length || 1;
@@ -804,8 +1134,12 @@ export class HousekeepingService {
     return {
       period: { start: period.start, end: period.end },
       metrics: {
-        avgTurnTimeMinutes: metrics.avgTurnTimeMinutes ? Number(metrics.avgTurnTimeMinutes) : 0,
-        medianTurnTimeMinutes: metrics.medianTurnTimeMinutes ? Number(metrics.medianTurnTimeMinutes) : 0,
+        avgTurnTimeMinutes: metrics.avgTurnTimeMinutes
+          ? Number(metrics.avgTurnTimeMinutes)
+          : 0,
+        medianTurnTimeMinutes: metrics.medianTurnTimeMinutes
+          ? Number(metrics.medianTurnTimeMinutes)
+          : 0,
         totalTasksCompleted: total,
         tasksByType,
         inspectionPassRate,
@@ -814,13 +1148,17 @@ export class HousekeepingService {
       },
       byRoomType: byRoomType.map((r: any) => ({
         roomTypeName: r.roomTypeName,
-        avgTurnTimeMinutes: r.avgTurnTimeMinutes ? Number(r.avgTurnTimeMinutes) : 0,
+        avgTurnTimeMinutes: r.avgTurnTimeMinutes
+          ? Number(r.avgTurnTimeMinutes)
+          : 0,
         taskCount: Number(r.taskCount),
       })),
       byHousekeeper: byHousekeeper.map((h: any) => ({
         housekeeperId: h.housekeeperId,
         tasksCompleted: Number(h.tasksCompleted),
-        avgTurnTimeMinutes: h.avgTurnTimeMinutes ? Number(h.avgTurnTimeMinutes) : 0,
+        avgTurnTimeMinutes: h.avgTurnTimeMinutes
+          ? Number(h.avgTurnTimeMinutes)
+          : 0,
       })),
     };
   }
@@ -830,7 +1168,12 @@ export class HousekeepingService {
    * derived from in-house reservations (same signals as generate-stayover-tasks).
    */
   async getOpsForecast(propertyId: string, date: string) {
-    const inHouseStatuses = ['assigned', 'checked_in', 'stayover', 'due_out'] as const;
+    const inHouseStatuses = [
+      'assigned',
+      'checked_in',
+      'stayover',
+      'due_out',
+    ] as const;
     const baseWhere = and(
       eq(reservations.propertyId, propertyId),
       inArray(reservations.status, [...inHouseStatuses]),
@@ -861,7 +1204,10 @@ export class HousekeepingService {
   }
 
   async generateStayoverTasks(propertyId: string, serviceDate: string) {
-    const occupiedRooms = await this.roomStatusService.getRoomsByStatus(propertyId, 'occupied');
+    const occupiedRooms = await this.roomStatusService.getRoomsByStatus(
+      propertyId,
+      'occupied',
+    );
 
     let created = 0;
     let skipped = 0;
@@ -941,10 +1287,17 @@ export class HousekeepingService {
     if (!HousekeepingService.BUSINESS_DATE_RE.test(date)) return false;
     const [y, m, d] = date.split('-').map(Number);
     const dt = new Date(Date.UTC(y!, m! - 1, d));
-    return dt.getUTCFullYear() === y && dt.getUTCMonth() === m! - 1 && dt.getUTCDate() === d;
+    return (
+      dt.getUTCFullYear() === y &&
+      dt.getUTCMonth() === m! - 1 &&
+      dt.getUTCDate() === d
+    );
   }
 
-  private serviceDateDayRange(dateStr: string): { dayStart: Date; dayEnd: Date } {
+  private serviceDateDayRange(dateStr: string): {
+    dayStart: Date;
+    dayEnd: Date;
+  } {
     const dayStart = new Date(dateStr + 'T00:00:00');
     const dayEnd = new Date(dayStart);
     dayEnd.setDate(dayEnd.getDate() + 1);
@@ -957,12 +1310,17 @@ export class HousekeepingService {
     return d.toISOString().split('T')[0]!;
   }
 
-  private async resolveServiceDate(propertyId: string, serviceDate?: string): Promise<string> {
+  private async resolveServiceDate(
+    propertyId: string,
+    serviceDate?: string,
+  ): Promise<string> {
     if (!serviceDate) {
       return this.getPropertyBusinessDate(propertyId);
     }
     if (!this.isValidBusinessDate(serviceDate)) {
-      throw new BadRequestException('serviceDate must be a valid date (YYYY-MM-DD)');
+      throw new BadRequestException(
+        'serviceDate must be a valid date (YYYY-MM-DD)',
+      );
     }
     return serviceDate;
   }
@@ -975,11 +1333,15 @@ export class HousekeepingService {
     const today = await this.getPropertyBusinessDate(propertyId);
     const end = endDate ?? today;
     if (!this.isValidBusinessDate(end)) {
-      throw new BadRequestException('endDate must be a valid date (YYYY-MM-DD)');
+      throw new BadRequestException(
+        'endDate must be a valid date (YYYY-MM-DD)',
+      );
     }
     const start = startDate ?? this.addDays(end, -30);
     if (!this.isValidBusinessDate(start)) {
-      throw new BadRequestException('startDate must be a valid date (YYYY-MM-DD)');
+      throw new BadRequestException(
+        'startDate must be a valid date (YYYY-MM-DD)',
+      );
     }
     if (start > end) {
       throw new BadRequestException('startDate must be on or before endDate');
@@ -1013,8 +1375,13 @@ export class HousekeepingService {
     }
   }
 
-  private async findByIdRaw(id: string, propertyId: string) {
-    const [task] = await this.db
+  private async findByIdRaw(
+    id: string,
+    propertyId: string,
+    db: any = this.db,
+    lock = false,
+  ) {
+    const query = db
       .select()
       .from(housekeepingTasks)
       .where(
@@ -1023,6 +1390,7 @@ export class HousekeepingService {
           eq(housekeepingTasks.propertyId, propertyId),
         ),
       );
+    const [task] = await (lock ? query.for('update') : query);
 
     if (!task) {
       throw new NotFoundException(`Housekeeping task ${id} not found`);

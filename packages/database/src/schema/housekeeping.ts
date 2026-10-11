@@ -55,6 +55,7 @@ export const housekeepingTasks = pgTable('housekeeping_tasks', {
   notes: text('notes'),
   maintenanceRequired: boolean('maintenance_required').notNull().default(false),
   maintenanceNotes: text('maintenance_notes'),
+  attachments: jsonb('attachments').$type<Array<{ url: string; name?: string; contentType?: string }>>().notNull().default([]),
 
   // Service date (which business day this task belongs to)
   serviceDate: timestamp('service_date', { mode: 'date' }).notNull(),
