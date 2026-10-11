@@ -767,6 +767,9 @@ All endpoints are prefixed with `/api/v1/` and documented via OpenAPI 3.0. Run t
 
 Integrator shape notes (`propertyId` locations, cancel field aliases, response envelopes, pagination, `externalConfirmation`): **[`docs/api-conventions.md`](./docs/api-conventions.md)**.
 
+Shared financial KPI sources, business dates, cash/tax/deposit separation and report API contracts:
+**[`docs/operations/financial-reporting.md`](./docs/operations/financial-reporting.md)**.
+
 ### Core Endpoints (~167 total)
 
 <details>

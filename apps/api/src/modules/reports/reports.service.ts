@@ -54,7 +54,9 @@ export class ReportsService {
   }
 
   private bookingDate(value: string, timezone: string) {
+    if (typeof value !== 'string') throw new BadRequestException('Booking-window date is required');
     if (!value.includes('T')) return reportDate(value);
+    if (!/(Z|[+-]\d{2}:\d{2})$/.test(value)) throw new BadRequestException('Timestamp must include an explicit timezone');
     const timestamp = new Date(value);
     if (!Number.isFinite(timestamp.getTime())) throw new BadRequestException('Invalid booking-window timestamp');
     return new Intl.DateTimeFormat('en-CA', { timeZone: timezone,
@@ -136,6 +138,7 @@ export class ReportsService {
   }
 
   async getDailyRevenue(propertyId: string, requestedDate: string) {
+    reportDate(requestedDate);
     return this.inSnapshot ? this.readDailyRevenue(propertyId, requestedDate) : this.snapshot(service => service.readDailyRevenue(propertyId, requestedDate));
   }
 
@@ -214,6 +217,7 @@ export class ReportsService {
   }
 
   async getFinancialSummary(propertyId: string, date: string) {
+    reportDate(date);
     return this.inSnapshot ? this.readFinancialSummary(propertyId, date) : this.snapshot(service => service.readFinancialSummary(propertyId, date));
   }
 
@@ -383,29 +387,30 @@ export class ReportsService {
     const deposit = depositRows[0];
     const statuses = Object.fromEntries(statusRows.map((row: any) => [row.status, Number(row.count)]));
     const kpis = financial.kpis;
-    const compare = (current: number, baseline: number, status: string) => ({
+    const compare = (current: number, baseline: number, status: string, currentAvailable = true) => ({
       value: status === 'NO_POSTINGS' ? null : baseline,
-      absolute: status === 'NO_POSTINGS' ? null : current - baseline,
-      percent: status === 'NO_POSTINGS' || baseline === 0 ? null : ((current - baseline) / Math.abs(baseline)) * 100,
-      status,
+      absolute: status === 'NO_POSTINGS' || !currentAvailable ? null : current - baseline,
+      percent: status === 'NO_POSTINGS' || !currentAvailable || baseline === 0 ? null : ((current - baseline) / Math.abs(baseline)) * 100,
+      status: status === 'NO_POSTINGS' || currentAvailable ? status : 'CURRENT_NO_POSTINGS',
     });
+    const currentAvailable = financial.actual.status !== 'NO_POSTINGS';
     const comparison = (baseline: typeof financial) => ({
-      revenue: compare(kpis.totalRevenue, baseline.kpis.totalRevenue, baseline.actual.status),
+      revenue: compare(kpis.totalRevenue, baseline.kpis.totalRevenue, baseline.actual.status, currentAvailable),
       occupancy: compare(kpis.occupancyRate, baseline.kpis.occupancyRate, 'AVAILABLE'),
-      adr: compare(kpis.adr, baseline.kpis.adr, baseline.actual.status),
-      revpar: compare(kpis.revpar, baseline.kpis.revpar, baseline.actual.status),
+      adr: compare(kpis.adr, baseline.kpis.adr, baseline.actual.status, currentAvailable),
+      revpar: compare(kpis.revpar, baseline.kpis.revpar, baseline.actual.status, currentAvailable),
     });
     return { financial, ...periods,
       today: { revenue: kpis.totalRevenue, occupancy: kpis.occupancyRate, adr: kpis.adr, revpar: kpis.revpar,
         trevpar: kpis.trevpar, arrivals: Object.values(statuses).reduce((sum: number, value: any) => sum + Number(value), 0),
         departures: occupancy.departures, inHouse: occupancy.stayovers,
-        confirmed: (statuses['confirmed'] ?? 0) + (statuses['assigned'] ?? 0), cancellations: statuses['cancelled'] ?? 0,
-        noShows: statuses['no_show'] ?? 0, receivedDeposits: Number(deposit?.amount ?? 0),
+        confirmed: (statuses['confirmed'] ?? 0) + (statuses['assigned'] ?? 0), cancellations: occupancy.cancellations,
+        noShows: occupancy.noShows, receivedDeposits: Number(deposit?.amount ?? 0),
         receivedDepositCount: Number(deposit?.count ?? 0), pendingPayments: financial.outstandingBalances.totalBalanceDue,
         rooms: Object.fromEntries(roomRows.map((row: any) => [row.status, Number(row.count)])) },
       drr: { revenue: kpis.totalRevenue, bookings: periods.onBooksQuotedAmount.reservations,
         occupancy: kpis.occupancyRate, adr: kpis.adr, revpar: kpis.revpar, trevpar: kpis.trevpar,
-        cancellations: statuses['cancelled'] ?? 0, deposits: Number(deposit?.amount ?? 0),
+        cancellations: occupancy.cancellations, deposits: Number(deposit?.amount ?? 0),
         pickup: pickup.pickup, pace: pace.daily[0] ?? { roomsOnBooks: 0, newBookings: 0 },
         channelMix: channelRows.map((row: any) => ({ source: row.source, bookings: Number(row.count) })),
         mtdRevenue: periods.periods.mtd?.value ?? null, onBooks: periods.onBooksQuotedAmount.reservations,
@@ -423,6 +428,7 @@ export class ReportsService {
    * A/R) is surfaced so it can be reconciled to net to zero between ledgers.
    */
   async dailyTrialBalance(propertyId: string, date: string) {
+    reportDate(date);
     return this.inSnapshot ? this.readTrialBalance(propertyId, date) :
       this.snapshot(service => service.readTrialBalance(propertyId, date));
   }
@@ -679,6 +685,7 @@ export class ReportsService {
   }
 
   private async readPickup(propertyId: string, stayDate: string, from: string, to: string) {
+    reportDate(stayDate);
     const { property } = await this.context(propertyId, stayDate);
     from = this.bookingDate(from, property.timezone);
     to = this.bookingDate(to, property.timezone);
@@ -733,8 +740,8 @@ export class ReportsService {
           sql`${reservations.status} not in ('no_show')`,
         ),
       )
-      .groupBy(sql`${this.localDay(reservations.createdAt, property.timezone)}`)
-      .orderBy(sql`${this.localDay(reservations.createdAt, property.timezone)}`);
+      .groupBy(sql`1`)
+      .orderBy(sql`1`);
 
     const dailyLost = await this.db
       .select({
@@ -750,8 +757,8 @@ export class ReportsService {
           sql`${this.localDay(reservations.cancelledAt, property.timezone)} <= ${to}`,
         ),
       )
-      .groupBy(sql`${this.localDay(reservations.cancelledAt, property.timezone)}`)
-      .orderBy(sql`${this.localDay(reservations.cancelledAt, property.timezone)}`);
+      .groupBy(sql`1`)
+      .orderBy(sql`1`);
 
     const dailyMap = new Map<string, { roomNightsAdded: number; roomNightsLost: number }>();
 
@@ -839,7 +846,7 @@ export class ReportsService {
           sql`${this.localDay(reservations.createdAt, property.timezone)} <= ${endDate}`,
         ),
       )
-      .groupBy(sql`${this.localDay(reservations.createdAt, property.timezone)}`);
+      .groupBy(sql`1`);
 
     const newBookingsMap = new Map<string, number>();
     for (const row of dailyNewBookings) {
