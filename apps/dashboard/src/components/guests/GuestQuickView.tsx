@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { useAuth } from '../../context/AuthContext';
@@ -14,6 +14,8 @@ export const useGuestQuickView = () => useContext(QuickViewContext);
 export function GuestQuickViewProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation(); const { hasPermission, user } = useAuth(); const { propertyId, properties, setPropertyId } = useProperty();
   const [selected, setSelected] = useState<QuickViewSelection | null>(null);
+  const location = useLocation();
+  useEffect(() => { setSelected(null); }, [location.pathname]);
   useEffect(() => { setSelected(null); }, [propertyId, user?.sub]);
   const query = useQuery({ queryKey: ['guest-360', selected?.id, selected?.propertyId, user?.sub], enabled: !!selected && hasPermission('guests.read'),
     queryFn: () => api.get('/v1/guests/' + selected!.id + '/360', { params: { propertyId: selected!.propertyId }, skipErrorToast: true }).then(r => r.data?.data ?? r.data) });

@@ -58,6 +58,7 @@ const NAV_SECTIONS: NavSection[] = [
       { to: '/rooms', icon: DoorOpen, labelKey: 'nav.rooms', permission: 'rooms.read' },
       { to: '/housekeeping', icon: Sparkles, labelKey: 'nav.housekeeping', permission: 'housekeeping.read' },
       { to: '/operations', icon: ClipboardCheck, labelKey: 'nav.operations', permission: 'ops.read' },
+      { to: '/services', icon: CalendarDays, labelKey: 'nav.services', permission: 'services.read' },
       { to: '/folios', icon: Receipt, labelKey: 'nav.foliosBilling', permission: 'folios.read' },
     ],
   },
