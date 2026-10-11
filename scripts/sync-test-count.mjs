@@ -106,6 +106,15 @@ function runTestsAndCollectCounts() {
     if (log.trim()) process.stdout.write(log);
 
     if (result.status !== 0) {
+      if (existsSync(outFile)) {
+        const failedReport = JSON.parse(readFileSync(outFile, 'utf8'));
+        for (const file of failedReport.testResults ?? []) {
+          if (file.message) process.stderr.write(`${relative(root, file.name)}: ${file.message.slice(0, 4000)}\n`);
+          for (const test of file.assertionResults ?? []) {
+            if (test.status === 'failed') process.stderr.write(`${test.fullName}: ${(test.failureMessages ?? []).join('\n').slice(0, 4000)}\n`);
+          }
+        }
+      }
       throw new Error(`Tests failed in ${workspacePath}`);
     }
 
