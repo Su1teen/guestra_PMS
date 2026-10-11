@@ -11,6 +11,8 @@ import { useAuth } from '../context/AuthContext';
 import KpiCard from '../components/ui/KpiCard';
 import { formatMoney } from '../lib/money';
 import { useTranslation } from 'react-i18next';
+import { QueryError } from '../components/ui/ErrorBoundary';
+import { SkeletonPage } from '../components/ui/Skeleton';
 
 type ReportType = 'financial-summary' | 'occupancy' | 'daily-revenue' | 'occupancy-trend' | 'trial-balance' | 'pickup' | 'booking-pace';
 
@@ -41,6 +43,11 @@ export default function Reports() {
       : 'financial-summary',
   );
   const [date, setDate] = useState(linkedDate ?? format(new Date(), 'yyyy-MM-dd'));
+  useEffect(() => {
+    if (linkedReport && REPORT_OPTIONS.some(option => option.value === linkedReport)) setReport(linkedReport);
+    else setReport('financial-summary');
+  }, [linkedReport]);
+  useEffect(() => { if (linkedDate) setDate(linkedDate); }, [linkedDate]);
   const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
   const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [stayDate, setStayDate] = useState(format(subDays(new Date(), -30), 'yyyy-MM-dd'));
@@ -106,15 +113,15 @@ export default function Reports() {
 
   const usesDateRange = report === 'occupancy-trend' || report === 'booking-pace';
 
-  const { data } = useQuery({
+  const { data, error, isError, isPending, refetch } = useQuery({
     queryKey: ['reports', portfolioReport ? 'portfolio' : report, propertyId, usesDateRange ? startDate : report === 'pickup' ? stayDate : date, usesDateRange ? endDate : report === 'pickup' ? pickupTo : null, report === 'pickup' ? pickupFrom : null],
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       if (portfolioReport) {
         const path =
           report === 'financial-summary'
             ? '/v1/reports/portfolio/financial-summary'
             : '/v1/reports/portfolio/occupancy';
-        return api.get(path, { params: { date } }).then((r) => r.data);
+        return api.get(path, { params: { date }, signal }).then((r) => r.data);
       }
       const params: Record<string, string> = { propertyId: propertyId! };
       if (usesDateRange) {
@@ -127,7 +134,7 @@ export default function Reports() {
       } else {
         params.date = date;
       }
-      return api.get(`/v1/reports/${report}`, { params }).then((r) => r.data);
+      return api.get(`/v1/reports/${report}`, { params, signal }).then((r) => r.data);
     },
     enabled: !!propertyId && (!isPortfolioMode || portfolioReport),
   });
@@ -186,6 +193,9 @@ export default function Reports() {
       </div>
     );
   }
+
+  if (isError) return <QueryError error={error} onRetry={() => void refetch()} />;
+  if (isPending) return <SkeletonPage />;
 
   type LedgerRow = {
     opening: string;

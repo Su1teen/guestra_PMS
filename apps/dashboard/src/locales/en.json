@@ -2740,5 +2740,25 @@
       "refunded": "Refunded",
       "partially_refunded": "Partial Refund"
     }
+  },
+  "navigation": {
+    "main": "Main",
+    "operations": "Operations",
+    "revenue": "Revenue",
+    "finance": "Finance & Analytics",
+    "advanced": "Advanced tools",
+    "staff": "Staff & Shifts",
+    "drr": "Daily revenue · DRR",
+    "financialReports": "Financial reports",
+    "collapse": "Collapse menu",
+    "expand": "Expand menu",
+    "agentTools": "Internal agents"
+  },
+  "runtimeErrors": {
+    "render": "This section encountered a display error. Other sections remain available. Try opening it again.",
+    "chunk": "The section files could not be loaded. Check your connection and retry. If the app has been updated, load the new version.",
+    "update": "Load new app version",
+    "access": "Access restricted",
+    "auditDetailsMissing": "This record stores the issue count. Detailed findings are unavailable."
   }
 }

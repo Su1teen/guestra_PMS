@@ -1,0 +1,13 @@
+.guestra-sidebar { width: 15rem; }
+.guestra-content { min-width: 0; }
+@media (min-width: 1024px) {
+  .guestra-content { margin-left: 15rem; transition: margin-left 200ms; }
+  .sidebar-is-collapsed .guestra-content { margin-left: 4.5rem; }
+  .guestra-sidebar.sidebar-collapsed { width: 4.5rem; }
+  .sidebar-collapsed .sidebar-brand, .sidebar-collapsed .sidebar-label,
+  .sidebar-collapsed .sidebar-section, .sidebar-collapsed .sidebar-footer { display: none; }
+  .sidebar-collapsed .sidebar-link { justify-content: center; padding-left: 0; padding-right: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guestra-sidebar, .guestra-content { transition: none; }
+}

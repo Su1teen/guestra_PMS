@@ -8,6 +8,8 @@ import { useProperty } from '../context/PropertyContext';
 import StatusBadge from '../components/ui/StatusBadge';
 import KpiCard from '../components/ui/KpiCard';
 import { useTranslation } from 'react-i18next';
+import { QueryError } from '../components/ui/ErrorBoundary';
+import { SkeletonPage } from '../components/ui/Skeleton';
 
 interface RevenueSummary {
   totalRevenue?: number;
@@ -60,18 +62,24 @@ function AnomalySection({ propertyId }: { propertyId: string }) {
   });
 
   const latest = Array.isArray(decisions) ? decisions[0] : null;
-  const anomalies: any[] = latest?.recommendation?.anomalies ?? [];
+  const rawAnomalies = latest?.recommendation?.anomalies;
+  const anomalies: any[] = Array.isArray(rawAnomalies)
+    ? rawAnomalies.filter(item => item && typeof item === 'object' && !Array.isArray(item)) : [];
+  // Older saved decisions contain a count, not detailed anomaly objects. Preserve that fact.
+  const count = Array.isArray(rawAnomalies) ? rawAnomalies.length :
+    Number.isInteger(rawAnomalies) && rawAnomalies >= 0 ? rawAnomalies : null;
 
-  if (anomalies.length === 0) return null;
+  if (count === null || count === 0) return null;
 
   return (
     <div className="bg-white rounded-xl shadow-sm p-5 mb-6 border-l-4 border-telivity-teal">
       <div className="flex items-center gap-3 mb-4">
         <Brain size={20} className="text-telivity-teal" />
         <h2 className="text-sm font-semibold text-telivity-navy">{t('nightAudit.anomalyDetection')}</h2>
-        <span className="text-xs text-telivity-mid-grey ml-auto">{t('nightAudit.issuesFound', { count: anomalies.length })}</span>
+        <span className="text-xs text-telivity-mid-grey ml-auto">{t('nightAudit.issuesFound', { count })}</span>
       </div>
       <div className="space-y-2">
+        {anomalies.length !== count && <p className="text-sm text-telivity-mid-grey">{t('runtimeErrors.auditDetailsMissing')}</p>}
         {anomalies.slice(0, 10).map((a: any, i: number) => {
           const Icon = SEVERITY_ICONS[a.severity as keyof typeof SEVERITY_ICONS] ?? Info;
           const colors = SEVERITY_COLORS[a.severity as keyof typeof SEVERITY_COLORS] ?? SEVERITY_COLORS.info;
@@ -82,7 +90,7 @@ function AnomalySection({ propertyId }: { propertyId: string }) {
                 <p className="text-sm font-medium text-telivity-navy">{a.description}</p>
                 <p className="text-xs text-telivity-mid-grey mt-0.5">{a.suggestedAction}</p>
               </div>
-              <span className="text-xs text-telivity-mid-grey whitespace-nowrap">{(a.confidence * 100).toFixed(0)}%</span>
+              <span className="text-xs text-telivity-mid-grey whitespace-nowrap">{typeof a.confidence === 'number' && Number.isFinite(a.confidence) ? `${(a.confidence * 100).toFixed(0)}%` : '—'}</span>
             </div>
           );
         })}
@@ -98,13 +106,17 @@ export default function NightAudit() {
   const [auditDate, setAuditDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [lastResult, setLastResult] = useState<AuditResult | null>(null);
 
-  const { data } = useQuery({
+  const { data, isError, error, isPending, refetch } = useQuery({
     queryKey: ['audit', propertyId],
-    queryFn: () => api.get('/v1/night-audit/runs', { params: { propertyId } }).then((r) => r.data),
-    enabled: !!propertyId,
+    queryFn: ({ signal }) => api.get('/v1/night-audit/runs', { params: { propertyId }, signal }).then((r) => {
+      const rows = r.data?.data ?? r.data;
+      if (!Array.isArray(rows) || rows.some(row => !row || typeof row !== 'object')) throw new Error('Invalid audit history response');
+      return rows as AuditResult[];
+    }),
+    enabled: !!propertyId && propertyId !== 'portfolio',
   });
 
-  const audits: AuditResult[] = data?.data ?? data ?? [];
+  const audits: AuditResult[] = data ?? [];
 
   const runMutation = useMutation({
     mutationFn: () => api.post('/v1/night-audit/run', { propertyId, businessDate: auditDate }),
@@ -115,9 +127,11 @@ export default function NightAudit() {
     },
   });
 
-  if (!propertyId) {
+  if (!propertyId || propertyId === 'portfolio') {
     return <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('nightAudit.selectProperty')}</div>;
   }
+  if (isError) return <QueryError error={error} onRetry={() => void refetch()} />;
+  if (isPending) return <SkeletonPage />;
 
   return (
     <div>
@@ -156,13 +170,13 @@ export default function NightAudit() {
 
         {lastResult && (
           <div className="mt-4 grid grid-cols-3 gap-4">
-            <KpiCard title="Room Charges" value={auditCount(lastResult.roomChargesPosted)} icon={Moon} />
-            <KpiCard title="No-Shows" value={auditCount(lastResult.noShowsProcessed)} icon={Moon} />
-            <KpiCard title="Revenue" value={formatAuditRevenue(lastResult, currencyCode)} icon={Moon} />
+            <KpiCard title={t('legacy.charges')} value={auditCount(lastResult.roomChargesPosted)} icon={Moon} />
+            <KpiCard title={t('legacy.noShows')} value={auditCount(lastResult.noShowsProcessed)} icon={Moon} />
+            <KpiCard title={t('legacy.revenue')} value={formatAuditRevenue(lastResult, currencyCode)} icon={Moon} />
           </div>
         )}
 
-        {lastResult?.steps && (
+        {lastResult && Array.isArray(lastResult.steps) && (
           <div className="mt-4">
             <h3 className="text-xs font-semibold text-telivity-mid-grey uppercase mb-2">{t('legacy.steps')}</h3>
             <div className="space-y-1">
@@ -171,7 +185,7 @@ export default function NightAudit() {
                   <span className="text-sm text-telivity-navy">{s.step}</span>
                   <div className="flex items-center gap-2">
                     <span className="text-sm text-telivity-slate">{s.count}</span>
-                    <StatusBadge status={s.status === 'completed' ? 'success' : s.status} label={s.status} />
+                    <StatusBadge status={s.status} />
                   </div>
                 </div>
               ))}
@@ -201,7 +215,7 @@ export default function NightAudit() {
             {audits.map((a, i) => (
               <tr key={a.id} className={`border-b border-gray-50 ${i % 2 === 1 ? 'bg-gray-50/50' : ''}`}>
                 <td className="px-4 py-3 text-sm font-medium text-telivity-navy">{a.businessDate}</td>
-                <td className="px-4 py-3"><StatusBadge status={a.status === 'completed' ? 'success' : a.status} label={a.status} /></td>
+                <td className="px-4 py-3"><StatusBadge status={a.status} /></td>
                 <td className="px-4 py-3 text-sm text-telivity-slate">{a.startedAt ? format(new Date(a.startedAt), 'HH:mm:ss') : '—'}</td>
                 <td className="px-4 py-3 text-sm text-telivity-slate">{a.completedAt ? format(new Date(a.completedAt), 'HH:mm:ss') : '—'}</td>
                 <td className="px-4 py-3 text-sm text-right">{auditCount(a.roomChargesPosted)}</td>

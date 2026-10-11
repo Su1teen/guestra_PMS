@@ -1,8 +1,11 @@
-import { lazy, Suspense } from 'react';
+import { useEffect, Suspense } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import { GuestQuickViewProvider } from './components/guests/GuestQuickView';
 import AppLayout from './components/layout/AppLayout';
-import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import RouteErrorBoundary from './components/ui/RouteErrorBoundary';
+import RouteAccess from './components/ui/RouteAccess';
+import { recoverableLazy as lazy } from './lib/recoverable-lazy';
+import { installRuntimeDiagnostics } from './lib/runtime-errors';
 import { SkeletonPage } from './components/ui/Skeleton';
 import { useRealtimeInvalidation } from './hooks/useRealtimeInvalidation';
 import { isBookingRequestsUiEnabled } from './lib/bookingRequestsFeature';
@@ -38,11 +41,13 @@ const Services = lazy(() => import('./pages/Services'));
 
 export default function App() {
   useRealtimeInvalidation();
+  useEffect(installRuntimeDiagnostics, []);
 
   return (
     <GuestQuickViewProvider><AppLayout>
-      <ErrorBoundary>
+      <RouteErrorBoundary>
         <Suspense fallback={<SkeletonPage />}>
+          <RouteAccess>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/front-desk" element={<FrontDesk />} />
@@ -75,8 +80,9 @@ export default function App() {
             <Route path="/settings/*" element={<Settings />} />
             <Route path="/import" element={<Import />} />
           </Routes>
+          </RouteAccess>
         </Suspense>
-      </ErrorBoundary>
+      </RouteErrorBoundary>
     </AppLayout></GuestQuickViewProvider>
   );
 }

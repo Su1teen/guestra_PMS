@@ -23,6 +23,8 @@ import { useTranslation } from 'react-i18next';
 import RevenueWorkspaceNav from '../components/revenue/RevenueWorkspaceNav';
 import { formatMoney } from '../lib/money';
 import { formatOccupancyPercent } from '../lib/api-helpers';
+import { QueryError } from '../components/ui/ErrorBoundary';
+import { SkeletonPage } from '../components/ui/Skeleton';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -738,10 +740,12 @@ function RevenueManagementSummary({ propertyId, currencyCode }: { propertyId: st
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const date = new Date().toISOString().slice(0, 10);
-  const { data } = useQuery({
+  const { data, isError, error, isPending, refetch } = useQuery({
     queryKey: ['reports', 'management-summary', propertyId, date],
-    queryFn: () => api.get('/v1/reports/management-summary', { params: { propertyId, date } }).then((r) => r.data?.data ?? r.data),
+    queryFn: ({ signal }) => api.get('/v1/reports/management-summary', { params: { propertyId, date }, signal }).then((r) => r.data?.data ?? r.data),
   });
+  if (isError) return <QueryError error={error} onRetry={() => void refetch()} />;
+  if (isPending) return <SkeletonPage />;
   const drr = data?.drr;
   if (!drr) return null;
   const metrics = [
@@ -749,16 +753,16 @@ function RevenueManagementSummary({ propertyId, currencyCode }: { propertyId: st
     [ru ? 'Загрузка' : 'Occupancy', formatOccupancyPercent(drr.occupancy)],
     ['ADR', formatMoney(drr.adr, currencyCode)],
     ['RevPAR', formatMoney(drr.revpar, currencyCode)],
-    ['Pickup', String(drr.pickup?.roomNights ?? 0)],
-    ['Pace', String(drr.pace?.newBookings ?? 0)],
+    [ru ? 'Прирост ночей' : 'Pickup', String(drr.pickup?.roomNights ?? 0)],
+    [ru ? 'Темп бронирований' : 'Pace', String(drr.pace?.newBookings ?? 0)],
     [ru ? 'Прогноз' : 'Forecast', formatMoney(drr.forecastRevenue, currencyCode)],
-    ['On Books', String(drr.onBooks ?? 0)],
+    [ru ? 'Брони в системе' : 'On Books', String(drr.onBooks ?? 0)],
   ];
   return (
     <section className="mb-6 rounded-xl bg-white p-5 shadow-sm">
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <div><h2 className="font-semibold text-telivity-navy">{ru ? 'Состояние спроса и дохода' : 'Demand and revenue health'}</h2><p className="text-xs text-telivity-mid-grey">{ru ? 'Единые метрики с Dashboard и Reports' : 'The same metrics used by Dashboard and Reports'}</p></div>
-        <span className="ml-auto rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">{ru ? 'Ценообразование активно' : 'Pricing active'}</span>
+        <span className="ml-auto rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{ru ? 'Данные PMS' : 'PMS data'}</span>
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">{metrics.map(([label, value]) => <div key={label} className="rounded-lg bg-telivity-light-grey/60 p-3"><p className="text-[11px] text-telivity-mid-grey">{label}</p><p className="mt-1 font-semibold text-telivity-navy">{value}</p></div>)}</div>
     </section>
@@ -780,14 +784,15 @@ export default function Revenue() {
   const { propertyId, currencyCode } = useProperty();
   const [searchParams] = useSearchParams();
   const showHistory = searchParams.get('section') === 'history';
+  const showAgents = searchParams.get('section') === 'agents';
 
   const { data: agentStatuses = [] } = useQuery<AgentStatus[]>({
     queryKey: ['agents', propertyId],
-    queryFn: () => api.get(`/v1/agents/${propertyId}`).then((r) => r.data?.data ?? r.data ?? []),
-    enabled: !!propertyId,
+    queryFn: ({ signal }) => api.get(`/v1/agents/${propertyId}`, { signal }).then((r) => r.data?.data ?? r.data ?? []),
+    enabled: !!propertyId && propertyId !== 'portfolio' && showAgents,
   });
 
-  if (!propertyId) {
+  if (!propertyId || propertyId === 'portfolio') {
     return (
       <div className="flex items-center justify-center h-64 text-telivity-mid-grey">
         {t('common.selectProperty')}
@@ -799,14 +804,14 @@ export default function Revenue() {
     <div>
       <div className="flex items-center gap-3 mb-6">
         <TrendingUp size={24} className="text-telivity-teal" />
-        <h1 className="text-2xl font-semibold text-telivity-navy">{t('revenue.title')}</h1>
+        <h1 className="text-2xl font-semibold text-telivity-navy">{t(showAgents ? 'navigation.agentTools' : 'revenue.title')}</h1>
       </div>
 
       <RevenueWorkspaceNav />
 
-      {showHistory ? <PricingHistory propertyId={propertyId} currencyCode={currencyCode} /> : <>
+      {showHistory ? <PricingHistory propertyId={propertyId} currencyCode={currencyCode} /> : !showAgents ?
       <RevenueManagementSummary propertyId={propertyId} currencyCode={currencyCode} />
-
+      : <>
       <RevenueDashboard agents={agentStatuses} />
       <OrchestrationGraphSection propertyId={propertyId} />
       <RManagerRunsSection propertyId={propertyId} />

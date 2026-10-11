@@ -13,6 +13,9 @@ import { reconnectSocket } from '../lib/socket';
 import { useToast } from '../components/ui/Toast';
 import { errorMessage } from '../lib/error-message';
 import { useTranslation } from 'react-i18next';
+import axios from 'axios';
+import { installAuthRecovery } from '../lib/auth-recovery';
+import { logRuntimeFailure } from '../lib/runtime-errors';
 
 interface ApiErrorResponse {
   config?: {
@@ -124,7 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 reconnectSocket();
               }
             }).catch((err) => {
-              console.error('Token refresh failed:', err);
+              logRuntimeFailure('request', err);
               keycloak.login();
             });
           }, 4 * 60 * 1000);
@@ -132,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setIsLoading(false);
       })
       .catch((err) => {
-        console.error('Keycloak initialization failed:', err);
+        logRuntimeFailure('request', err);
         setIsLoading(false);
       });
 
@@ -143,15 +146,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Intercept response errors globally: handle 401 login redirects and toast API errors
   useEffect(() => {
+    const reported = new WeakSet<object>();
+    const removeAuthRecovery = AUTH_ENABLED ? installAuthRecovery(api, {
+      refresh: async () => {
+        const refreshed = await keycloak.updateToken(-1);
+        if (refreshed) reconnectSocket();
+        if (keycloak.token) api.defaults.headers.common['Authorization'] = `Bearer ${keycloak.token}`;
+        return keycloak.token;
+      },
+      login: () => keycloak.login(),
+    }) : undefined;
     const interceptor = api.interceptors.response.use(
       (response) => response,
       (error) => {
-        if (error.response?.status === 401 && AUTH_ENABLED) {
-          keycloak.login();
+        if (axios.isCancel(error) || (error.response?.status === 401 && AUTH_ENABLED)) {
           return Promise.reject(error);
         }
 
         const apiError = error as ApiErrorResponse;
+        if (error && typeof error === 'object') {
+          if (reported.has(error)) return Promise.reject(error);
+          reported.add(error);
+        }
         const config = apiError.config;
         if (config?.skipErrorToast || config?.isSilentPoll) {
           return Promise.reject(error);
@@ -162,13 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return Promise.reject(error);
         }
 
-        const data = apiError.response?.data;
-        const m = data?.message ?? apiError.message;
-        const rawMessage = Array.isArray(m)
-          ? m.join(', ')
-          : (m ?? apiError.response?.statusText ?? 'Request failed');
-
-        console.error('[API Error]', config?.method?.toUpperCase() || 'GET', url, rawMessage);
+        logRuntimeFailure('request', error);
 
         const displayMessage = errorMessage(error);
 
@@ -179,6 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       api.interceptors.response.eject(interceptor);
+      removeAuthRecovery?.();
     };
   }, [toast, t]);
 

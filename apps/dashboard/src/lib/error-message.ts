@@ -3,6 +3,11 @@ import i18n from '../i18n';
 /** UI text only. Preserve the original error for callers and diagnostics. */
 export function errorMessage(error: unknown): string {
   const e = error as { response?: { status?: number; data?: { code?: string; message?: string | string[] } }; message?: string } | null;
+  const status = e?.response?.status;
+  if (status === 401) return i18n.t('systemErrors.unauthorized');
+  if (status === 403) return i18n.t('systemErrors.forbidden');
+  if (status === 404) return i18n.t('systemErrors.notFound');
+  if (status && status >= 500) return i18n.t('systemErrors.server');
   const messages = e?.response?.data?.message ?? e?.message ?? (typeof error === 'string' ? error : '');
   const list = Array.isArray(messages) ? messages : [messages];
   if (!i18n.resolvedLanguage?.startsWith('ru')) return list.join(', ') || i18n.t('errors.Request failed');
@@ -21,12 +26,7 @@ export function errorMessage(error: unknown): string {
     return '';
   });
   if (translated.every(Boolean)) return [...new Set(translated)].join(' · ');
-  const status = e?.response?.status;
-  if (status === 401) return i18n.t('systemErrors.unauthorized');
-  if (status === 403) return i18n.t('systemErrors.forbidden');
-  if (status === 404) return i18n.t('systemErrors.notFound');
   if (status === 409) return i18n.t('systemErrors.conflict');
   if (status === 400 || status === 422) return i18n.t('systemErrors.validation');
-  if (status && status >= 500) return i18n.t('systemErrors.server');
   return i18n.t('systemErrors.request');
 }
