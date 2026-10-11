@@ -19,14 +19,32 @@ export function validateServiceSchedule(input: ServiceSchedule | null | undefine
   }
   return { timeZone: input.timeZone, windows: input.windows.map(w => ({ day: w.day, start: w.start, end: w.end })) };
 }
+const scheduleFormats = new Map<string, Intl.DateTimeFormat>();
 export function fitsServiceSchedule(schedule: ServiceSchedule | null | undefined, start: Date, end: Date) {
   if (!schedule) return true;
-  const format = new Intl.DateTimeFormat('en-US', { timeZone: schedule.timeZone, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+  if (end <= start) return false;
+  let format = scheduleFormats.get(schedule.timeZone);
+  if (!format) { format = new Intl.DateTimeFormat('en-US', { timeZone: schedule.timeZone, weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }); scheduleFormats.set(schedule.timeZone, format); }
   const parts = (date: Date) => Object.fromEntries(format.formatToParts(date).map(p => [p.type, p.value]));
-  const a = parts(start); const b = parts(new Date(end.getTime() - 1));
-  if (['year','month','day'].some(k => a[k] !== b[k])) return false;
-  const day = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(a['weekday'] ?? '');
+  const last = new Date(end.getTime() - 1); const a = parts(start); const b = parts(last);
+  const weekday = (p: Record<string,string>) => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(p['weekday'] ?? '');
+  const offset = (p: Record<string,string>, date: Date) => Date.UTC(Number(p['year']),Number(p['month'])-1,Number(p['day']),Number(p['hour']),Number(p['minute']),Number(p['second'])) - Math.floor(date.getTime()/1000)*1000;
+  if (['year','month','day'].some(k => a[k] !== b[k]) || offset(a,start) !== offset(b,last)) {
+    // Working windows have minute precision. Check every occupied UTC minute, including repeated DST minutes.
+    for (let at = start.getTime(); at < end.getTime(); at = Math.floor(at/60000)*60000 + 60000) {
+      const p = parts(new Date(at)); const minute = Number(p['hour'])*60 + Number(p['minute']);
+      if (!schedule.windows.some(w => w.day === weekday(p) && minutes(w.start) <= minute && minute < minutes(w.end))) return false;
+    }
+    return true;
+  }
+  const day = weekday(a);
   const from = Number(a['hour']) * 60 + Number(a['minute']) + Number(a['second']) / 60;
   const to = Number(b['hour']) * 60 + Number(b['minute']) + (Number(b['second']) + 1) / 60;
-  return schedule.windows.some(w => w.day === day && minutes(w.start) <= from && minutes(w.end) >= to);
+  let covered = from;
+  for (const w of schedule.windows.filter(w => w.day === day).sort((left,right) => minutes(left.start)-minutes(right.start))) {
+    if (minutes(w.end) <= covered) continue;
+    if (minutes(w.start) > covered) return false;
+    covered = Math.max(covered, minutes(w.end)); if (covered >= to) return true;
+  }
+  return false;
 }

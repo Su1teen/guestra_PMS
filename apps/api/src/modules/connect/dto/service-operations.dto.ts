@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsDateString, IsInt, IsObject, IsOptional, IsString, IsUUID, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsBoolean, IsDateString, IsIn, IsInt, IsObject, IsOptional, IsString, IsUUID, Matches, Max, MaxLength, Min, MinLength } from 'class-validator';
+import { IsMoneyString } from '../../../common/validation/is-money-string.validator';
 import type { ServiceSchedule } from '../service-schedule';
 import { AgentServiceAvailabilityDto, AgentServiceBookDto } from './agent-service.dto';
 export class StaffServiceAvailabilityDto extends AgentServiceAvailabilityDto {
@@ -12,6 +13,23 @@ export class StaffServiceBookDto extends AgentServiceBookDto {
 export class ServiceMutationDto {
   @ApiProperty() @IsUUID() propertyId!: string;
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(200) idempotencyKey!: string;
+}
+export class ServiceConsumptionQuoteDto {
+  @ApiProperty() @IsUUID() propertyId!: string;
+  @ApiProperty() @IsUUID() serviceId!: string;
+  @ApiProperty() @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}$/) serviceDate!: string;
+  @ApiPropertyOptional() @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(10000) quantity?: number;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() guestId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsUUID() reservationId?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) guestFirstName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) guestLastName?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(50) guestPhone?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(2000) notes?: string;
+}
+export class ServiceConsumptionDto extends ServiceConsumptionQuoteDto {
+  @ApiProperty() @IsString() @MinLength(1) @MaxLength(200) idempotencyKey!: string;
+  @ApiProperty() @IsMoneyString({ allowZero: true }) expectedTotal!: string;
+  @ApiProperty({ enum: [true] }) @IsIn([true]) provided!: true;
 }
 export class ServiceStatusDto extends ServiceMutationDto {
   @ApiProperty() @Type(() => Number) @IsInt() @Min(1) expectedRevision!: number;

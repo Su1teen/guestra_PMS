@@ -25,7 +25,7 @@ export default function ServiceBookingDetail({ id, propertyId, timeZone, resourc
   const localStart = start || serviceLocalInput(booking.startAt, timeZone);
   const selectedResource = resourceId || booking.allocations?.[0]?.resourceId || '';
   function changeBody() {
-    const startAt = serviceInstant(localStart, timeZone);
+    const startAt = localStart === serviceLocalInput(booking!.startAt, timeZone) ? booking!.startAt : serviceInstant(localStart, timeZone);
     return { propertyId, expectedRevision: booking!.revision, startAt, endAt: new Date(Date.parse(startAt) + Date.parse(booking!.endAt) - Date.parse(booking!.startAt)).toISOString(), resourceId: selectedResource, participants: participants ?? booking!.participants };
   }
   async function act(kind: 'preview' | 'move' | 'cancel' | 'complete') {

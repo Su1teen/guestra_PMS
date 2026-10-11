@@ -39,7 +39,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Service operations on PostgreSQ
     await clearBookings(); vi.restoreAllMocks(); vi.clearAllMocks(); webhooks.dispatchPersisted.mockResolvedValue(undefined);
     await db.delete(taxRules).where(eq(taxRules.taxProfileId, ids.tax));
     await db.update(taxProfiles).set({ isActive: false }).where(eq(taxProfiles.id, ids.tax));
-    await db.update(services).set({ price: '100.00', durationMinutes: 60, taxMode: 'none' }).where(eq(services.id, ids.service));
+    await db.update(services).set({ price: '100.00', durationMinutes: 60, taxMode: 'none', postingRule: 'once' }).where(eq(services.id, ids.service));
     await db.update(serviceResources).set({ capacity: 1, bufferBeforeMinutes: 0, bufferAfterMinutes: 0, schedule: null }).where(eq(serviceResources.id, ids.resource));
   });
   afterAll(async () => {
@@ -110,6 +110,15 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Service operations on PostgreSQ
     await db.update(serviceResources).set({ schedule: { timeZone: 'Asia/Almaty', windows: [{ day: 5, start: '14:00', end: '19:00' }] } }).where(eq(serviceResources.id, ids.resource));
     expect((await service.availability(input)).available).toBe(true);
     expect((await service.availability({ ...input, startAt: '2027-01-01T01:00:00Z', endAt: '2027-01-01T02:00:00Z' })).available).toBe(false);
+  });
+  it('books a continuous overnight service without ignoring a break in either working date', async () => {
+    await db.update(serviceResources).set({ schedule: { timeZone: 'UTC', windows: [{ day: 5, start: '23:00', end: '24:00' }, { day: 6, start: '00:00', end: '02:00' }] } }).where(eq(serviceResources.id, ids.resource));
+    const dto = { ...input, startAt: '2027-01-01T23:30:00Z', endAt: '2027-01-02T00:30:00Z' };
+    expect((await service.availability(dto)).available).toBe(true); await book(dto);
+    expect((await service.availability(dto)).available).toBe(false);
+    await clearBookings();
+    await db.update(serviceResources).set({ schedule: { timeZone: 'UTC', windows: [{ day: 5, start: '23:00', end: '24:00' }, { day: 6, start: '00:15', end: '02:00' }] } }).where(eq(serviceResources.id, ids.resource));
+    await expect(book(dto)).rejects.toMatchObject({ response: { code: 'RESOURCE_CONFLICT' } });
   });
   it('edits resource metadata without rewriting accepted allocations and rejects invalid capacity, hours or concurrent edits', async () => {
     await db.update(serviceResources).set({ capacity: 2, bufferAfterMinutes: 15 }).where(eq(serviceResources.id, ids.resource));
@@ -183,6 +192,42 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Service operations on PostgreSQ
     await expect(book({ guestId: undefined, guestFirstName: 'Налоговый тест' })).rejects.toMatchObject({ response: { code: 'TAX_POLICY_REQUIRED' } });
     for (const table of [serviceBookings, folios, charges]) expect(await db.select().from(table).where(eq(table.propertyId, ids.property))).toHaveLength(0);
     expect(await db.select().from(guests).where(eq(guests.firstName, 'Налоговый тест'))).toHaveLength(0);
+  });
+  const consumption = (patch = {}) => ({ propertyId: ids.property, serviceId: ids.service, guestId: ids.guest, serviceDate: '2026-01-01', quantity: 2, expectedTotal: '200.00', provided: true as const, idempotencyKey: randomUUID(), ...patch });
+  it('records unscheduled actual consumption once without a fictitious booking, resource or confirmed payment', async () => {
+    await db.update(services).set({ postingRule: 'on_consumption', durationMinutes: null }).where(eq(services.id, ids.service));
+    const dto = consumption({ guestId: undefined, guestFirstName: 'Без расписания' });
+    const quote = await service.quoteConsumption({ propertyId: ids.property, serviceId: ids.service, serviceDate: dto.serviceDate, quantity: 2 }); expect(quote.pricing.totalAmount).toBe('200.00');
+    const results = await Promise.all([service.recordConsumption(dto), service.recordConsumption(dto)]);
+    expect(results[0]['folioId']).toBe(results[1]['folioId']); expect(results[0]['paymentStatus']).toBe('not_confirmed');
+    for (const table of [serviceBookings, serviceResourceAllocations, reservations]) expect(await db.select().from(table).where(eq(table.propertyId, ids.property))).toHaveLength(0);
+    for (const table of [charges, folios]) expect(await db.select().from(table).where(eq(table.propertyId, ids.property))).toHaveLength(1);
+    const [ledger] = await db.select().from(folios).where(eq(folios.propertyId, ids.property)); expect(ledger.totalCharges).toBe('200.00'); expect(ledger.totalPayments).toBe('0.00');
+    const guest = await new GuestService(db).get360(results[0]['guestId'], ids.property); expect(guest.stays).toHaveLength(0); expect(guest.summary.ancillaryRevenue).toBe(200);
+    expect(await service.closeRequest({ propertyId: ids.property, idempotencyKey: dto.idempotencyKey })).toEqual({ status: 'committed', kind: 'consumption', folioId: results[0]['folioId'] });
+    expect(await service.recover(ids.property, dto.idempotencyKey)).toMatchObject({ kind: 'consumption', folioId: results[0]['folioId'] });
+    await db.update(services).set({ price: '900.00', taxMode: null }).where(eq(services.id, ids.service));
+    expect((await service.recordConsumption(dto))['totalAmount']).toBe('200.00');
+    await expect(service.recordConsumption({ ...dto, quantity: 3 })).rejects.toMatchObject({ response: { code: 'IDEMPOTENCY_CONFLICT' } });
+  });
+  it('refuses unscheduled package/per-night charges, future provision, stale prices and missing tax policy without side effects', async () => {
+    await expect(service.recordConsumption(consumption())).rejects.toMatchObject({ response: { code: 'SERVICE_POSTING_WORKFLOW_REQUIRED' } });
+    await db.update(services).set({ postingRule: 'on_consumption' }).where(eq(services.id, ids.service));
+    await expect(service.recordConsumption(consumption({ serviceDate: '2099-01-01' }))).rejects.toMatchObject({ response: { code: 'SERVICE_NOT_PROVIDED' } });
+    await expect(service.recordConsumption(consumption({ expectedTotal: '1.00', guestId: undefined, guestFirstName: 'Не принят' }))).rejects.toMatchObject({ response: { code: 'PRICE_CHANGED' } });
+    await db.update(services).set({ taxMode: null }).where(eq(services.id, ids.service));
+    await expect(service.recordConsumption(consumption())).rejects.toMatchObject({ response: { code: 'TAX_POLICY_REQUIRED' } });
+    for (const table of [serviceOperations, charges, folios]) expect(await db.select().from(table).where(eq(table.propertyId, ids.property))).toHaveLength(0);
+    expect(await db.select().from(guests).where(eq(guests.firstName, 'Не принят'))).toHaveLength(0);
+  });
+  it('fences late unscheduled consumption and rolls back ledger failures atomically', async () => {
+    await db.update(services).set({ postingRule: 'on_consumption' }).where(eq(services.id, ids.service));
+    const dto = consumption(); await service.closeRequest(dto);
+    await expect(service.recordConsumption(dto)).rejects.toMatchObject({ response: { code: 'SERVICE_REQUEST_CLOSED' } });
+    vi.spyOn(folio, 'postChargeFromSnapshotWithOutcome').mockRejectedValueOnce(new Error('ledger unavailable'));
+    await expect(service.recordConsumption(consumption())).rejects.toThrow('ledger unavailable');
+    for (const table of [charges, folios, domainEventOutbox]) expect(await db.select().from(table).where(eq(table.propertyId, ids.property))).toHaveLength(0);
+    await expect(service.recordConsumption(consumption({ propertyId: ids.other }))).rejects.toMatchObject({ response: { code: 'SERVICE_NOT_FOUND' } });
   });
   it.each(['exclusive','inclusive'] as const)('posts the accepted %s tax result through the existing tax/folio engines', async taxMode => {
     await db.update(taxProfiles).set({ isActive: true }).where(eq(taxProfiles.id, ids.tax));

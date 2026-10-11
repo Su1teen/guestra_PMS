@@ -2,7 +2,7 @@ import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from 
 import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { ConnectServiceBookingService } from './connect-service-booking.service';
-import { ServiceBlockDto, ServiceChangeDto, ServiceStatusDto, ServiceMutationDto, ServiceResourceDto, ServiceResourceUpdateDto, StaffServiceAvailabilityDto, StaffServiceBookDto } from './dto/service-operations.dto';
+import { ServiceBlockDto, ServiceChangeDto, ServiceStatusDto, ServiceMutationDto, ServiceResourceDto, ServiceResourceUpdateDto, ServiceConsumptionDto, ServiceConsumptionQuoteDto, StaffServiceAvailabilityDto, StaffServiceBookDto } from './dto/service-operations.dto';
 
 @ApiTags('Service operations')
 @Controller('services')
@@ -15,6 +15,18 @@ export class ServiceOperationsController {
   @Post('availability') @RequirePermissions('services.read')
   @ApiOperation({ summary: 'Check authoritative service availability and price' })
   availability(@Body() dto: StaffServiceAvailabilityDto) { return this.service.availability(dto, undefined, dto.resourceId); }
+  @Post('consumption/quote') @RequirePermissions('services.read', 'folios.manage')
+  @ApiOperation({ summary: 'Quote actual service consumption without creating a timed booking' })
+  quoteConsumption(@Body() dto: ServiceConsumptionQuoteDto) { return this.service.quoteConsumption(dto); }
+  @Post('consumption') @RequirePermissions('services.read', 'folios.manage')
+  @ApiOperation({ summary: 'Record provided service once in the existing folio; does not confirm payment' })
+  recordConsumption(@Body() dto: ServiceConsumptionDto) { return this.service.recordConsumption(dto); }
+  @Get('consumption/booking-request') @RequirePermissions('services.read', 'folios.manage')
+  async recoverConsumption(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Query('idempotencyKey') key: string) {
+    const { folio: _privateFolio, idempotencyKey: _privateKey, ...result } = await this.service.recover(propertyId, key); return result;
+  }
+  @Post('consumption/booking-request/close') @RequirePermissions('services.read', 'folios.manage')
+  closeConsumptionRequest(@Body() dto: ServiceMutationDto) { return this.service.closeRequest(dto); }
   @Post('bookings') @RequirePermissions('services.read', 'reservations.write')
   @ApiOperation({ summary: 'Create a confirmed, retry-safe service booking using the existing scheduling domain' })
   book(@Body() dto: StaffServiceBookDto) { return this.service.book(dto, 'front_desk', dto.resourceId); }

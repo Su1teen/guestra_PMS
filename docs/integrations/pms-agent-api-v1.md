@@ -39,6 +39,14 @@ The staff recovery banner persists only the random request key per actor/propert
 
 Domain events retain existing `service_booking.created`, `service_booking.rescheduled`, `service_booking.cancelled`, `service_booking.completed` names. Charge events and lifecycle events use the existing transactional outbox, stable logical event IDs, HMAC delivery/retry and audit storage. Consumers deduplicate by logical event ID. Public booking detail excludes allocation IDs, internal notes, integration context and idempotency fingerprints.
 
+### Staff consumption without a scheduled booking
+
+`POST /api/v1/services/consumption/quote` and `POST /api/v1/services/consumption` require both `services.read` and `folios.manage`. This financial action is not enabled as an external agent tool. Only an active catalog service configured with `postingRule: on_consumption` is eligible; package, nightly and other posting rules retain their existing workflow.
+
+Quote accepts `propertyId`, `serviceId`, quantity, the explicit property business `serviceDate` (`YYYY-MM-DD`), and a property-linked guest/stay or new service-only guest details. The date must be real and no later than today in the property's timezone. Confirmation additionally requires the original `idempotencyKey`, `expectedTotal`, and `provided: true` as staff confirmation of actual delivery. It posts one accepted tax snapshot through the existing folio ledger, without creating a timed service booking, allocation, accommodation reservation or payment. A linked stay reuses its open compatible folio.
+
+Replay returns the accepted receipt despite later catalog/tax changes; changing the payload conflicts. Recovery can return `kind: consumption` and its folio receipt. Financial-only staff use `GET /consumption/booking-request` and `POST /consumption/booking-request/close`. Closure shares the original request lock: committed consumption is returned unchanged, while an unaccepted request is fenced against late arrival. A charge is not proof of payment; refunds and reversals remain manual.
+
 ```sh
 # Use an authorized non-production endpoint and a property-bound credential.
 curl "$PMS_URL/api/v1/connect/services/bookings/$BOOKING_ID?propertyId=$PROPERTY_ID" -H "x-api-key: $PMS_KEY"

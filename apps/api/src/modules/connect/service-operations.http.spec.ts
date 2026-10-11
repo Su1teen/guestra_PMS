@@ -12,7 +12,7 @@ import { ConnectController } from './connect.controller';
 const P = '10000000-0000-4000-a000-000000000001'; const OTHER = '10000000-0000-4000-a000-000000000002'; const ID = '10000000-0000-4000-a000-000000000003';
 describe('service operations HTTP permissions and validation', () => {
   let app: INestApplication; let granted: string[];
-  const service = { book: vi.fn().mockResolvedValue({ id: ID }), transition: vi.fn(), get: vi.fn().mockResolvedValue({ id: ID }), closeRequest: vi.fn().mockResolvedValue({ status: 'closed' }), updateResource: vi.fn().mockResolvedValue({ id: ID }) };
+  const service = { book: vi.fn().mockResolvedValue({ id: ID }), transition: vi.fn(), get: vi.fn().mockResolvedValue({ id: ID }), closeRequest: vi.fn().mockResolvedValue({ status: 'closed' }), updateResource: vi.fn().mockResolvedValue({ id: ID }), recordConsumption: vi.fn().mockResolvedValue({ kind: 'consumption', folioId: ID }) };
   beforeEach(async () => {
     granted = ['services.read','reservations.write']; vi.clearAllMocks();
     const module = await Test.createTestingModule({ controllers: [ServiceOperationsController], providers: [{ provide: ConnectServiceBookingService, useValue: service }] }).compile();
@@ -51,6 +51,15 @@ describe('service operations HTTP permissions and validation', () => {
     await request(app.getHttpServer()).patch(`/services/resources/${ID}`).send({ ...edit, propertyId: OTHER }).expect(403);
     await request(app.getHttpServer()).patch(`/services/resources/${ID}`).send(edit).expect(200);
     expect(service.updateResource).toHaveBeenCalledWith(ID, expect.objectContaining(edit));
+  });
+  it('requires financial permission and explicit actual provision for an unscheduled charge', async () => {
+    const consumed = { propertyId: P, serviceId: ID, guestId: ID, serviceDate: '2026-01-01', quantity: 1, expectedTotal: '100.00', idempotencyKey: 'consumed', provided: true };
+    await request(app.getHttpServer()).post('/services/consumption').send(consumed).expect(403);
+    granted = ['services.read','folios.manage'];
+    await request(app.getHttpServer()).post('/services/consumption').send({ ...consumed, provided: false }).expect(400);
+    await request(app.getHttpServer()).post('/services/consumption').send({ ...consumed, serviceDate: '2026-01-01T00:00:00Z' }).expect(400);
+    await request(app.getHttpServer()).post('/services/consumption').send(consumed).expect(201);
+    expect(service.recordConsumption).toHaveBeenCalledTimes(1);
   });
 });
 describe('service Connect capabilities', () => {

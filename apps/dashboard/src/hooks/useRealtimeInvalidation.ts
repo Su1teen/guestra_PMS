@@ -99,6 +99,7 @@ export function realtimeQueryKeys(
   }
   if (payload.event.startsWith('folio.')) {
     return uniqueKeys([
+      ['guest-360'],
       ['folios'],
       ['folios', propertyId],
       ['payments'],

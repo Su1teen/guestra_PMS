@@ -20,6 +20,20 @@ describe('service schedule', () => {
     const schedule = { timeZone: 'Europe/Berlin', windows: [{ day: 0, start: '01:00', end: '04:00' }] };
     expect(fitsServiceSchedule(schedule, new Date('2027-03-28T00:00Z'), new Date('2027-03-28T02:00Z'))).toBe(true);
   });
+  it('allows continuous overnight/adjacent windows and refuses an actual break between them', () => {
+    const overnight = { timeZone: 'UTC', windows: [{ day: 5, start: '23:00', end: '24:00' }, { day: 6, start: '00:00', end: '02:00' }] };
+    expect(fitsServiceSchedule(overnight, new Date('2027-01-01T23:30Z'), new Date('2027-01-02T01:00Z'))).toBe(true);
+    overnight.windows[1]!.start = '00:15';
+    expect(fitsServiceSchedule(overnight, new Date('2027-01-01T23:30Z'), new Date('2027-01-02T01:00Z'))).toBe(false);
+    const adjacent = { timeZone: 'UTC', windows: [{ day: 5, start: '09:00', end: '10:00' }, { day: 5, start: '10:00', end: '11:00' }] };
+    expect(fitsServiceSchedule(adjacent, new Date('2027-01-01T09:30Z'), new Date('2027-01-01T10:30Z'))).toBe(true);
+  });
+  it('does not sell through a closed interval hidden by a repeated daylight-saving hour', () => {
+    const schedule = { timeZone: 'America/New_York', windows: [{ day: 0, start: '01:00', end: '01:30' }] };
+    expect(fitsServiceSchedule(schedule, new Date('2027-11-07T05:15Z'), new Date('2027-11-07T06:15Z'))).toBe(false);
+    schedule.windows[0]!.end = '02:00';
+    expect(fitsServiceSchedule(schedule, new Date('2027-11-07T05:15Z'), new Date('2027-11-07T06:15Z'))).toBe(true);
+  });
   it('rejects unknown zones, malformed days and reversed windows', () => {
     expect(() => validateServiceSchedule({ timeZone: 'invalid', windows: [] })).toThrow();
     expect(() => validateServiceSchedule({ timeZone: 'UTC', windows: [{ day: 7, start: '10:00', end: '09:00' }] })).toThrow();

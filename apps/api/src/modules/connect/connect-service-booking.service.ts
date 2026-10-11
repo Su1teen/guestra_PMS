@@ -8,7 +8,7 @@ import { FolioService } from '../folio/folio.service';
 import { TaxService } from '../tax/tax.service';
 import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 import type { AgentServiceAvailabilityDto, AgentServiceBookDto } from './dto/agent-service.dto';
-import type { ServiceBlockDto, ServiceChangeDto, ServiceStatusDto, ServiceMutationDto, ServiceResourceDto, ServiceResourceUpdateDto } from './dto/service-operations.dto';
+import type { ServiceBlockDto, ServiceChangeDto, ServiceStatusDto, ServiceMutationDto, ServiceResourceDto, ServiceResourceUpdateDto, ServiceConsumptionDto, ServiceConsumptionQuoteDto } from './dto/service-operations.dto';
 import { peakAllocatedUnits, stableServicePayload } from './service-capacity';
 import { fitsServiceSchedule, serviceInterval, validateServiceSchedule } from './service-schedule';
 
@@ -36,12 +36,12 @@ export class ConnectServiceBookingService {
     if (service.durationMinutes && end.getTime() - start.getTime() !== service.durationMinutes * 60000)
       throw new BadRequestException(failure('INVALID_DURATION', 'Продолжительность не соответствует настройке услуги.'));
   }
-  private async pricing(db: any, service: any, quantity: number, start: Date, guestId?: string) {
+  private async pricing(db: any, service: any, quantity: number, start: Date, guestId?: string, consumedOn?: string) {
     if (!['none','exclusive','inclusive'].includes(service.taxMode))
       throw new BadRequestException(failure('TAX_POLICY_REQUIRED', 'Укажите налоговый режим услуги перед бронированием.'));
     const [property] = await db.select({ timezone: properties.timezone }).from(properties).where(eq(properties.id, service.propertyId));
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en', { timeZone: property?.timezone ?? 'UTC', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(start).map(p => [p.type, p.value]));
-    const serviceDate = parts['year'] + '-' + parts['month'] + '-' + parts['day'];
+    const serviceDate = consumedOn ?? parts['year'] + '-' + parts['month'] + '-' + parts['day'];
     const amount = new Decimal(service.price).times(quantity).toFixed(2);
     let baseAmount = amount; let taxLines: any[] = [];
     if (service.taxMode === 'inclusive') ({ baseAmount, taxes: taxLines } = await this.taxes.backCalculateFromInclusive(amount, service.chargeType, service.propertyId, serviceDate, { guestId }, db));
@@ -123,14 +123,7 @@ export class ConnectServiceBookingService {
       const guest = await this.resolveGuest(tx, dto);
       const pricing = await this.pricing(tx, service, dto.quantity ?? 1, start, guest.id);
       if (dto.expectedTotal != null && !new Decimal(dto.expectedTotal).eq(pricing.totalAmount)) throw new ConflictException(failure('PRICE_CHANGED', 'Стоимость изменилась. Проверьте предложение заново.'));
-      let folio: any;
-      if (dto.reservationId) {
-        const [reservation] = await tx.select().from(reservations).where(and(eq(reservations.id, dto.reservationId), eq(reservations.propertyId, dto.propertyId), eq(reservations.guestId, guest.id))).for('update');
-        if (!reservation || !['confirmed','assigned','checked_in','stayover','due_out'].includes(reservation.status)) throw new BadRequestException(failure('INVALID_STATE', 'Проживание недоступно для добавления услуги.'));
-        [folio] = await tx.select().from(folios).where(and(eq(folios.propertyId, dto.propertyId), eq(folios.reservationId, dto.reservationId), eq(folios.guestId, guest.id), eq(folios.status, 'open'))).orderBy(asc(folios.createdAt)).for('update');
-      }
-      if (folio && folio.currencyCode !== service.currencyCode) throw new BadRequestException(failure('CURRENCY_MISMATCH', 'Валюта услуги отличается от валюты фолио.'));
-      if (!folio) folio = await this.folioService.create({ propertyId: dto.propertyId, guestId: guest.id, reservationId: dto.reservationId, type: 'guest', currencyCode: service.currencyCode, notes: dto.reservationId ? 'Услуги проживания' : 'Услуги без проживания' }, tx);
+      const folio = await this.serviceFolio(tx, dto, guest, service, dto.notes);
       const demand = dto.participants ?? 1;
       const [booking] = await tx.insert(serviceBookings).values({ propertyId: dto.propertyId, guestId: guest.id, serviceId: service.id, reservationId: dto.reservationId, folioId: folio.id,
         startAt: start, endAt: end, participants: demand, quantity: dto.quantity ?? 1, unitPrice: service.price, totalAmount: pricing.totalAmount, currencyCode: service.currencyCode, pricingSnapshot: pricing,
@@ -173,7 +166,11 @@ export class ConnectServiceBookingService {
   async recover(propertyId: string, idempotencyKey: string) {
     if (!idempotencyKey || idempotencyKey.length > 200) throw new BadRequestException(failure('INVALID_REQUEST_KEY', 'Укажите ключ исходного запроса.'));
     const [booking] = await this.db.select({ id: serviceBookings.id }).from(serviceBookings).where(and(eq(serviceBookings.propertyId, propertyId), eq(serviceBookings.idempotencyKey, idempotencyKey)));
-    if (!booking) throw new NotFoundException(failure('SERVICE_BOOKING_NOT_FOUND', 'Запрос ещё не принят. Можно повторить его с тем же ключом.'));
+    if (!booking) {
+      const [receipt] = await this.db.select().from(serviceOperations).where(and(eq(serviceOperations.propertyId, propertyId), eq(serviceOperations.idempotencyKey, idempotencyKey)));
+      if (receipt?.fingerprint.startsWith('service_consumption:v1:')) return { ...receipt.response, folio: undefined, idempotencyKey: undefined };
+      throw new NotFoundException(failure('SERVICE_BOOKING_NOT_FOUND', 'Запрос ещё не принят. Проверьте результат или закройте непринятый запрос.'));
+    }
     return this.get(booking.id, propertyId);
   }
 
@@ -185,6 +182,7 @@ export class ConnectServiceBookingService {
       if (booking) return { status: 'committed', serviceBookingId: booking.id };
       const fingerprint = 'service_booking.request_closed:v1';
       const [receipt] = await tx.select().from(serviceOperations).where(and(eq(serviceOperations.propertyId, dto.propertyId), eq(serviceOperations.idempotencyKey, dto.idempotencyKey)));
+      if (receipt?.fingerprint.startsWith('service_consumption:v1:')) return { status: 'committed', kind: 'consumption', folioId: receipt.response['folioId'] };
       if (receipt && receipt.fingerprint !== fingerprint) throw new ConflictException(failure('IDEMPOTENCY_CONFLICT', 'Ключ запроса уже использован для другого действия.'));
       if (!receipt) await tx.insert(serviceOperations).values({ propertyId: dto.propertyId, idempotencyKey: dto.idempotencyKey, fingerprint, response: { status: 'closed' } });
       return { status: 'closed' };
@@ -195,6 +193,81 @@ export class ConnectServiceBookingService {
     const b = await this.get(id, propertyId);
     return { serviceBookingId: b.id, serviceId: b.serviceId, guestId: b.guestId, reservationId: b.reservationId, status: b.status, revision: b.revision,
       startAt: b.startAt, endAt: b.endAt, participants: b.participants, quantity: b.quantity, totalAmount: b.totalAmount, currencyCode: b.currencyCode, folioId: b.folioId };
+  }
+
+  private async consumptionDate(tx: any, dto: ServiceConsumptionQuoteDto) {
+    const date = new Date(dto.serviceDate + 'T12:00:00Z');
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0,10) !== dto.serviceDate) throw new BadRequestException(failure('INVALID_SERVICE_DATE', 'Укажите существующую дату оказания услуги.'));
+    const [property] = await tx.select({ timezone: properties.timezone }).from(properties).where(eq(properties.id, dto.propertyId));
+    if (!property) throw new NotFoundException(failure('PROPERTY_NOT_FOUND', 'Объект не найден.'));
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en', { timeZone: property.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date()).map(p => [p.type,p.value]));
+    if (dto.serviceDate > parts['year'] + '-' + parts['month'] + '-' + parts['day']) throw new BadRequestException(failure('SERVICE_NOT_PROVIDED', 'Будущую услугу нельзя отметить оказанной.'));
+  }
+
+  private async serviceFolio(tx: any, dto: { propertyId: string; reservationId?: string }, guest: any, service: any, notes?: string) {
+    let folio: any;
+    if (dto.reservationId) {
+      const [stay] = await tx.select({ id: reservations.id, status: reservations.status }).from(reservations).where(and(eq(reservations.id, dto.reservationId), eq(reservations.propertyId, dto.propertyId), eq(reservations.guestId, guest.id))).for('update');
+      if (!stay || !['confirmed','assigned','checked_in','stayover','due_out'].includes(stay.status)) throw new BadRequestException(failure('INVALID_STATE', 'Проживание недоступно для добавления услуги.'));
+      [folio] = await tx.select().from(folios).where(and(eq(folios.propertyId, dto.propertyId), eq(folios.reservationId, dto.reservationId), eq(folios.guestId, guest.id), eq(folios.status, 'open'))).orderBy(asc(folios.createdAt)).for('update');
+    }
+    if (folio && folio.currencyCode !== service.currencyCode) throw new BadRequestException(failure('CURRENCY_MISMATCH', 'Валюты услуги и фолио отличаются.'));
+    return folio ?? this.folioService.create({ propertyId: dto.propertyId, guestId: guest.id, reservationId: dto.reservationId, type: 'guest', currencyCode: service.currencyCode,
+      notes: notes ?? (dto.reservationId ? 'Услуги проживания' : 'Услуги без проживания') }, tx);
+  }
+
+  private validateConsumption(service: any) {
+    if (!service.isActive) throw new BadRequestException(failure('SERVICE_INACTIVE', 'Услуга выключена.'));
+    if (service.postingRule !== 'on_consumption') throw new BadRequestException(failure('SERVICE_POSTING_WORKFLOW_REQUIRED', 'Для этой услуги используйте существующий пакетный или начисляемый по проживанию процесс.'));
+  }
+
+  async quoteConsumption(dto: ServiceConsumptionQuoteDto) {
+    return this.db.transaction(async (tx: any) => {
+      await this.consumptionDate(tx, dto);
+      const service = await this.service(tx, dto.propertyId, dto.serviceId);
+      this.validateConsumption(service);
+      const guest = dto.guestId ? await this.resolveGuest(tx, dto as unknown as AgentServiceBookDto) : undefined;
+      const pricing = await this.pricing(tx, service, dto.quantity ?? 1, new Date(), guest?.id, dto.serviceDate);
+      return { pricing, currencyCode: service.currencyCode };
+    }, { isolationLevel: 'repeatable read', readOnly: true });
+  }
+
+  /** Actual consumption has a folio charge and a durable receipt, never a fictitious timed booking/allocation. */
+  async recordConsumption(dto: ServiceConsumptionDto) {
+    const fingerprint = 'service_consumption:v1:' + stableServicePayload({ ...dto, idempotencyKey: undefined, quantity: dto.quantity ?? 1 });
+    const result = await this.db.transaction(async (tx: any) => {
+      await this.lockKey(tx, dto.propertyId, dto.idempotencyKey);
+      const [booking] = await tx.select({ id: serviceBookings.id }).from(serviceBookings).where(and(eq(serviceBookings.propertyId, dto.propertyId), eq(serviceBookings.idempotencyKey, dto.idempotencyKey)));
+      if (booking) throw new ConflictException(failure('IDEMPOTENCY_CONFLICT', 'Ключ уже использован для записи на услугу.'));
+      const [receipt] = await tx.select().from(serviceOperations).where(and(eq(serviceOperations.propertyId, dto.propertyId), eq(serviceOperations.idempotencyKey, dto.idempotencyKey)));
+      if (receipt) {
+        if (receipt.fingerprint === 'service_booking.request_closed:v1') throw new ConflictException(failure('SERVICE_REQUEST_CLOSED', 'Исходный запрос закрыт. Проверьте стоимость и создайте новый запрос.'));
+        if (receipt.fingerprint !== fingerprint) throw new ConflictException(failure('IDEMPOTENCY_CONFLICT', 'Ключ уже использован для другого действия.'));
+        return { response: { ...receipt.response, idempotentReplay: true }, events: [] as string[] };
+      }
+      await this.consumptionDate(tx, dto);
+      if (dto.provided !== true) throw new BadRequestException(failure('SERVICE_NOT_PROVIDED', 'Подтвердите фактическое оказание услуги.'));
+      const service = await this.service(tx, dto.propertyId, dto.serviceId, true);
+      this.validateConsumption(service);
+      const guest = await this.resolveGuest(tx, dto as unknown as AgentServiceBookDto);
+      const pricing = await this.pricing(tx, service, dto.quantity ?? 1, new Date(), guest.id, dto.serviceDate);
+      if (!new Decimal(dto.expectedTotal).eq(pricing.totalAmount)) throw new ConflictException(failure('PRICE_CHANGED', 'Стоимость изменилась. Проверьте предложение заново.'));
+      const folio = await this.serviceFolio(tx, dto, guest, service, dto.notes);
+      const outcome = await this.folioService.postChargeFromSnapshotWithOutcome(folio.id, { propertyId: dto.propertyId, type: service.chargeType, description: service.name, amount: pricing.baseAmount,
+        currencyCode: service.currencyCode, serviceDate: dto.serviceDate }, pricing.taxAmount, undefined, 'service-consumption:' + dto.idempotencyKey, tx);
+      const response = { kind: 'consumption', status: 'posted', folioId: folio.id, chargeId: outcome.charge.id, guestId: guest.id, reservationId: dto.reservationId ?? null, serviceId: service.id,
+        totalAmount: pricing.totalAmount, currencyCode: service.currencyCode, pricingSnapshot: pricing, paymentStatus: 'not_confirmed', idempotentReplay: false };
+      await tx.insert(serviceOperations).values({ propertyId: dto.propertyId, idempotencyKey: dto.idempotencyKey, fingerprint, response });
+      const events: string[] = [];
+      for (const charge of [outcome.charge, ...(outcome.charge.taxCharges ?? [])]) {
+        const eventId = randomUUID(); events.push(eventId);
+        await this.outbox.persist(tx, { event: 'folio.charge_posted', entityType: 'charge', entityId: charge.id, propertyId: dto.propertyId, timestamp: new Date().toISOString(),
+          data: { folioId: folio.id, guestId: guest.id, serviceId: service.id, type: charge.type, amount: charge.amount, schemaVersion: 1 } }, eventId);
+      }
+      return { response, events };
+    });
+    for (const id of result.events) { try { await this.outbox.deliver(dto.propertyId, id); } catch { /* Existing outbox retains delivery for retry. */ } }
+    return result.response;
   }
 
   async forReservation(propertyId: string, reservationId: string) {
@@ -255,8 +328,8 @@ export class ConnectServiceBookingService {
         const slotEnd = at + service.durationMinutes * 60000;
         const bufferedStart = new Date(at - resource.bufferBeforeMinutes * 60000); const bufferedEnd = new Date(slotEnd + resource.bufferAfterMinutes * 60000);
         const blocked = blocks.some((b: any) => b.startAt < bufferedEnd && b.endAt > bufferedStart);
-        const open = resource.isActive && service.isActive && service.agentBookingMode === 'live_booking' && fitsServiceSchedule(resource.schedule, bufferedStart, bufferedEnd) && !blocked;
-        slots.push({ startAt: new Date(at).toISOString(), endAt: new Date(slotEnd).toISOString(), availableUnits: open ? Math.max(0, resource.capacity - peakAllocatedUnits(bufferedStart, bufferedEnd, occupied)) : 0 });
+        const inWorkingHours = resource.isActive && service.isActive && service.agentBookingMode === 'live_booking' && fitsServiceSchedule(resource.schedule, bufferedStart, bufferedEnd);
+        slots.push({ startAt: new Date(at).toISOString(), endAt: new Date(slotEnd).toISOString(), inWorkingHours, availableUnits: inWorkingHours && !blocked ? Math.max(0, resource.capacity - peakAllocatedUnits(bufferedStart, bufferedEnd, occupied)) : 0 });
       }
       return { resourceId: id, capacity: resource.capacity, durationMinutes: service.durationMinutes, checkedAt: new Date().toISOString(), slots };
     }, { isolationLevel: 'repeatable read', readOnly: true });

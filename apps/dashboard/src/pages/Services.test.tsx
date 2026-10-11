@@ -6,13 +6,13 @@ import { api } from '../lib/api';
 import Services from './Services';
 import i18n from '../i18n';
 import { serviceRecoveryKey } from '../lib/staff-booking-recovery';
-const access = vi.hoisted(() => ({ read: true, write: true, propertyId: 'hotel-a' as string | null }));
-vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { sub: 'operator' }, hasPermission: (...keys: string[]) => keys.every(k => k === 'services.read' ? access.read : k === 'reservations.write' ? access.write : false) }) }));
+const access = vi.hoisted(() => ({ read: true, write: true, finance: false, propertyId: 'hotel-a' as string | null }));
+vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { sub: 'operator' }, hasPermission: (...keys: string[]) => keys.every(k => k === 'services.read' ? access.read : k === 'reservations.write' ? access.write : ['folios.manage','folios.read'].includes(k) ? access.finance : false) }) }));
 vi.mock('../context/PropertyContext', () => ({ useProperty: () => ({ propertyId: access.propertyId, currencyCode: 'KZT', properties: [{ id: 'hotel-a', timezone: 'Asia/Almaty' }] }) }));
 vi.mock('../lib/api', () => ({ api: { get: vi.fn(), post: vi.fn(), patch: vi.fn() } }));
-const calendar = { complete: true, services: [{ id: 'svc', name: 'Массаж', isActive: true, durationMinutes: 60, agentBookingMode: 'live_booking', taxMode: 'none' }], resources: [{ id: 'resource', serviceId: 'svc', name: 'Кабинет', capacity: 1, isActive: true, bufferBeforeMinutes: 0, bufferAfterMinutes: 0 }], bookings: [], blocks: [], allocations: [] };
+const calendar = { complete: true, services: [{ id: 'svc', name: 'Массаж', isActive: true, durationMinutes: 60, agentBookingMode: 'live_booking', postingRule: 'on_consumption', taxMode: 'none' }], resources: [{ id: 'resource', serviceId: 'svc', name: 'Кабинет', capacity: 1, isActive: true, bufferBeforeMinutes: 0, bufferAfterMinutes: 0 }], bookings: [], blocks: [], allocations: [] };
 beforeEach(async () => {
-  await i18n.changeLanguage('ru'); vi.clearAllMocks(); sessionStorage.clear(); access.read = true; access.write = true; access.propertyId = 'hotel-a';
+  await i18n.changeLanguage('ru'); vi.clearAllMocks(); sessionStorage.clear(); access.read = true; access.write = true; access.finance = false; access.propertyId = 'hotel-a';
   window.history.replaceState({}, '', '/services?date=2027-01-01&propertyId=hotel-a');
   vi.mocked(api.get).mockImplementation(async path => {
     if (path.endsWith('/history')) return { data: [] };
@@ -74,4 +74,21 @@ it('opens the accepted booking when closure discovers a committed request', asyn
   await userEvent.click(screen.getByRole('button', { name: 'Закрыть непринятый запрос' }));
   await screen.findByRole('dialog', { name: 'Карточка услуги' });
   expect(sessionStorage.getItem(serviceRecoveryKey('operator', 'hotel-a'))).toBeNull();
+});
+it('lets a financial operator record actual consumption without a time/resource booking or payment claim', async () => {
+  access.write = false; access.finance = true;
+  window.history.replaceState({}, '', '/services?date=2027-01-01&action=book&guestId=guest&reservationId=stay&propertyId=hotel-a');
+  vi.mocked(api.post).mockImplementation(async path => path.endsWith('/quote') ? { data: { pricing: { totalAmount: '100.00', baseAmount: '100.00', taxAmount: '0.00' }, currencyCode: 'KZT' } } : { data: { kind: 'consumption', folioId: 'folio' } });
+  renderWithProviders(<Services/>); await screen.findByRole('dialog', { name: 'Оформить услугу' });
+  expect(screen.queryByLabelText('Начало')).not.toBeInTheDocument(); expect(screen.queryByLabelText('Ресурс')).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Проверить стоимость' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Начислить оказанную услугу' }));
+  expect(vi.mocked(api.post).mock.calls.filter(([path]) => path === '/v1/services/consumption')).toHaveLength(0);
+  await userEvent.click(screen.getByRole('checkbox', { name: /Услуга фактически оказана/ }));
+  await userEvent.click(screen.getByRole('button', { name: 'Начислить оказанную услугу' }));
+  await screen.findByText(/Услуга начислена в фолио. Оплата не подтверждалась/);
+  const posted = vi.mocked(api.post).mock.calls.find(([path]) => path === '/v1/services/consumption')![1];
+  expect(posted).toMatchObject({ propertyId: 'hotel-a', serviceId: 'svc', guestId: 'guest', reservationId: 'stay', provided: true, expectedTotal: '100.00' });
+  for (const field of ['startAt','endAt','resourceId','participants']) expect(posted).not.toHaveProperty(field);
+  expect(screen.getByRole('link', { name: 'Открыть фолио' })).toHaveAttribute('href', '/folios/folio?propertyId=hotel-a');
 });
