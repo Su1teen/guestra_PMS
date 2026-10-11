@@ -238,7 +238,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('PMS operations against PostgreS
     const stay = await create();
     await db.update(rooms).set({ status: 'out_of_order' }).where(eq(rooms.id, ids.room));
     await db.insert(depositLedgerEntries).values({ propertyId: ids.property, reservationId: stay.id, amount: '100.00', currencyCode: 'USD' });
-    const rows = await new OperationsService(db).preArrivals(ids.property, input.checkIn, input.checkIn);
+    const rows = await new OperationsService(db, new RoomStatusService(db, webhooks as any)).preArrivals(ids.property, input.checkIn, input.checkIn);
     expect(rows[0]?.checks).toMatchObject({ housekeepingReady: false, roomOperational: false, depositReceived: false, depositAmount: 0 });
   });
   it('counts a later cancellation in pickup baseline, and offsets additions cancelled in the same window', async () => {

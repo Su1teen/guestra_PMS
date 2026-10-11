@@ -4,8 +4,8 @@ import {
   NotFoundException,
   BadRequestException,
 } from '@nestjs/common';
-import { eq, and, sql } from 'drizzle-orm';
-import { rooms } from '@telivityhaip/database';
+import { eq, and, sql, inArray, lte, or } from 'drizzle-orm';
+import { rooms, housekeepingTasks, maintenanceTickets } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { WebhookService } from '../webhook/webhook.service';
 
@@ -18,6 +18,8 @@ type RoomStatus =
   | 'occupied'
   | 'out_of_order'
   | 'out_of_service';
+
+export type RoomReadiness = { roomId: string; status: string; ready: boolean; operational: boolean; reasons: Array<{ code: string; label: string; entityIds?: string[] }> };
 
 const VALID_TRANSITIONS: Record<RoomStatus, RoomStatus[]> = {
   // KB 5.2 chain: vacant_clean → vacant_dirty is the documented "clean room
@@ -105,8 +107,44 @@ export class RoomStatusService {
     return this.transitionStatus(roomId, propertyId, 'vacant_dirty');
   }
 
-  async getRoomStatus(roomId: string, propertyId: string) {
-    const room = await this.findRoom(roomId, propertyId);
+  async lockRoom(roomId: string, propertyId: string, tx: any) {
+    const [room] = await tx.select().from(rooms).where(and(eq(rooms.id, roomId), eq(rooms.propertyId, propertyId))).for('update');
+    if (!room) throw new NotFoundException('Номер не найден в этом объекте');
+    return room;
+  }
+
+  /** One projection of existing room, cleaning and repair state; it does not create a second readiness ledger. */
+  async operationalReadiness(propertyId: string, serviceDate: string, db: any = this.db): Promise<RoomReadiness[]> {
+    const [inventory, cleaning, repairs] = await Promise.all([
+      db.select({ id: rooms.id, status: rooms.status, isActive: rooms.isActive }).from(rooms).where(eq(rooms.propertyId, propertyId)),
+      db.select({ id: housekeepingTasks.id, roomId: housekeepingTasks.roomId, status: housekeepingTasks.status }).from(housekeepingTasks).where(and(
+        eq(housekeepingTasks.propertyId, propertyId), lte(housekeepingTasks.serviceDate, new Date(serviceDate + 'T23:59:59.999Z')),
+        inArray(housekeepingTasks.type, ['checkout','deep_clean','inspection','maintenance']), inArray(housekeepingTasks.status, ['pending','assigned','in_progress','completed']),
+      )),
+      db.select({ id: maintenanceTickets.id, roomId: maintenanceTickets.roomId }).from(maintenanceTickets).where(and(eq(maintenanceTickets.propertyId, propertyId), or(
+        eq(maintenanceTickets.returnToServiceRequired, true), and(eq(maintenanceTickets.blocksInventory, true), inArray(maintenanceTickets.status, ['open','assigned','in_progress','waiting_parts'])),
+      ))),
+    ]);
+    const cleaningByRoom = new Map<string,any[]>(); const repairsByRoom = new Map<string,any[]>();
+    for (const row of cleaning) cleaningByRoom.set(row.roomId, [...(cleaningByRoom.get(row.roomId) ?? []), row]);
+    for (const row of repairs) if (row.roomId) repairsByRoom.set(row.roomId, [...(repairsByRoom.get(row.roomId) ?? []), row]);
+    return inventory.map((room: any) => {
+      const tasks = cleaningByRoom.get(room.id) ?? []; const tickets = repairsByRoom.get(room.id) ?? [];
+      const reasons: Array<{ code: string; label: string; entityIds?: string[] }> = [];
+      if (!room.isActive) reasons.push({ code: 'inactive', label: 'Номер выключен' });
+      if (['out_of_order','out_of_service'].includes(room.status)) reasons.push({ code: 'inventory_blocked', label: 'Номер выведен из эксплуатации' });
+      if (tickets.length) reasons.push({ code: 'maintenance', label: 'Ремонт или возврат в эксплуатацию не подтверждён', entityIds: tickets.map(t => t.id) });
+      if (room.status === 'vacant_dirty') reasons.push({ code: 'dirty', label: 'Номер грязный' });
+      if (['clean','inspected'].includes(room.status) || tasks.some(t => t.status === 'completed')) reasons.push({ code: 'inspection', label: 'Не завершена инспекция', entityIds: tasks.filter(t => t.status === 'completed').map(t => t.id) });
+      if (tasks.some(t => t.status !== 'completed')) reasons.push({ code: 'blocking_task', label: 'Есть незавершённая блокирующая задача', entityIds: tasks.filter(t => t.status !== 'completed').map(t => t.id) });
+      if (room.status === 'occupied') reasons.push({ code: 'occupied', label: 'Номер занят' });
+      return { roomId: room.id, status: room.status, ready: ['vacant_clean','guest_ready'].includes(room.status) && reasons.length === 0, reasons,
+        operational: room.isActive && !['out_of_order','out_of_service'].includes(room.status) && tickets.length === 0 };
+    });
+  }
+
+  async getRoomStatus(roomId: string, propertyId: string, tx?: any) {
+    const room = await this.findRoom(roomId, propertyId, tx);
     return { id: room.id, number: room.number, status: room.status };
   }
 

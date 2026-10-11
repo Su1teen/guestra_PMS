@@ -16,6 +16,7 @@ import {
   users,
 } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
+import { RoomStatusService } from '../room/room-status.service';
 
 type AttentionItem = {
   id: string;
@@ -32,7 +33,7 @@ type AttentionItem = {
 
 @Injectable()
 export class OperationsService {
-  constructor(@Inject(DRIZZLE) private readonly db: any) {}
+  constructor(@Inject(DRIZZLE) private readonly db: any, private readonly roomStatus: RoomStatusService) {}
 
   async assignees(propertyId: string) {
     return this.db.select({ id: users.id, name: users.name, email: users.email })
@@ -43,6 +44,7 @@ export class OperationsService {
   }
 
   async preArrivals(propertyId: string, startDate: string, endDate: string) {
+    const readiness = new Map((await this.roomStatus.operationalReadiness(propertyId, startDate)).map(r => [r.roomId, r]));
     const rows = await this.db.select({
       reservation: reservations,
       guest: guests,
@@ -103,9 +105,10 @@ export class OperationsService {
       const guestComplete = Boolean(
         row.guest.firstName && row.guest.lastName && (row.guest.email || row.guest.phone),
       );
-      const roomOperational = !['out_of_order', 'out_of_service'].includes(row.roomStatus ?? '');
+      const roomReadiness = readiness.get(row.reservation.roomId);
+      const roomOperational = roomReadiness?.operational ?? false;
       // Historical inspection cannot make a currently dirty/OOO room ready.
-      const housekeepingReady = roomOperational && ['guest_ready', 'vacant_clean'].includes(row.roomStatus ?? '');
+      const housekeepingReady = roomReadiness?.ready ?? false;
 
       return {
         reservationId,
@@ -122,6 +125,7 @@ export class OperationsService {
         ratePlan: row.ratePlan,
         currencyCode: row.reservation.currencyCode,
         notes: row.reservation.specialRequests,
+        readinessReasons: roomReadiness?.reasons ?? [{ code: 'unassigned', label: 'Номер не назначен' }],
         checks: {
           roomAssigned: Boolean(row.reservation.roomId),
           roomOperational,

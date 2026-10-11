@@ -1013,6 +1013,7 @@ export default function FrontDesk() {
                         {(tab === 'arrivals' || tab === 'in-house') && guestRecognition(r)}
                         {tab === 'arrivals' && readiness.find(a => a.reservationId === r.id) && <div className="mt-1 flex flex-wrap gap-1">{['roomAssigned','housekeepingReady','depositReceived','operationalTasksComplete'].map(key => <span key={key} className={'rounded px-1.5 py-0.5 text-[10px] ' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'checks.' : 'checksMissing.') + key)}</span>)}</div>}
                         {r.guestId && hasPermission('guests.read') && <button className="mt-1 text-xs text-telivity-teal" onClick={e => { e.stopPropagation(); openGuest(r.guestId!, propertyId); }}>{t('guestQuickView.title')}</button>}
+                        {tab === 'arrivals' && readiness.find(a => a.reservationId === r.id)?.readinessReasons?.length > 0 && <ul className="mt-1 text-xs text-amber-900">{readiness.find(a => a.reservationId === r.id).readinessReasons.map((reason: { code: string; label: string }) => <li key={reason.code}>{reason.label}</li>)}</ul>}
                       </td>
                       <td className="px-4 py-3 text-sm text-telivity-slate">{r.confirmationNumber}</td>
                       {tab === 'arrivals' && (

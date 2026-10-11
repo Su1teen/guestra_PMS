@@ -3,7 +3,7 @@ name: CI
 on:
   workflow_dispatch:
   push:
-    branches: [main, codex/pms-release-candidate, codex/p2-service-operations]
+    branches: [main, codex/pms-release-candidate, 'codex/p2-*']
   pull_request:
     branches: [main]
 
@@ -150,7 +150,7 @@ jobs:
           DATABASE_URL: postgresql://haip:haip@localhost:5432/haip_smoke
 
       - name: Verify PMS operations against core PostgreSQL
-        run: pnpm --filter @telivityhaip/api exec vitest run src/modules/guest/guest-360.postgres.spec.ts src/modules/reservation/pms-operations.postgres.spec.ts src/modules/connect/service-operations.postgres.spec.ts src/pms-storage.postgres.spec.ts --maxWorkers=1 --minWorkers=1
+        run: pnpm --filter @telivityhaip/api exec vitest run src/modules/guest/guest-360.postgres.spec.ts src/modules/reservation/pms-operations.postgres.spec.ts src/modules/connect/service-operations.postgres.spec.ts src/modules/housekeeping/housekeeping-operations.postgres.spec.ts src/modules/housekeeping/staff-shifts.postgres.spec.ts src/pms-storage.postgres.spec.ts --maxWorkers=1 --minWorkers=1
         env:
           DATABASE_URL: postgresql://haip:haip@localhost:5432/haip_smoke
           PMS_LIVE_PG: '1'

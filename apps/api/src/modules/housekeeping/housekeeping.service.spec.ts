@@ -46,10 +46,11 @@ function createMockDb(options: {
   let selectCallCount = 0;
   const selectResults: any[] = Array.isArray(selectResult[0]) ? selectResult : [selectResult];
 
-  return {
+  const db:any = {
     select: vi.fn().mockImplementation(() => ({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
+          for(){return this;},
           then: (resolve: any) => {
             const result = selectResults[selectCallCount] ?? selectResults[selectResults.length - 1];
             selectCallCount++;
@@ -135,6 +136,8 @@ function createMockDb(options: {
       }),
     }),
   };
+  db.transaction=vi.fn((callback:any)=>callback(db));
+  return db;
 }
 
 async function createService(db: any) {
@@ -320,6 +323,7 @@ describe('HousekeepingService — CRUD', () => {
           }),
         }),
         where: vi.fn().mockReturnValue({
+          for(){return this;},
           then: (resolve: any) => resolve([{ count: 1 }]),
         }),
       }),
@@ -364,7 +368,7 @@ describe('HousekeepingService — CRUD', () => {
     const db = createMockDb({ selectResult: [[completedTask]] });
     const svc = await createService(db);
     await expect(svc.update('task-001', 'prop-001', { priority: 5 }))
-      .rejects.toThrow("Cannot update task in 'completed' status");
+      .rejects.toThrow('Завершённую задачу изменяет инспектор.');
   });
 
   it('should reject update on inspected task', async () => {
@@ -372,7 +376,7 @@ describe('HousekeepingService — CRUD', () => {
     const db = createMockDb({ selectResult: [[inspectedTask]] });
     const svc = await createService(db);
     await expect(svc.update('task-001', 'prop-001', { priority: 5 }))
-      .rejects.toThrow("Cannot update task in 'inspected' status");
+      .rejects.toThrow('Завершённую задачу изменяет инспектор.');
   });
 
   it('should delete pending task', async () => {
@@ -452,6 +456,7 @@ describe('HousekeepingService — CRUD', () => {
           }),
         }),
         where: vi.fn().mockReturnValue({
+          for(){return this;},
           then: (resolve: any) => resolve([{ count: 1 }]),
         }),
       }),
@@ -478,6 +483,7 @@ describe('HousekeepingService — CRUD', () => {
           }),
         }),
         where: vi.fn().mockReturnValue({
+          for(){return this;},
           then: (resolve: any) => resolve([{ count: 1 }]),
         }),
       }),
@@ -504,6 +510,7 @@ describe('HousekeepingService — CRUD', () => {
           }),
         }),
         where: vi.fn().mockReturnValue({
+          for(){return this;},
           then: (resolve: any) => resolve([{ count: 1 }]),
         }),
       }),

@@ -31,10 +31,11 @@ const mockTask = {
 };
 
 function createMockDb(task: any = mockTask) {
-  return {
+  const db:any = {
     select: vi.fn().mockImplementation(() => ({
       from: vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({
+          for(){return this;},
           then: (resolve: any) => resolve([task]),
         }),
         leftJoin: vi.fn().mockReturnValue({
@@ -72,6 +73,8 @@ function createMockDb(task: any = mockTask) {
       }),
     }),
   };
+  db.transaction=vi.fn((callback:any)=>callback(db));
+  return db;
 }
 
 async function createService(db: any) {
@@ -127,7 +130,7 @@ describe('HousekeepingService — Assignment', () => {
     const db = createMockDb(assignedTask);
     const svc = await createService(db);
     await expect(svc.assign('task-001', 'prop-001', { assignedTo: 'hk-001' }))
-      .rejects.toThrow("Cannot assign task in 'assigned' status");
+      .rejects.toThrow('Задача уже назначена или её статус изменился.');
   });
 
   it('should start task and transition to in_progress', async () => {
@@ -160,7 +163,7 @@ describe('HousekeepingService — Assignment', () => {
     const db = createMockDb(); // status = pending
     const svc = await createService(db);
     await expect(svc.startTask('task-001', 'prop-001'))
-      .rejects.toThrow("Cannot start task in 'pending' status");
+      .rejects.toThrow('Начать можно только назначенную задачу.');
   });
 
   it('should unassign task back to pending', async () => {

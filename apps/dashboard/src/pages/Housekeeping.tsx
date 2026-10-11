@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -23,7 +24,8 @@ import { addDays, format } from 'date-fns';
 import { api } from '../lib/api';
 import { useProperty } from '../context/PropertyContext';
 import { useAuth } from '../context/AuthContext';
-import { type AdminUser } from '../hooks/useAdmin';
+import StaffShiftCalendar from '../components/housekeeping/StaffShiftCalendar';
+import { hotelDate } from '../lib/hotel-date';
 import StatusBadge from '../components/ui/StatusBadge';
 import KpiCard from '../components/ui/KpiCard';
 import Modal from '../components/ui/Modal';
@@ -89,7 +91,7 @@ interface OpsForecast {
 }
 
 const TASK_COLUMNS = ['pending', 'assigned', 'in_progress', 'completed', 'inspected'];
-const HK_ROLE_KEYS = new Set(['housekeeping', 'housekeeping_manager', 'admin', 'general_manager']);
+
 
 const ROOM_STATUS_KEYS = [
   'vacant_clean',
@@ -102,9 +104,7 @@ const ROOM_STATUS_KEYS = [
   'out_of_service',
 ] as const;
 
-function isHousekeepingStaff(user: AdminUser): boolean {
-  return user.status === 'active' && user.roles.some((r) => HK_ROLE_KEYS.has(r.key));
-}
+
 
 // ---- Dashboard ----
 function HousekeepingDashboard() {
@@ -277,13 +277,18 @@ function HousekeepingDashboard() {
 // ---- Task Board / List ----
 function TaskBoard() {
   const { t } = useTranslation();
-  const { propertyId } = useProperty();
+  const { propertyId,properties } = useProperty();
   const { user, hasPermission } = useAuth();
   const canManage = hasPermission('housekeeping.manage');
   const queryClient = useQueryClient();
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = hotelDate(properties.find(p=>p.id===propertyId)?.timezone);
+  const [page,setPage]=useState(1);
+  const [mine,setMine]=useState(!canManage);
+  const {data:identity}=useQuery({queryKey:['housekeeping','identity',propertyId],queryFn:()=>api.get('/v1/housekeeping/identity',{params:{propertyId}}).then(r=>r.data as {staffId:string|null}),enabled:!!propertyId&&!canManage});
+
   const [view, setView] = useState<'board' | 'list'>('board');
   const [taskDetail, setTaskDetail] = useState<Task | null>(null);
+  const canExecute=canManage||hasPermission('housekeeping.execute')&&!!identity?.staffId&&taskDetail?.assignedTo===identity.staffId;
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFilter, setDateFilter] = useState(today);
   const [selectedStaffId, setSelectedStaffId] = useState('');
@@ -297,12 +302,12 @@ function TaskBoard() {
   const [newNotes, setNewNotes] = useState('');
 
   const { data } = useQuery({
-    queryKey: ['housekeeping', 'tasks', propertyId, statusFilter, dateFilter],
+    queryKey: ['housekeeping', 'tasks', propertyId, statusFilter, dateFilter,page,mine],
     queryFn: () =>
       api
-        .get('/v1/housekeeping/tasks', {
+        .get(mine?'/v1/housekeeping/tasks/mine':'/v1/housekeeping/tasks', {
           params: {
-            propertyId,
+            propertyId,page,limit:50,
             status: statusFilter || undefined,
             serviceDate: dateFilter || undefined,
           },
@@ -314,12 +319,13 @@ function TaskBoard() {
   const tasks: Task[] = data?.data ?? data ?? [];
 
   const { data: usersData } = useQuery({
-    queryKey: ['admin', 'users', propertyId],
-    queryFn: () => api.get('/v1/admin/users', { params: { propertyId } }).then((r) => r.data as AdminUser[]),
+    queryKey: ['housekeeping', 'staff', propertyId],
+    queryFn: () => api.get('/v1/housekeeping/staff', { params: { propertyId } }).then((r) => r.data as {id:string;name:string}[]),
     enabled: !!propertyId,
   });
 
-  const hkStaff = (usersData ?? []).filter(isHousekeepingStaff);
+  const hkStaff = usersData ?? [];
+  const {data:coverage=[]}=useQuery({queryKey:['housekeeping','staff-availability',propertyId,taskDetail?.serviceDate??dateFilter],queryFn:()=>api.get('/v1/housekeeping/staff-availability',{params:{propertyId,serviceDate:(taskDetail?.serviceDate??dateFilter).slice(0,10)}}).then(r=>r.data as {id:string;available:boolean;load:number}[]),enabled:!!propertyId&&canManage});
 
   const { data: roomsData } = useQuery({
     queryKey: ['rooms', propertyId, 'housekeeping-create'],
@@ -339,9 +345,11 @@ function TaskBoard() {
   const actionMutation = useMutation({
     mutationFn: ({ id, action, body }: { id: string; action: string; body?: Record<string, unknown> }) =>
       api.patch(`/v1/housekeeping/tasks/${id}/${action}`, body ?? {}, { params: { propertyId } }),
-    onSuccess: () => {
+    onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['housekeeping'] });
-      setTaskDetail(null);
+      queryClient.invalidateQueries({ queryKey: ['front-desk'] });
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      setTaskDetail(previous=>previous?{...previous,...response.data}:null);
     },
   });
 
@@ -354,7 +362,7 @@ function TaskBoard() {
   });
 
   const generateMutation = useMutation({
-    mutationFn: () => api.post('/v1/housekeeping/generate-stayover-tasks', { propertyId, serviceDate: today }),
+    mutationFn: () => api.post('/v1/housekeeping/generate-stayover-tasks', { propertyId, serviceDate: dateFilter }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['housekeeping'] }),
   });
 
@@ -365,7 +373,7 @@ function TaskBoard() {
       }
       return api.post('/v1/housekeeping/auto-assign', {
         propertyId,
-        serviceDate: today,
+        serviceDate: dateFilter,
         housekeepers: hkStaff.map((s) => s.id),
       });
     },
@@ -403,7 +411,7 @@ function TaskBoard() {
 
   const staffLabel = (staffId: string) => {
     const staff = hkStaff.find((s) => s.id === staffId);
-    return staff ? staff.name || staff.email : staffId.slice(0, 8) + '…';
+    return staff ? staff.name : staffId.slice(0, 8) + '…';
   };
 
   if (!propertyId) {
@@ -434,12 +442,12 @@ function TaskBoard() {
         <input
           type="date"
           value={dateFilter}
-          onChange={(e) => setDateFilter(e.target.value)}
+          onChange={(e) => {setDateFilter(e.target.value);setPage(1);}}
           className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm"
         />
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) => {setStatusFilter(e.target.value);setPage(1);}}
           className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm"
         >
           <option value="">{t('housekeeping.allStatus')}</option>
@@ -449,6 +457,7 @@ function TaskBoard() {
             </option>
           ))}
         </select>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={mine} onChange={e=>{setMine(e.target.checked);setPage(1);}}/>Мои задачи</label>
         {canManage && (
           <div className="ml-auto flex gap-2">
             <button
@@ -476,7 +485,7 @@ function TaskBoard() {
       </div>
 
       {view === 'board' && (
-        <div className="grid grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {TASK_COLUMNS.map((col) => {
             const colTasks = tasks.filter((task) => task.status === col);
             return (
@@ -594,6 +603,7 @@ function TaskBoard() {
         </div>
       )}
 
+      <div className="my-4 flex items-center gap-3 text-sm"><button disabled={page===1} onClick={()=>setPage(p=>p-1)} className="rounded-lg border p-2 disabled:opacity-50">Назад</button><span>Страница {page} · Всего задач: {data?.total??tasks.length}</span><button disabled={page*50>=(data?.total??tasks.length)} onClick={()=>setPage(p=>p+1)} className="rounded-lg border p-2 disabled:opacity-50">Далее</button></div>
       <Modal
         open={!!taskDetail}
         onClose={() => setTaskDetail(null)}
@@ -621,7 +631,7 @@ function TaskBoard() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <p className="text-xs font-medium text-telivity-mid-grey">{t('housekeeping.checklist')}</p>
-                  {canManage && !['completed', 'inspected'].includes(taskDetail.status) && (
+                  {canExecute && !['completed', 'inspected'].includes(taskDetail.status) && (
                     <button
                       onClick={saveChecklist}
                       disabled={updateMutation.isPending}
@@ -637,7 +647,7 @@ function TaskBoard() {
                       <input
                         type="checkbox"
                         checked={item.checked}
-                        readOnly={!canManage || ['completed', 'inspected'].includes(taskDetail.status)}
+                        readOnly={!canExecute || ['completed', 'inspected'].includes(taskDetail.status)}
                         onChange={() => toggleChecklistItem(i)}
                         className="rounded border-gray-300"
                       />
@@ -666,7 +676,7 @@ function TaskBoard() {
               </div>
             )}
 
-            {canManage && taskDetail.status === 'in_progress' && (
+            {canExecute && taskDetail.status === 'in_progress' && (
               <div className="border border-gray-100 rounded-lg p-3 space-y-2">
                 <label className="flex items-center gap-2 text-sm">
                   <input
@@ -689,9 +699,9 @@ function TaskBoard() {
               </div>
             )}
 
-            {canManage && (
+            {(canManage||canExecute) && (
               <div className="flex flex-wrap gap-2 pt-2">
-                {taskDetail.status === 'pending' && (
+                {canManage && taskDetail.status === 'pending' && (
                   <>
                     <select
                       value={selectedStaffId}
@@ -700,8 +710,8 @@ function TaskBoard() {
                     >
                       <option value="">{t('housekeeping.selectStaff')}</option>
                       {hkStaff.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name || s.email}
+                        <option key={s.id} value={s.id} disabled={!coverage.find(c=>c.id===s.id)?.available}>
+                          {s.name}
                         </option>
                       ))}
                     </select>
@@ -721,7 +731,7 @@ function TaskBoard() {
                     </button>
                   </>
                 )}
-                {taskDetail.status === 'assigned' && (
+                {canExecute && taskDetail.status === 'assigned' && (
                   <>
                     <button
                       onClick={() => actionMutation.mutate({ id: taskDetail.id, action: 'start' })}
@@ -729,7 +739,7 @@ function TaskBoard() {
                     >
                       {t('housekeeping.start')}
                     </button>
-                    <button
+                    <button disabled={!canManage||actionMutation.isPending}
                       onClick={() => actionMutation.mutate({ id: taskDetail.id, action: 'unassign' })}
                       className="border border-gray-200 text-telivity-slate rounded-lg px-4 py-2 text-sm font-semibold"
                     >
@@ -737,7 +747,7 @@ function TaskBoard() {
                     </button>
                   </>
                 )}
-                {taskDetail.status === 'in_progress' && (
+                {canExecute && taskDetail.status === 'in_progress' && (
                   <button
                     onClick={() =>
                       actionMutation.mutate({
@@ -755,7 +765,7 @@ function TaskBoard() {
                     {t('housekeeping.complete')}
                   </button>
                 )}
-                {taskDetail.status === 'completed' && user?.sub && (
+                {canManage && taskDetail.status === 'completed' && user?.sub && (
                   <>
                     <button
                       onClick={() =>
@@ -783,7 +793,7 @@ function TaskBoard() {
                     </button>
                   </>
                 )}
-                {['pending', 'assigned'].includes(taskDetail.status) && (
+                {canManage && ['pending', 'assigned'].includes(taskDetail.status) && (
                   <button
                     onClick={() => actionMutation.mutate({ id: taskDetail.id, action: 'skip' })}
                     className="border border-gray-200 text-telivity-slate rounded-lg px-4 py-2 text-sm font-semibold"
@@ -1121,7 +1131,10 @@ function ServiceRequestsPanel() {
 // ---- Main Router ----
 export default function Housekeeping() {
   const { t } = useTranslation();
-  const [tab, setTab] = useState<'dashboard' | 'tasks' | 'analytics' | 'lostFound' | 'serviceRequests'>('tasks');
+  const {propertyId}=useProperty();
+  const [params,setParams]=useSearchParams();
+  const currentTab=params.get('tab');const tab=['dashboard','tasks','shifts','analytics','lostFound','serviceRequests'].includes(currentTab??'')?currentTab:'tasks';
+  const setTab=(value:string)=>setParams(p=>{p.set('tab',value);return p;});
 
   return (
     <div>
@@ -1130,24 +1143,25 @@ export default function Housekeeping() {
         <h1 className="text-2xl font-semibold text-telivity-navy">{t('housekeeping.title')}</h1>
       </div>
 
-      <div className="flex gap-1 bg-white rounded-xl shadow-sm p-1 mb-4">
-        {(['dashboard', 'tasks', 'lostFound', 'serviceRequests', 'analytics'] as const).map((tabName) => (
+      <div className="flex gap-1 overflow-x-auto bg-white rounded-xl shadow-sm p-1 mb-4">
+        {(['dashboard', 'tasks', 'shifts', 'lostFound', 'serviceRequests', 'analytics'] as const).map((tabName) => (
           <button
             key={tabName}
             onClick={() => setTab(tabName)}
-            className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${
+            className={`flex-1 whitespace-nowrap px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
               tab === tabName ? 'bg-telivity-teal text-white' : 'text-telivity-slate hover:bg-telivity-light-grey'
             }`}
           >
             {tabName === 'lostFound' && <Package size={14} className="inline mr-1" />}
             {tabName === 'serviceRequests' && <ClipboardList size={14} className="inline mr-1" />}
-            {t(`housekeeping.tabs.${tabName}`)}
+            {tabName==='shifts'?'Смены':t(`housekeeping.tabs.${tabName}`)}
           </button>
         ))}
       </div>
 
       {tab === 'dashboard' && <HousekeepingDashboard />}
-      {tab === 'tasks' && <TaskBoard />}
+      {tab === 'tasks' && <TaskBoard key={propertyId}/> }
+      {tab === 'shifts' && <StaffShiftCalendar key={propertyId}/>}
       {tab === 'lostFound' && <LostAndFoundPanel />}
       {tab === 'serviceRequests' && <ServiceRequestsPanel />}
       {tab === 'analytics' && <HousekeepingAnalytics />}
