@@ -25,10 +25,13 @@ import { errorMessage } from '../../lib/error-message';
 import { useProperty } from '../../context/PropertyContext';
 import { useAuth } from '../../context/AuthContext';
 import Modal from '../ui/Modal';
+import StaffShiftTemplates from './StaffShiftTemplates';
 
 type Shift = {
   id: string;
   userId: string;
+  kind?: 'shift' | 'absence';
+  absenceType?: 'vacation' | 'sickness' | 'other' | null;
   startAt: string;
   endAt: string;
   status: 'planned' | 'confirmed' | 'cancelled';
@@ -45,8 +48,13 @@ type Coverage = Staff & {
   available: boolean;
   workingNow: boolean;
   onBreak: boolean;
+  onLeave?: boolean;
+  reassignmentRequired?: boolean;
+  tasksToReview?: { id: string; serviceDate: string; status: string }[];
 };
 type Draft = {
+  kind: 'shift' | 'absence';
+  absenceType?: 'vacation' | 'sickness' | 'other' | null;
   userId: string;
   startAt: string;
   endAt: string;
@@ -134,8 +142,8 @@ export default function StaffShiftCalendar() {
       setEditor(null);
       setRecoveryNotice(
         r.data.state === 'committed'
-          ? 'Исходный запрос принят: смена сохранена.'
-          : 'Запрос закрыт: поздний повтор не создаст смену.',
+          ? 'Исходная операция календаря сохранена.'
+          : 'Запрос закрыт: поздний повтор не изменит календарь.',
       );
       queryClient.invalidateQueries({ queryKey: ['housekeeping'] });
     },
@@ -254,6 +262,7 @@ export default function StaffShiftCalendar() {
     shift?: Shift,
     day = date,
     userId = staffFilter || staff[0]?.id || '',
+    kind: 'shift' | 'absence' = 'shift',
   ) => {
     setLocalError('');
     setRequest(null);
@@ -264,6 +273,7 @@ export default function StaffShiftCalendar() {
       draft: shift
         ? {
             ...shift,
+            kind: shift.kind ?? 'shift',
             startAt: serviceLocalInput(shift.startAt, zone),
             endAt: serviceLocalInput(shift.endAt, zone),
             breaks: shift.breaks.map((b) => ({
@@ -274,6 +284,8 @@ export default function StaffShiftCalendar() {
             notes: shift.notes ?? '',
           }
         : {
+            kind,
+            ...(kind === 'absence' ? { absenceType: 'vacation' as const } : {}),
             userId,
             startAt: day + 'T09:00',
             endAt: day + 'T18:00',
@@ -296,6 +308,8 @@ export default function StaffShiftCalendar() {
         id: editor.id,
         body: {
           propertyId,
+          kind: d.kind,
+          ...(d.kind === 'absence' ? { absenceType: d.absenceType } : {}),
           userId: d.userId,
           startAt: serviceInstant(d.startAt, zone),
           endAt: serviceInstant(d.endAt, zone),
@@ -304,7 +318,9 @@ export default function StaffShiftCalendar() {
             startAt: serviceInstant(b.startAt, zone),
             endAt: serviceInstant(b.endAt, zone),
           })),
-          ...(d.maxOpenTasks ? { maxOpenTasks: Number(d.maxOpenTasks) } : {}),
+          ...(d.kind === 'shift' && d.maxOpenTasks
+            ? { maxOpenTasks: Number(d.maxOpenTasks) }
+            : {}),
           notes: d.notes,
           idempotencyKey: crypto.randomUUID(),
           ...(editor.revision ? { expectedRevision: editor.revision } : {}),
@@ -347,7 +363,7 @@ export default function StaffShiftCalendar() {
             : 'border-amber-200 bg-amber-50')
       }
       aria-label={
-        'Смена ' +
+        (s.kind === 'absence' ? 'Отсутствие ' : 'Смена ') +
         (staff.find((u) => u.id === s.userId)?.name ?? 'сотрудника') +
         ' ' +
         labels[s.status]
@@ -361,7 +377,16 @@ export default function StaffShiftCalendar() {
           ? ' (+1 день)'
           : ''}
       </span>
-      <span className="block">{labels[s.status]}</span>
+      <span className="block">
+        {s.kind === 'absence'
+          ? {
+              vacation: 'Отпуск',
+              sickness: 'Отсутствие по болезни',
+              other: 'Отсутствие',
+            }[s.absenceType ?? 'other'] + ' · '
+          : ''}
+        {labels[s.status]}
+      </span>
       {s.breaks.length > 0 && (
         <span className="block">
           Перерывы:{' '}
@@ -432,6 +457,25 @@ export default function StaffShiftCalendar() {
           </button>
         )}
       </div>
+      {canManage && (
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className={button}
+            disabled={!staff.length || !!pending}
+            onClick={() =>
+              open(
+                undefined,
+                date,
+                staffFilter || staff[0]?.id || '',
+                'absence',
+              )
+            }
+          >
+            Отпуск / отсутствие
+          </button>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <button
           className={button}
@@ -659,21 +703,47 @@ export default function StaffShiftCalendar() {
                   <p
                     className={u.available ? 'text-teal-700' : 'text-amber-700'}
                   >
-                    {!u.shiftConfirmed
-                      ? 'Смена не подтверждена'
-                      : u.onBreak
-                        ? 'Сейчас перерыв'
-                        : u.workingNow
-                          ? 'Сотрудник на смене'
-                          : u.available
-                            ? 'Смена впереди'
-                            : 'Нет доступного рабочего времени или достигнут лимит'}
+                    {u.onLeave
+                      ? 'Сейчас отпуск / отсутствие'
+                      : !u.shiftConfirmed
+                        ? 'Смена не подтверждена'
+                        : u.onBreak
+                          ? 'Сейчас перерыв'
+                          : u.workingNow
+                            ? 'Сотрудник на смене'
+                            : u.available
+                              ? 'Смена впереди'
+                              : 'Нет доступного рабочего времени или достигнут лимит'}
                   </p>
+                  {u.reassignmentRequired && (
+                    <div role="status" className="mt-2 text-amber-800">
+                      Требуется проверить и переназначить задачи:{' '}
+                      {u.tasksToReview?.length ?? u.load}. Назначения сохранены.
+                      <a
+                        className="block underline"
+                        href={
+                          '/housekeeping?propertyId=' +
+                          encodeURIComponent(propertyId!)
+                        }
+                      >
+                        Открыть очередь уборки
+                      </a>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
           )}
         </div>
+      )}
+      {canManage && (
+        <StaffShiftTemplates
+          propertyId={propertyId!}
+          staff={staff}
+          date={date}
+          recoveryKey={recoveryKey}
+          pending={pending}
+        />
       )}
       <Modal
         open={!!editor}
@@ -681,7 +751,13 @@ export default function StaffShiftCalendar() {
           if (!save.isPending) setEditor(null);
         }}
         closeDisabled={save.isPending}
-        title={editor?.id ? 'Рабочая смена' : 'Новая рабочая смена'}
+        title={
+          editor?.draft.kind === 'absence'
+            ? 'Отпуск / отсутствие'
+            : editor?.id
+              ? 'Рабочая смена'
+              : 'Новая рабочая смена'
+        }
         wide
       >
         {editor && (
@@ -712,6 +788,30 @@ export default function StaffShiftCalendar() {
                   ))}
                 </select>
               </label>
+              {editor.draft.kind === 'absence' && (
+                <p className="text-sm text-gray-500 sm:col-span-2">
+                  Подтверждённое отсутствие исключается из рабочего времени.
+                  Назначенные задачи сохраняются до ручного переназначения.
+                </p>
+              )}
+              {editor.draft.kind === 'absence' && (
+                <label className="text-sm">
+                  Вид отсутствия
+                  <select
+                    className={input}
+                    value={editor.draft.absenceType ?? 'vacation'}
+                    onChange={(e) =>
+                      edit({
+                        absenceType: e.target.value as Draft['absenceType'],
+                      })
+                    }
+                  >
+                    <option value="vacation">Отпуск</option>
+                    <option value="sickness">По болезни</option>
+                    <option value="other">Другое отсутствие</option>
+                  </select>
+                </label>
+              )}
               <label className="text-sm">
                 Статус
                 <select
@@ -729,7 +829,9 @@ export default function StaffShiftCalendar() {
                 </select>
               </label>
               <label className="text-sm">
-                Начало смены
+                {editor.draft.kind === 'absence'
+                  ? 'Начало отсутствия'
+                  : 'Начало смены'}
                 <input
                   type="datetime-local"
                   required
@@ -740,7 +842,9 @@ export default function StaffShiftCalendar() {
                 />
               </label>
               <label className="text-sm">
-                Конец смены
+                {editor.draft.kind === 'absence'
+                  ? 'Конец отсутствия'
+                  : 'Конец смены'}
                 <input
                   type="datetime-local"
                   required
@@ -750,7 +854,10 @@ export default function StaffShiftCalendar() {
                   onChange={(e) => edit({ endAt: e.target.value })}
                 />
               </label>
-              <div className="sm:col-span-2">
+              <div
+                className="sm:col-span-2"
+                hidden={editor.draft.kind === 'absence'}
+              >
                 <p className="mb-2 text-sm font-medium">Перерывы</p>
                 {editor.draft.breaks.map((b, i) => (
                   <div key={i} className="mb-2 flex flex-wrap gap-2">
@@ -814,7 +921,10 @@ export default function StaffShiftCalendar() {
                 <button
                   type="button"
                   className={button}
-                  disabled={editor.draft.breaks.length >= 20}
+                  disabled={
+                    editor.draft.kind === 'absence' ||
+                    editor.draft.breaks.length >= 20
+                  }
                   onClick={() =>
                     edit({
                       breaks: [
@@ -837,6 +947,7 @@ export default function StaffShiftCalendar() {
                   type="number"
                   min="1"
                   max="1000"
+                  disabled={editor.draft.kind === 'absence'}
                   value={editor.draft.maxOpenTasks}
                   onChange={(e) => edit({ maxOpenTasks: e.target.value })}
                 />
@@ -925,7 +1036,9 @@ export default function StaffShiftCalendar() {
                   ? 'Сохранение…'
                   : request && save.isError
                     ? 'Повторить исходный запрос'
-                    : 'Сохранить смену'}
+                    : editor.draft.kind === 'absence'
+                      ? 'Сохранить отсутствие'
+                      : 'Сохранить смену'}
               </button>
             )}
           </form>

@@ -3,6 +3,8 @@ import {
   shiftInterval,
   shiftWorkSegments,
   onDate,
+  subtractAbsences,
+  shiftWallInstant,
 } from './staff-shift.service';
 describe('Explicit shift intervals and breaks', () => {
   it('requires offsets and rejects reversed or excessive intervals', () => {
@@ -55,4 +57,30 @@ describe('Explicit shift intervals and breaks', () => {
           .start,
     ).toBe(4 * 3600000);
   });
+});
+
+it('subtracts overlapping absences once and preserves available partial work', () => {
+  const result = subtractAbsences(
+    {
+      start: new Date('2027-01-01T09:00Z'),
+      end: new Date('2027-01-01T18:00Z'),
+    },
+    [
+      { startAt: '2027-01-01T10:00Z', endAt: '2027-01-01T12:00Z' },
+      { startAt: '2027-01-01T11:00Z', endAt: '2027-01-01T13:00Z' },
+    ],
+  );
+  expect(
+    result.map((s) => [s.start.toISOString(), s.end.toISOString()]),
+  ).toEqual([
+    ['2027-01-01T09:00:00.000Z', '2027-01-01T10:00:00.000Z'],
+    ['2027-01-01T13:00:00.000Z', '2027-01-01T18:00:00.000Z'],
+  ]);
+});
+it('materializes property wall times and rejects DST gaps and ambiguous repeated hours', () => {
+  expect(shiftWallInstant('2027-01-01T09:00', 'Asia/Almaty')).toBe(
+    '2027-01-01T04:00:00.000Z',
+  );
+  expect(() => shiftWallInstant('2027-03-28T02:30', 'Europe/Berlin')).toThrow();
+  expect(() => shiftWallInstant('2027-10-31T02:30', 'Europe/Berlin')).toThrow();
 });
