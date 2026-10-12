@@ -11,10 +11,11 @@ import { useTranslation } from 'react-i18next';
 import RatePlanCalendar from '../components/rates/RatePlanCalendar';
 import { formatMoney } from '../lib/money';
 import RevenueWorkspaceNav from '../components/revenue/RevenueWorkspaceNav';
-import LiveRateWorkflow from '../components/revenue/LiveRateWorkflow';
+import LiveRateWorkflow, { PreviewTable } from '../components/revenue/LiveRateWorkflow';
+import { useOperationalDate } from '../hooks/useOperationalDate';
 import { useAuth } from '../context/AuthContext';
 import { propertyHref } from '../lib/navigation';
-import { pricingError, unwrap, type PendingPricingRequest } from '../lib/live-revenue';
+import { pricingError, unwrap, type PendingPricingRequest, type LiveChange, type LivePreview } from '../lib/live-revenue';
 
 interface RatePlan {
   id: string;
@@ -64,6 +65,24 @@ function RatePlanList() {
   const [derivedAdjustmentType, setDerivedAdjustmentType] = useState('percentage');
   const [derivedAdjustmentValue, setDerivedAdjustmentValue] = useState('');
   const [reason, setReason] = useState('');
+  const operational = useOperationalDate(propertyId, hasPermission('reports.view'));
+  const [previewDate, setPreviewDate] = useState('');
+  const [creation, setCreation] = useState<{ change: LiveChange; preview: LivePreview; fingerprint: string } | null>(null);
+  const date = previewDate || operational.data?.date || '';
+  const creationValues = { name: name.trim(), code: code.trim(), type, baseAmount: baseAmount || '0', roomTypeId, currencyCode,
+    ...(type === 'derived' ? { parentRatePlanId, derivedAdjustmentType, derivedAdjustmentValue } : {}) };
+  const fingerprint = JSON.stringify([creationValues, date, reason.trim()]);
+  const validPreview = creation?.fingerprint === fingerprint ? creation : null;
+  const previewCreation = useMutation({
+    mutationFn: async () => {
+      requirePropertyId(propertyId); requireCurrency(currencyCode);
+      const change: LiveChange = { propertyId, requestId: crypto.randomUUID(), expectedRevision: 0, reason: reason.trim(), kind: 'plan_create',
+        createPlan: { ...creationValues, baseAmount: moneyString(baseAmount || '0') }, startDate: date, endDate: date };
+      const preview = await api.post('/v1/rate-plans/live-preview', change).then(r => unwrap<LivePreview>(r.data));
+      return { change, preview, fingerprint };
+    },
+    onSuccess: setCreation,
+  });
 
   const planQuery = useQuery({
     queryKey: ['rate-plans', propertyId],
@@ -83,16 +102,12 @@ function RatePlanList() {
   const createPlan = async (send: (request: PendingPricingRequest) => Promise<boolean>) => {
     requirePropertyId(propertyId);
     requireCurrency(currencyCode);
-    const requestId = crypto.randomUUID();
-    const payload = {
-      propertyId, name: name.trim(), code: code.trim(), type,
-      baseAmount: moneyString(baseAmount || '0'), roomTypeId, currencyCode,
-      requestId, expectedRevision: 0, reason: reason.trim(),
-      ...(type === 'derived' ? { parentRatePlanId, derivedAdjustmentType, derivedAdjustmentValue } : {}),
-    };
-    if (await send({ propertyId, requestId, path: '/v1/rate-plans', body: payload })) {
+    if (!validPreview) return;
+    const payload = { ...validPreview.change, stateToken: validPreview.preview.stateToken };
+    if (await send({ propertyId, requestId: payload.requestId, path: '/v1/rate-plans/rate-changes', body: payload })) {
       setName(''); setCode(''); setType('bar'); setBaseAmount(''); setRoomTypeId('');
       setParentRatePlanId(''); setDerivedAdjustmentType('percentage'); setDerivedAdjustmentValue(''); setReason('');
+      setCreation(null); setCreateOpen(false);
     }
   };
 
@@ -192,8 +207,11 @@ function RatePlanList() {
             </div>
           )}
           <label className="block text-xs">{ru ? 'Обязательная причина создания' : 'Required creation reason'}<textarea className="w-full rounded-lg border px-3 py-2 text-sm" maxLength={1000} value={reason} onChange={e => setReason(e.target.value)} /></label>
-          <p className="text-xs">{ru ? 'Создание проверяется сервером, журналируется и использует requestId. Политика обязательного согласования может запретить прямое создание.' : 'Creation is server-validated, audited and requestId-guarded. Mandatory approval policy may block direct creation.'}</p>
-          <button onClick={() => void createPlan(send)} disabled={!name.trim() || !code.trim() || !roomTypeId || !derivedReady || !reason.trim() || !currencyCode || busy} className="w-full bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">{t('ratePlans.create')}</button>
+          <label className="block text-xs">{ru ? 'Дата preview' : 'Preview date'}<input type="date" className="w-full rounded-lg border p-2" value={date} onChange={e => setPreviewDate(e.target.value)} /></label>
+          <p className="text-xs">{ru ? 'Preview не создаёт продаваемый тариф. Предложение появится в очереди: отдельный approver при обязательном согласовании, затем Apply с новой проверкой. Без автоприменения.' : 'Preview creates no sellable plan. Submit adds a proposal to the queue: independent approver when required, then Apply revalidates it. No auto-apply.'}</p>
+          {previewCreation.isError && <p role="alert">{pricingError(previewCreation.error, ru)}</p>}
+          <button onClick={() => previewCreation.mutate()} disabled={!date || !name.trim() || !code.trim() || !roomTypeId || !derivedReady || !reason.trim() || !currencyCode || busy || previewCreation.isPending} className="w-full rounded-lg border p-2 disabled:opacity-50">{ru ? 'Preview создания' : 'Preview creation'}</button>
+          {validPreview && <><p className="text-xs">{validPreview.preview.approvalRequired ? 'APPROVAL_REQUIRED' : 'PREVIEW_READY'} · acceptedPricesChanged=false</p><PreviewTable preview={validPreview.preview} /><button onClick={() => void createPlan(send)} disabled={busy || previewCreation.isPending} className="w-full bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">{ru ? 'Отправить предложение создания' : 'Submit creation proposal'}</button></>}
         </div>
       </Modal>} />
     </div>

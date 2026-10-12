@@ -10,6 +10,14 @@
 
 ## Endpoints and permissions
 
+### M2 review additions
+
+- `GET /v1/reports/business-date?propertyId=UUID` (`reports.view`) returns `date`, `timezone`, `currencyCode`, and `source=completed_night_audit_or_property_local_today`. Daily revenue and financial summary accept an omitted date. Portfolio financial/occupancy reports resolve each property's operational date independently when omitted; rows include their resolved dates.
+- Dashboard, Reports and the live Management boundary use signed earned `actual.value` / `netRevenueByCategory`, not gross non-reversal revenue aliases. Tax is separate; reversals are already included once. `NO_POSTINGS` and unavailable ratios remain null; completed zero remains zero. Portfolio `actual` and each currency bucket expose coverage; partial buckets are `PARTIAL`. Mixed-currency totals/ratios are null and displayed by currency, never FX-converted or defaulted to KZT. Export row currencies and missing values remain explicit.
+- `POST /v1/rate-plans/live-preview` and `/rate-changes` also accept `kind=plan_create`, `expectedRevision=0`, `createPlan` (creation fields without property/mutation guards), and no existing `ratePlanId`. Required guards/window/reason/stateToken and permissions are unchanged. Preview quotes use the existing canonical engine; before prices/quotes are null (`NOT_CREATED` sales). No live plan is inserted by preview, submission or approval.
+- Creation proposals have `ratePlanId=null` until apply. Independent approval is enforced where configured, including if policy is enabled after submission. Apply revalidates parent dependencies, quotes/taxes, policy and target/code availability, then atomically creates a canonical revision-1 plan, sets the proposal target, writes audit/outbox/fence, and leaves accepted prices untouched. Exact retry/recovery uses the existing endpoints. Rate Plans now offers preview → submit → queue decision/apply, not an approval bypass. Core migration `0039_rate_plan_creation_proposals.sql` enables this nullable precreation target; apply through normal deployment migration procedures, never against production from a development session.
+- Stop-sell and LOS use sold nights `[checkIn,checkOut)`. CTA covers arrival; CTD covers checkout. Checkout-only stop-sell cannot prevent departure. Management defaults to an authoritative single-property live boundary; preserved hierarchy/plan/forecast demo is an isolated explicitly labelled tab. Full M3 BI/budget/hierarchy/Excel migration and M4 grid remain deferred.
+
 All paths below are under `/api/v1/rate-plans`. All listed permission keys are required together, in addition to JWT/property membership. Existing demo `AUTH_ENABLED=false` behavior remains; it is not production authorization.
 
 | Method/path | Scope/input DTO | Required permissions | HTTP/result |

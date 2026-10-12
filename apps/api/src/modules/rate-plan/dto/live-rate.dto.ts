@@ -1,6 +1,7 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsUUID, IsInt, Min, IsOptional, IsEnum, Matches, ValidateNested, IsDateString } from 'class-validator';
+import { IsUUID, IsInt, Min, IsOptional, IsEnum, Matches, ValidateNested, IsDateString, ValidateIf } from 'class-validator';
+import { CreateRatePlanDto } from './create-rate-plan.dto';
 import { PricingMutationDto } from './pricing-mutation.dto';
 import { UpdateRatePlanDto } from './update-rate-plan.dto';
 import { UpdateRateRestrictionDto } from './update-rate-restriction.dto';
@@ -16,11 +17,14 @@ export class LiveCalendarQueryDto {
   @ApiPropertyOptional({ default: 1 }) @IsOptional() @Type(() => Number) @IsInt() @Min(1) nights?: number;
 }
 
+export class ProposedRatePlanDto extends OmitType(CreateRatePlanDto, ['propertyId', 'requestId', 'expectedRevision', 'reason'] as const) {}
+
 export class LiveRateChangeDto extends PricingMutationDto {
   @ApiProperty() @IsUUID() propertyId!: string;
-  @ApiProperty() @IsUUID() ratePlanId!: string;
-  @ApiProperty({ enum: ['plan', 'restriction_create', 'restriction_update', 'restriction_delete'] })
-  @IsEnum(['plan', 'restriction_create', 'restriction_update', 'restriction_delete']) kind!: string;
+  @ApiPropertyOptional({ description: 'Required except plan_create; creation has no live target until apply.' }) @ValidateIf(o => o.kind !== 'plan_create' || o.ratePlanId !== undefined) @IsUUID() ratePlanId!: string;
+  @ApiProperty({ enum: ['plan', 'plan_create', 'restriction_create', 'restriction_update', 'restriction_delete'] })
+  @IsEnum(['plan', 'plan_create', 'restriction_create', 'restriction_update', 'restriction_delete']) kind!: string;
+  @ApiPropertyOptional({ type: ProposedRatePlanDto }) @IsOptional() @ValidateNested() @Type(() => ProposedRatePlanDto) createPlan?: ProposedRatePlanDto;
   @ApiPropertyOptional() @IsOptional() @IsUUID() restrictionId?: string;
   @ApiPropertyOptional({ type: UpdateRatePlanDto }) @IsOptional() @ValidateNested() @Type(() => UpdateRatePlanDto) plan?: UpdateRatePlanDto;
   @ApiPropertyOptional({ type: UpdateRateRestrictionDto }) @IsOptional() @ValidateNested() @Type(() => UpdateRateRestrictionDto) restriction?: UpdateRateRestrictionDto;
@@ -94,9 +98,9 @@ export class PricingSalesStateDto {
 
 export class LivePreviewDayDto {
   @ApiProperty() date!: string;
-  @ApiProperty({ type: CanonicalRateDto }) before!: CanonicalRateDto;
+  @ApiProperty({ type: CanonicalRateDto, nullable: true }) before!: CanonicalRateDto | null;
   @ApiProperty({ type: CanonicalRateDto }) after!: CanonicalRateDto;
-  @ApiProperty({ type: CanonicalQuoteDto }) beforeQuote!: CanonicalQuoteDto;
+  @ApiProperty({ type: CanonicalQuoteDto, nullable: true }) beforeQuote!: CanonicalQuoteDto | null;
   @ApiProperty({ type: CanonicalQuoteDto }) afterQuote!: CanonicalQuoteDto;
   @ApiProperty({ type: PricingSalesStateDto }) beforeSales!: PricingSalesStateDto;
   @ApiProperty({ type: PricingSalesStateDto }) afterSales!: PricingSalesStateDto;
@@ -207,7 +211,7 @@ export class LiveCalendarResponseDto {
 export class RateChangeRecordDto {
   @ApiProperty() id!: string;
   @ApiProperty() propertyId!: string;
-  @ApiProperty() ratePlanId!: string;
+  @ApiProperty({ type: String, nullable: true, description: 'Null for creation until the canonical plan is applied.' }) ratePlanId!: string | null;
   @ApiProperty({ enum: ['pending','approved','applied','rejected'] }) status!: string;
   @ApiProperty() revision!: number;
   @ApiProperty() expectedPlanRevision!: number;

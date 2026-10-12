@@ -5,7 +5,7 @@ import { ratePlans } from './rate-plan.js';
 export const rateChangeRequests = pgTable('rate_change_requests', {
   id: uuid('id').primaryKey().defaultRandom(),
   propertyId: uuid('property_id').notNull().references(() => properties.id),
-  ratePlanId: uuid('rate_plan_id').notNull().references(() => ratePlans.id),
+  ratePlanId: uuid('rate_plan_id').references(() => ratePlans.id),
   status: varchar('status', { length: 20 }).notNull().default('pending'),
   revision: integer('revision').notNull().default(1),
   expectedPlanRevision: integer('expected_plan_revision').notNull(),

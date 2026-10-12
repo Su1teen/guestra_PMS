@@ -9,7 +9,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import request from 'supertest';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, notInArray } from 'drizzle-orm';
 import { properties, ratePlans, rateRestrictions, rateChangeRequests, rateMutationFences, auditLogs, domainEventOutbox,
   roomTypes, rooms, roomInventoryBlocks, reservations, bookings, guests, auditRuns, taxProfiles, taxRules,
   users, roles, userRoles, rolePermissions } from '@telivityhaip/database';
@@ -64,6 +64,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Live pricing real PostgreSQL tr
     const preview = await svc.previewLiveChange(dto);
     return { dto, preview, result: await svc.submitLiveChange({ ...dto, stateToken: preview.stateToken }, actor) };
   };
+  const creation = () => ({ ...guard(0), propertyId: ids.a, kind: 'plan_create', startDate: date, endDate: date,
+    createPlan: { name: 'Approved new BAR', code: 'NEW-' + randomUUID().slice(0, 8), type: 'bar', baseAmount: '150.00', currencyCode: 'KZT', roomTypeId: ids.type } });
   const accepted = { version: 1, source: 'submitted', currencyCode: 'KZT', grandTotal: '220.00', roomTotal: '200.00', taxTotal: '20.00',
     nights: [{ date, roomAmount: '100.00', taxAmount: '10.00' }, { date: '2027-05-02', roomAmount: '100.00', taxAmount: '10.00' }],
     services: [], servicesTotal: '0.00', servicesTaxTotal: '0.00', customReason: null, adjustment: null };
@@ -122,6 +124,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Live pricing real PostgreSQL tr
     await db.delete(rateChangeRequests).where(eq(rateChangeRequests.propertyId, ids.a));
     await db.delete(rateMutationFences).where(eq(rateMutationFences.propertyId, ids.a));
     await db.delete(rateRestrictions).where(eq(rateRestrictions.propertyId, ids.a));
+    await db.delete(ratePlans).where(and(eq(ratePlans.propertyId, ids.a), notInArray(ratePlans.id, [ids.rate, ids.child])));
     await db.delete(auditLogs).where(eq(auditLogs.propertyId, ids.a));
     await db.delete(domainEventOutbox).where(eq(domainEventOutbox.propertyId, ids.a));
     await db.delete(roomInventoryBlocks).where(eq(roomInventoryBlocks.propertyId, ids.a));
@@ -164,6 +167,73 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Live pricing real PostgreSQL tr
     expect((await scopedRows(domainEventOutbox))[0]).toMatchObject({ deliveredAt: null, attempts: 1 });
     expect((await plan()).baseAmount).toBe('150.00');
     expect(await svc.recoverRequest(ids.a, dto.requestId, actor, true)).toEqual({ state: 'committed', record: result.record });
+  });
+
+  it('previews, independently approves and atomically creates a canonical plan with replay/recovery and no accepted-price rewrites', async () => {
+    await db.update(properties).set({ settings: { pricingApprovalRequired: true } }).where(eq(properties.id, ids.a));
+    const dto = creation(); const preview = await svc.previewLiveChange(dto);
+    expect(preview).toMatchObject({ planRevision: 0, approvalRequired: true, acceptedPricesChanged: false });
+    expect(preview.days[0]).toMatchObject({ before: null, beforeQuote: null, after: { effectiveRate: 150 }, afterQuote: { totalAmount: '165.00' } });
+    await expect(svc.findById(dto.requestId, ids.a)).rejects.toThrow(/not found/);
+    const body = { ...dto, stateToken: preview.stateToken };
+    const submitted = await svc.submitLiveChange(body, actor);
+    expect(submitted.record).toMatchObject({ status: 'pending', ratePlanId: null });
+    expect((await svc.submitLiveChange(body, actor)).replayed).toBe(true);
+    await expect(svc.decideLiveChange(submitted.record.id, ids.a, 'apply', guard(1), actor)).rejects.toThrow(/eligible/);
+    await expect(svc.decideLiveChange(submitted.record.id, ids.a, 'approve', guard(1), actor)).rejects.toThrow(/Independent/);
+    await svc.decideLiveChange(submitted.record.id, ids.a, 'approve', guard(1), approver);
+    const applyGuard = guard(2);
+    const applied = await svc.decideLiveChange(submitted.record.id, ids.a, 'apply', applyGuard, actor);
+    expect(applied.record).toMatchObject({ status: 'applied', ratePlanId: dto.requestId, revision: 3 });
+    expect(await svc.findById(dto.requestId, ids.a)).toMatchObject({ baseAmount: '150.00', revision: 1 });
+    expect((await svc.decideLiveChange(submitted.record.id, ids.a, 'apply', applyGuard, actor)).replayed).toBe(true);
+    expect(await svc.recoverRequest(ids.a, applyGuard.requestId, actor)).toMatchObject({ state: 'committed', record: { ratePlanId: dto.requestId } });
+    expect((await scopedRows(auditLogs)).filter(row => row.entityType === 'rate_plan' && row.entityId === dto.requestId && row.description === dto.reason)).toHaveLength(1);
+    expect((await scopedRows(domainEventOutbox)).filter(row => row.payload.event === 'rate_plan.created')).toHaveLength(1);
+    expect((await scopedRows(reservations))[0]?.acceptedPricingSnapshot).toEqual(accepted);
+  });
+
+  it('rejects creation foreign references, stale dependencies and duplicate creation without bypassing approval', async () => {
+    const dto = creation();
+    await expect(svc.previewLiveChange({ ...dto, createPlan: { ...dto.createPlan, roomTypeId: ids.foreignType } })).rejects.toThrow(/room type/);
+    await expect(svc.previewLiveChange({ ...dto, createPlan: { ...dto.createPlan, currencyCode: 'USD' } })).rejects.toThrow(/CURRENCY/);
+    const derived = { ...dto, createPlan: { ...dto.createPlan, type: 'derived', parentRatePlanId: ids.rate, derivedAdjustmentType: 'percentage', derivedAdjustmentValue: '-10' } };
+    const preview = await svc.previewLiveChange(derived);
+    const pending = await svc.submitLiveChange({ ...derived, stateToken: preview.stateToken }, actor);
+    await svc.update(ids.rate, ids.a, { ...guard(), baseAmount: '110.00' }, actor);
+    await expect(svc.decideLiveChange(pending.record.id, ids.a, 'apply', guard(1), actor)).rejects.toThrow(/preview/);
+    const fresh = creation(); const p = await svc.previewLiveChange(fresh);
+    const proposal = await svc.submitLiveChange({ ...fresh, stateToken: p.stateToken }, actor);
+    await svc.decideLiveChange(proposal.record.id, ids.a, 'apply', guard(1), actor);
+    await expect(svc.previewLiveChange({ ...fresh, requestId: randomUUID() })).rejects.toThrow(/already exists/);
+  });
+
+  it('rolls back approved creation, proposal, audit, events and fence on outbox failure; same apply request recovers', async () => {
+    const dto = creation(); const preview = await svc.previewLiveChange(dto);
+    const pending = await svc.submitLiveChange({ ...dto, stateToken: preview.stateToken }, actor);
+    const beforeEvents = (await scopedRows(domainEventOutbox)).length;
+    const applyGuard = guard(1), persist = vi.spyOn(outbox, 'persist').mockRejectedValueOnce(new Error('outbox failure'));
+    await expect(svc.decideLiveChange(pending.record.id, ids.a, 'apply', applyGuard, actor)).rejects.toThrow(/outbox failure/);
+    await expect(svc.findById(dto.requestId, ids.a)).rejects.toThrow(/not found/);
+    expect((await scopedRows(rateChangeRequests))[0]?.status).toBe('pending');
+    expect((await scopedRows(domainEventOutbox)).length).toBe(beforeEvents);
+    expect(await svc.recoverRequest(ids.a, applyGuard.requestId, actor)).toMatchObject({ state: 'unconfirmed' });
+    persist.mockRestore(); await svc.decideLiveChange(pending.record.id, ids.a, 'apply', applyGuard, actor);
+    expect(await svc.findById(dto.requestId, ids.a)).toMatchObject({ revision: 1 });
+  });
+
+  it('separates checkout stop-sell from sold-night stop-sell / CTA / CTD in canonical quote and draft preview', async () => {
+    const tomorrow = '2027-05-02';
+    const [restriction] = await db.insert(rateRestrictions).values({ propertyId: ids.a, ratePlanId: ids.rate, startDate: tomorrow, endDate: tomorrow, isClosed: true }).returning();
+    const rates = await calendar({ endDate: date, ratePlanId: ids.rate });
+    expect(rates.rates[0]).toMatchObject({ sellable: true, quote: { totalAmount: '110.00' } });
+    const dto = { ...patch(), endDate: date, kind: 'restriction_update', plan: undefined, restrictionId: restriction!.id, restriction: { isClosed: true } };
+    const preview = await svc.previewLiveChange(dto);
+    expect(preview.days[0]).toMatchObject({ beforeSales: { sellable: true }, afterSales: { sellable: true }, afterQuote: { totalAmount: '110.00' } });
+    await db.update(rateRestrictions).set({ closedToDeparture: true }).where(and(eq(rateRestrictions.id, restriction!.id), eq(rateRestrictions.propertyId, ids.a)));
+    expect((await calendar({ endDate: date, ratePlanId: ids.rate })).rates[0]).toMatchObject({ sellable: false, restrictionReason: expect.stringMatching(/departure/) });
+    await db.update(rateRestrictions).set({ startDate: date, closedToDeparture: false }).where(and(eq(rateRestrictions.id, restriction!.id), eq(rateRestrictions.propertyId, ids.a)));
+    expect((await calendar({ endDate: date, ratePlanId: ids.rate })).rates[0]).toMatchObject({ sellable: false, restrictionReason: expect.stringMatching(/stop-sell/) });
   });
 
   it('rolls back state, audit and fence when durable outbox fails; original request retries', async () => {

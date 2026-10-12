@@ -25,7 +25,7 @@ export interface CanonicalRate {
 }
 export interface CanonicalQuote { currency: string; roomTotal: string; taxTotal: string; totalAmount: string; lineItems: { date: string; rate: string; tax: string }[] }
 export interface PreviewDay {
-  date: string; before: CanonicalRate; after: CanonicalRate; beforeQuote: CanonicalQuote; afterQuote: CanonicalQuote;
+  date: string; before: CanonicalRate | null; after: CanonicalRate; beforeQuote: CanonicalQuote | null; afterQuote: CanonicalQuote;
   beforeSales: { sellable: boolean; reason: string | null }; afterSales: { sellable: boolean; reason: string | null };
   beforeRestrictions: Restriction[]; afterRestrictions: Restriction[];
 }
@@ -47,12 +47,12 @@ export interface LiveCalendar {
       summary: { avgRoomsOnBooks: number; totalNewBookings: number } }; forecast: UnavailableMetric };
 }
 export interface LiveChange {
-  propertyId: string; ratePlanId: string; requestId: string; expectedRevision: number; reason: string;
-  kind: 'plan' | 'restriction_create' | 'restriction_update' | 'restriction_delete'; restrictionId?: string;
-  plan?: Record<string, unknown>; restriction?: Record<string, unknown>; startDate: string; endDate: string; stateToken?: string;
+  propertyId: string; ratePlanId?: string; requestId: string; expectedRevision: number; reason: string;
+  kind: 'plan' | 'plan_create' | 'restriction_create' | 'restriction_update' | 'restriction_delete'; restrictionId?: string;
+  createPlan?: Record<string, unknown>; plan?: Record<string, unknown>; restriction?: Record<string, unknown>; startDate: string; endDate: string; stateToken?: string;
 }
 export interface RateChange {
-  id: string; propertyId: string; ratePlanId: string; status: 'pending' | 'approved' | 'applied' | 'rejected'; revision: number;
+  id: string; propertyId: string; ratePlanId: string | null; status: 'pending' | 'approved' | 'applied' | 'rejected'; revision: number;
   expectedPlanRevision: number; requestedBy: string | null; approvedBy: string | null; reason: string; decisionReason: string | null;
   change: LiveChange; preview: LivePreview; createdAt: string; updatedAt: string;
 }

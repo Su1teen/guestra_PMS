@@ -41,6 +41,15 @@ function svcWithPlan(plan: any, restrictions: any[] = []): RatePlanService {
 const span = { startDate: '2026-07-01', endDate: '2026-07-31' };
 
 describe('RatePlanService.assertSellable', () => {
+  it('ignores checkout-only stop-sell and LOS but still enforces departure closure', async () => {
+    const checkout = { startDate: CHECK_OUT, endDate: CHECK_OUT, isClosed: true, minLos: 9 };
+    await expect(svcWith([checkout]).assertSellable(PROPERTY, RATE_PLAN, CHECK_IN, CHECK_OUT)).resolves.toBeUndefined();
+    await expect(svcWith([{ ...checkout, closedToDeparture: true }]).assertSellable(PROPERTY, RATE_PLAN, CHECK_IN, CHECK_OUT)).rejects.toThrow(/closed to departure/);
+  });
+  it('rejects last-sold-night stop-sell, not checkout-only arrival closure', async () => {
+    await expect(svcWith([{ startDate: LAST_NIGHT, endDate: LAST_NIGHT, isClosed: true }]).assertSellable(PROPERTY, RATE_PLAN, CHECK_IN, CHECK_OUT)).rejects.toThrow(/stop-sell/);
+    await expect(svcWith([{ startDate: CHECK_OUT, endDate: CHECK_OUT, closedToArrival: true }]).assertSellable(PROPERTY, RATE_PLAN, CHECK_IN, CHECK_OUT)).resolves.toBeUndefined();
+  });
   it('passes when there are no restrictions', async () => {
     await expect(svcWith([]).assertSellable(PROPERTY, RATE_PLAN, CHECK_IN, CHECK_OUT)).resolves.toBeUndefined();
   });

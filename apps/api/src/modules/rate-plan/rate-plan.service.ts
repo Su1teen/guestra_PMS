@@ -100,9 +100,9 @@ export class RatePlanService {
       throw new BadRequestException('Rate plan is not valid for the complete stay');
     }
 
-    // Restrictions overlapping the stay (scoped by property — multi-tenancy).
+    // Sold nights plus checkout-only departure controls, scoped by property.
     const restrictions = this.pricingDraft?.plan.id === ratePlanId && this.pricingDraft.plan.propertyId === propertyId
-      ? this.pricingDraft.restrictions.filter((r: any) => r.startDate <= checkOut && r.endDate >= checkIn)
+      ? this.pricingDraft.restrictions.filter((r: any) => r.endDate >= checkIn && (r.startDate <= lastConsumedNight || (r.closedToDeparture && r.startDate <= checkOut)))
       : await conn
       .select()
       .from(rateRestrictions)
@@ -110,7 +110,7 @@ export class RatePlanService {
         and(
           eq(rateRestrictions.propertyId, propertyId),
           eq(rateRestrictions.ratePlanId, ratePlanId),
-          lte(rateRestrictions.startDate, checkOut),
+          or(lte(rateRestrictions.startDate, lastConsumedNight), and(eq(rateRestrictions.closedToDeparture, true), lte(rateRestrictions.startDate, checkOut))),
           gte(rateRestrictions.endDate, checkIn),
         ),
       );
@@ -118,7 +118,8 @@ export class RatePlanService {
     // A restriction row "covers" a date when its range includes it (ISO dates compare lexically).
     const covers = (r: any, date: string) => r.startDate <= date && r.endDate >= date;
 
-    if (restrictions.some((r: any) => r.isClosed)) {
+    const soldNightRestrictions = restrictions.filter((r: any) => r.startDate <= lastConsumedNight && r.endDate >= checkIn);
+    if (soldNightRestrictions.some((r: any) => r.isClosed)) {
       throw new BadRequestException('Rate plan is closed (stop-sell) for the selected dates');
     }
     if (restrictions.some((r: any) => r.closedToArrival && covers(r, checkIn))) {
@@ -128,11 +129,11 @@ export class RatePlanService {
       throw new BadRequestException('Rate plan is closed to departure on the check-out date');
     }
 
-    const minLos = restrictions.reduce(
+    const minLos = soldNightRestrictions.reduce(
       (m: number | undefined, r: any) => (r.minLos ? Math.max(m ?? 0, r.minLos) : m),
       undefined,
     );
-    const maxLos = restrictions.reduce(
+    const maxLos = soldNightRestrictions.reduce(
       (m: number | undefined, r: any) => (r.maxLos ? Math.min(m ?? Infinity, r.maxLos) : m),
       undefined,
     );
@@ -168,6 +169,7 @@ export class RatePlanService {
   }
 
   async findById(id: string, propertyId: string, db?: any, lockForUpdate = false) {
+    if (this.pricingDraft?.plan.id === id && this.pricingDraft.plan.propertyId === propertyId) return this.pricingDraft.plan;
     const conn = db ?? this.db;
     const query = conn
       .select()
@@ -385,11 +387,21 @@ export class RatePlanService {
     const dates = reportDates(dto.startDate, dto.endDate);
     if (dates.length > 93) throw new BadRequestException('Preview supports at most 93 days');
     const property = await this.property(dto.propertyId, tx);
-    const plan = await this.findById(dto.ratePlanId, dto.propertyId, tx, lock);
-    this.expectRevision(plan, dto.expectedRevision);
-    const restrictions = await this.findRestrictions(plan.id, dto.propertyId, tx);
+    const creating = dto.kind === 'plan_create';
+    if (creating && (dto.expectedRevision !== 0 || dto.ratePlanId || dto.plan || dto.restriction || dto.restrictionId || !dto.createPlan)) throw new BadRequestException('Creation requires createPlan, revision 0 and no existing target');
+    if (!creating && dto.createPlan) throw new BadRequestException('Existing target cannot contain createPlan');
+    const plan = creating ? { isTaxInclusive: false, isActive: true, sortOrder: 0, ...this.clean(dto.createPlan), id: dto.requestId, propertyId: dto.propertyId, revision: 0 }
+      : await this.findById(dto.ratePlanId, dto.propertyId, tx, lock);
+    if (!creating) this.expectRevision(plan, dto.expectedRevision);
+    const restrictions = creating ? [] : await this.findRestrictions(plan.id, dto.propertyId, tx);
     let nextPlan = plan, nextRestrictions = restrictions;
-    if (dto.kind === 'plan') {
+    if (creating) {
+      if (!plan.roomTypeId || !plan.name?.trim() || !plan.code?.trim() || !['bar', 'derived', 'negotiated', 'package', 'promotional'].includes(plan.type)) throw new BadRequestException('Invalid new plan');
+      await this.validatePlan(plan, dto.propertyId, tx, plan.id);
+      const [existing] = await tx.select().from(ratePlans).where(and(eq(ratePlans.propertyId, dto.propertyId),
+        or(eq(ratePlans.id, plan.id), and(eq(ratePlans.roomTypeId, plan.roomTypeId), eq(ratePlans.code, plan.code)))));
+      if (existing) throw new ConflictException({ code: 'STALE_PRICING_STATE', message: 'Creation target/code already exists; preview again' });
+    } else if (dto.kind === 'plan') {
       if (!dto.plan || dto.restriction || dto.restrictionId) throw new BadRequestException('Plan change requires only a plan patch');
       const values = this.clean(dto.plan);
       nextPlan = { ...plan, ...values };
@@ -416,14 +428,14 @@ export class RatePlanService {
     const days = [];
     for (const date of dates) {
       const context = { stayDate: date, checkIn: date, checkOut: this.addDaysIso(date, 1), nights: 1 };
-      const before = await this.calculateDerivedRate(plan.id, dto.propertyId, context, tx, lock);
+      const before = creating ? null : await this.calculateDerivedRate(plan.id, dto.propertyId, context, tx, lock);
       const after = await draft.calculateDerivedRate(plan.id, dto.propertyId, context, tx, lock);
-      const beforeQuote = await this.roomQuote(tx, plan, date, 1, this), afterQuote = await this.roomQuote(tx, nextPlan, date, 1, draft);
+      const beforeQuote = creating ? null : await this.roomQuote(tx, plan, date, 1, this), afterQuote = await this.roomQuote(tx, nextPlan, date, 1, draft);
       const sellability = async (rates: RatePlanService) => {
         try { await rates.assertSellable(dto.propertyId, plan.id, date, context.checkOut, tx); return { sellable: true, reason: null }; }
         catch (error) { if (!(error instanceof BadRequestException)) throw error; return { sellable: false, reason: error.message }; }
       };
-      days.push({ date, before, after, beforeQuote, afterQuote, beforeSales: await sellability(this), afterSales: await sellability(draft),
+      days.push({ date, before, after, beforeQuote, afterQuote, beforeSales: creating ? { sellable: false, reason: 'NOT_CREATED' } : await sellability(this), afterSales: await sellability(draft),
         beforeRestrictions: restrictions.filter((row: any) => row.startDate <= date && row.endDate >= date),
         afterRestrictions: nextRestrictions.filter((row: any) => row.startDate <= date && row.endDate >= date) });
     }
@@ -446,7 +458,7 @@ export class RatePlanService {
     return this.mutate(dto.propertyId, dto, 'rate_change.submit', actor, async tx => {
       const preview = await this.previewIn(tx, dto, true);
       if (!dto.stateToken || dto.stateToken !== preview.stateToken) this.stale();
-      const [proposal] = await tx.insert(rateChangeRequests).values({ propertyId: dto.propertyId, ratePlanId: dto.ratePlanId,
+      const [proposal] = await tx.insert(rateChangeRequests).values({ propertyId: dto.propertyId, ratePlanId: dto.kind === 'plan_create' ? null : dto.ratePlanId,
         expectedPlanRevision: dto.expectedRevision, stateToken: preview.stateToken, reason: dto.reason.trim(),
         change: this.json(dto), preview, requestedBy: this.actorKey(actor) }).returning();
       await this.record(tx, dto.propertyId, 'rate_change', proposal.id, 'submit', null, proposal, dto.reason, actor, 'rate_change.submitted', dto.requestId);
@@ -472,6 +484,7 @@ export class RatePlanService {
       this.expectRevision(proposal, guard.expectedRevision);
       const property = await this.property(propertyId, tx);
       const required = !!property.settings?.pricingApprovalRequired || !!proposal.preview.approvalRequired;
+      let appliedPlanId: string | undefined;
       if (action === 'approve') {
         if (proposal.status !== 'pending') throw new ConflictException('Only pending changes can be approved');
         if (required && (this.actorKey(actor) === 'auth-off' || proposal.requestedBy === this.actorKey(actor))) throw new ForbiddenException('Independent identified approver required');
@@ -485,16 +498,23 @@ export class RatePlanService {
         const preview = await this.previewIn(tx, dto, true);
         if (preview.stateToken !== proposal.stateToken) this.stale();
         if (action === 'apply') {
-          const plan = await this.findById(proposal.ratePlanId, propertyId, tx, true);
-          if (dto.kind === 'plan') {
-            const [next] = await tx.update(ratePlans).set({ ...this.clean(dto.plan), revision: plan.revision + 1, updatedAt: new Date() })
-              .where(and(eq(ratePlans.id, plan.id), eq(ratePlans.propertyId, propertyId))).returning();
-            await this.record(tx, propertyId, 'rate_plan', plan.id, 'update', plan, next, proposal.reason, actor, 'rate_plan.updated', guard.requestId);
-          } else await this.applyRestriction(tx, plan, dto.kind, dto.restrictionId, this.clean(dto.restriction ?? {}), proposal.reason, actor, guard.requestId);
+          if (dto.kind === 'plan_create') {
+            const [created] = await tx.insert(ratePlans).values({ ...this.clean(dto.createPlan), id: dto.requestId, propertyId }).returning();
+            appliedPlanId = created.id;
+            await this.record(tx, propertyId, 'rate_plan', created.id, 'create', null, created, proposal.reason, actor, 'rate_plan.created', guard.requestId);
+          } else {
+            const plan = await this.findById(proposal.ratePlanId, propertyId, tx, true);
+            if (dto.kind === 'plan') {
+              const [next] = await tx.update(ratePlans).set({ ...this.clean(dto.plan), revision: plan.revision + 1, updatedAt: new Date() })
+                .where(and(eq(ratePlans.id, plan.id), eq(ratePlans.propertyId, propertyId))).returning();
+              await this.record(tx, propertyId, 'rate_plan', plan.id, 'update', plan, next, proposal.reason, actor, 'rate_plan.updated', guard.requestId);
+            } else await this.applyRestriction(tx, plan, dto.kind, dto.restrictionId, this.clean(dto.restriction ?? {}), proposal.reason, actor, guard.requestId);
+          }
         }
       }
       const status = action === 'approve' ? 'approved' : action === 'apply' ? 'applied' : 'rejected';
       const [next] = await tx.update(rateChangeRequests).set({ status, revision: proposal.revision + 1, updatedAt: new Date(), decisionReason: guard.reason.trim(),
+        ...(appliedPlanId ? { ratePlanId: appliedPlanId } : {}),
         ...(action === 'approve' ? { approvedBy: this.actorKey(actor) } : {}) }).where(and(eq(rateChangeRequests.id, id), eq(rateChangeRequests.propertyId, propertyId))).returning();
       await this.record(tx, propertyId, 'rate_change', id, action, proposal, next, guard.reason, actor, 'rate_change.' + (action === 'approve' ? 'approved' : action === 'apply' ? 'applied' : 'rejected') as WebhookEvent, guard.requestId);
       return next;
