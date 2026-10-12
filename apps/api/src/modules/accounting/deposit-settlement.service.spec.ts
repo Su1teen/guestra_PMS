@@ -4,6 +4,7 @@ import { DepositSettlementService } from './deposit-settlement.service';
 import { DepositService } from './deposit.service';
 import { FolioService } from '../folio/folio.service';
 import { DRIZZLE } from '../../database/database.module';
+import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 
 describe('DepositSettlementService', () => {
   let service: DepositSettlementService;
@@ -19,11 +20,13 @@ describe('DepositSettlementService', () => {
     postCharge: vi.fn().mockResolvedValue({ id: 'charge-001' }),
     createAutoFolio: vi.fn().mockResolvedValue({ id: 'folio-001', type: 'guest' }),
   };
+  const mockOutbox = { persist: vi.fn(), deliver: vi.fn() };
 
   function selectChain(result: any[]) {
     const c: any = {
       from: vi.fn().mockReturnThis(),
       where: vi.fn().mockReturnThis(),
+      for: vi.fn().mockResolvedValue(result),
       then: undefined as any,
     };
     c.then = (resolve: any, reject?: any) => Promise.resolve(result).then(resolve, reject);
@@ -34,7 +37,9 @@ describe('DepositSettlementService', () => {
     vi.clearAllMocks();
     db = {
       select: vi.fn(),
+      insert: vi.fn().mockReturnValue({ values: vi.fn().mockResolvedValue([]) }),
     };
+    db.transaction = async (work: (tx: any) => unknown) => work(db);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -42,6 +47,7 @@ describe('DepositSettlementService', () => {
         { provide: DRIZZLE, useValue: db },
         { provide: DepositService, useValue: mockDepositService },
         { provide: FolioService, useValue: mockFolioService },
+        { provide: DomainEventOutboxService, useValue: mockOutbox },
       ],
     }).compile();
 
@@ -80,7 +86,7 @@ describe('DepositSettlementService', () => {
 
     const results = await service.settleDeposits('res-001', 'prop-001', 'refund');
     expect(results[0]!.status).toBe('refunded');
-    expect(mockDepositService.refundDeposit).toHaveBeenCalledWith('dep-1', 'prop-001');
+    expect(mockDepositService.refundDeposit).toHaveBeenCalledWith('dep-1', 'prop-001', undefined, undefined);
   });
 
   it('settleDeposits forfeits non-refundable deposits even when action is refund', async () => {
@@ -100,10 +106,10 @@ describe('DepositSettlementService', () => {
 
   it('settleFromEvaluation posts penalty and settles deposits', async () => {
     db.select
-      .mockReturnValueOnce(
-        selectChain([{ id: 'dep-1', amount: '80.00', status: 'held', isRefundable: true }]),
-      )
-      .mockReturnValueOnce(selectChain([{ id: 'folio-001', type: 'guest' }]));
+      .mockReturnValueOnce(selectChain([{ id: 'res-001', currencyCode: 'USD' }]))
+      .mockReturnValueOnce(selectChain([{ id: 'folio-001', type: 'guest', currencyCode: 'USD' }]))
+      .mockReturnValueOnce(selectChain([]))
+      .mockReturnValueOnce(selectChain([{ id: 'dep-1', amount: '80.00', status: 'held', isRefundable: true }]));
 
     mockDepositService.forfeitDeposit.mockResolvedValue({
       id: 'dep-1',
@@ -133,6 +139,8 @@ describe('DepositSettlementService', () => {
         description: 'Cancellation penalty',
         amount: '100.00',
       }),
+      db,
+      { sourceKey: 'settlement:res-001:policy' },
     );
     expect(result.deposits[0]!.status).toBe('forfeited');
   });

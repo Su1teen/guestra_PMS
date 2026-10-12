@@ -1,5 +1,6 @@
 import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, or, sql, lte, gte, inArray } from 'drizzle-orm';
+import { eq, and, or, sql, lte, gte, inArray, ne } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import Decimal from 'decimal.js';
 import {
   charges,
@@ -90,13 +91,23 @@ export class ReportsService {
   /** One signed charge aggregation for every reporting consumer; tax is not earned revenue. */
   private async ledger(propertyId: string, start: string, end: string, currencyCode: string) {
     reportDates(start, end);
+    const parent = alias(charges, 'financial_parent_charge');
+    const reversedOriginal = alias(charges, 'financial_reversed_charge');
+    const reversedParent = alias(charges, 'financial_reversed_parent');
+    const category = sql<string>`case when ${charges.type} = 'adjustment'
+      and (${parent.type} = 'room' or (${charges.isReversal} = true and ${reversedParent.type} = 'room'))
+      then 'room' else ${charges.type}::text end`;
     const rows = await this.db.select({
-      type: charges.type, currencyCode: charges.currencyCode, isReversal: charges.isReversal,
+      type: category, currencyCode: charges.currencyCode, isReversal: charges.isReversal,
       total: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
       count: sql<number>`count(*)::int`,
-    }).from(charges).where(and(eq(charges.propertyId, propertyId),
+    }).from(charges).leftJoin(parent, and(eq(parent.propertyId, propertyId), eq(parent.id, charges.parentChargeId)))
+      .leftJoin(reversedOriginal, and(eq(reversedOriginal.propertyId, propertyId), eq(reversedOriginal.id, charges.originalChargeId)))
+      .leftJoin(reversedParent, and(eq(reversedParent.propertyId, propertyId), eq(reversedParent.id, reversedOriginal.parentChargeId)))
+      .where(and(eq(charges.propertyId, propertyId),
       gte(this.serviceDay(), start), lte(this.serviceDay(), end),
-    )).groupBy(charges.type, charges.currencyCode, charges.isReversal);
+      ne(charges.revenueRole, 'deposit_credit'),
+    )).groupBy(category, charges.currencyCode, charges.isReversal);
     this.assertCurrency(rows, currencyCode);
     const gross: Record<string, Decimal> = {};
     const net: Record<string, Decimal> = {};
