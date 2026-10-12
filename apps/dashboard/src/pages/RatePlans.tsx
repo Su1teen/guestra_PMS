@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { Routes, Route, useNavigate, useParams } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { BadgeDollarSign, Plus, ChevronLeft, Pencil, Trash2 } from 'lucide-react';
+import { Link, Routes, Route, useNavigate, useParams } from 'react-router-dom';
+import { useQuery, useMutation } from '@tanstack/react-query';
+import { BadgeDollarSign, Plus, ChevronLeft } from 'lucide-react';
 import { api } from '../lib/api';
 import { moneyString, requirePropertyId, requireCurrency } from '../lib/api-helpers';
 import { useProperty } from '../context/PropertyContext';
@@ -11,6 +11,10 @@ import { useTranslation } from 'react-i18next';
 import RatePlanCalendar from '../components/rates/RatePlanCalendar';
 import { formatMoney } from '../lib/money';
 import RevenueWorkspaceNav from '../components/revenue/RevenueWorkspaceNav';
+import LiveRateWorkflow from '../components/revenue/LiveRateWorkflow';
+import { useAuth } from '../context/AuthContext';
+import { propertyHref } from '../lib/navigation';
+import { pricingError, unwrap, type PendingPricingRequest } from '../lib/live-revenue';
 
 interface RatePlan {
   id: string;
@@ -43,65 +47,13 @@ interface RateRestriction {
   overrideReason?: string | null;
 }
 
-interface RestrictionForm {
-  startDate: string;
-  endDate: string;
-  minLos: string;
-  maxLos: string;
-  closedToArrival: boolean;
-  closedToDeparture: boolean;
-  isClosed: boolean;
-  dayOfWeekOverridesJson: string;
-  rateOverride: string;
-  overrideReason: string;
-}
-
-const emptyRestrictionForm = (): RestrictionForm => ({
-  startDate: '',
-  endDate: '',
-  minLos: '',
-  maxLos: '',
-  closedToArrival: false,
-  closedToDeparture: false,
-  isClosed: false,
-  dayOfWeekOverridesJson: '',
-  rateOverride: '',
-  overrideReason: '',
-});
-
-function parseOverrides(json: string): Record<string, number> | undefined {
-  const trimmed = json.trim();
-  if (!trimmed) return undefined;
-  const parsed = JSON.parse(trimmed) as Record<string, number>;
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    throw new Error('invalid');
-  }
-  return parsed;
-}
-
-function buildRestrictionBody(form: RestrictionForm) {
-  const body: Record<string, unknown> = {
-    startDate: form.startDate,
-    endDate: form.endDate,
-    closedToArrival: form.closedToArrival,
-    closedToDeparture: form.closedToDeparture,
-    isClosed: form.isClosed,
-  };
-  if (form.minLos !== '') body.minLos = Number(form.minLos);
-  if (form.maxLos !== '') body.maxLos = Number(form.maxLos);
-  body.rateOverride = form.rateOverride === '' ? null : Number(form.rateOverride);
-  if (form.rateOverride !== '') body.overrideReason = form.overrideReason.trim();
-  const overrides = parseOverrides(form.dayOfWeekOverridesJson);
-  if (overrides) body.dayOfWeekOverrides = overrides;
-  return body;
-}
-
 // ---- Rate Plan List ----
 function RatePlanList() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { propertyId, currencyCode } = useProperty();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission('rateplans.manage');
+  const ru = i18n.language.startsWith('ru');
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
@@ -111,55 +63,38 @@ function RatePlanList() {
   const [parentRatePlanId, setParentRatePlanId] = useState('');
   const [derivedAdjustmentType, setDerivedAdjustmentType] = useState('percentage');
   const [derivedAdjustmentValue, setDerivedAdjustmentValue] = useState('');
+  const [reason, setReason] = useState('');
 
-  const { data } = useQuery({
+  const planQuery = useQuery({
     queryKey: ['rate-plans', propertyId],
     queryFn: () => api.get('/v1/rate-plans', { params: { propertyId } }).then((r) => r.data),
-    enabled: !!propertyId,
+    enabled: !!propertyId && hasPermission('rateplans.read'),
   });
 
   const { data: typesData } = useQuery({
     queryKey: ['rooms', 'types', propertyId],
     queryFn: () => api.get('/v1/rooms/types', { params: { propertyId } }).then((r) => r.data),
-    enabled: !!propertyId,
+    enabled: !!propertyId && hasPermission('rooms.read'),
   });
 
-  const plans: RatePlan[] = data?.data ?? data ?? [];
+  const plans: RatePlan[] = planQuery.data?.data ?? planQuery.data ?? [];
   const roomTypes = typesData?.data ?? typesData ?? [];
 
-  const createMutation = useMutation({
-    mutationFn: () => {
-      requirePropertyId(propertyId);
-      requireCurrency(currencyCode);
-      const payload: Record<string, unknown> = {
-        propertyId,
-        name,
-        code,
-        type,
-        baseAmount: moneyString(baseAmount || '0'),
-        roomTypeId,
-        currencyCode,
-      };
-      if (type === 'derived') {
-        payload.parentRatePlanId = parentRatePlanId;
-        payload.derivedAdjustmentType = derivedAdjustmentType;
-        payload.derivedAdjustmentValue = derivedAdjustmentValue;
-      }
-      return api.post('/v1/rate-plans', payload);
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['rate-plans'] });
-      setCreateOpen(false);
-      setName('');
-      setCode('');
-      setType('bar');
-      setBaseAmount('');
-      setRoomTypeId('');
-      setParentRatePlanId('');
-      setDerivedAdjustmentType('percentage');
-      setDerivedAdjustmentValue('');
-    },
-  });
+  const createPlan = async (send: (request: PendingPricingRequest) => Promise<boolean>) => {
+    requirePropertyId(propertyId);
+    requireCurrency(currencyCode);
+    const requestId = crypto.randomUUID();
+    const payload = {
+      propertyId, name: name.trim(), code: code.trim(), type,
+      baseAmount: moneyString(baseAmount || '0'), roomTypeId, currencyCode,
+      requestId, expectedRevision: 0, reason: reason.trim(),
+      ...(type === 'derived' ? { parentRatePlanId, derivedAdjustmentType, derivedAdjustmentValue } : {}),
+    };
+    if (await send({ propertyId, requestId, path: '/v1/rate-plans', body: payload })) {
+      setName(''); setCode(''); setType('bar'); setBaseAmount(''); setRoomTypeId('');
+      setParentRatePlanId(''); setDerivedAdjustmentType('percentage'); setDerivedAdjustmentValue(''); setReason('');
+    }
+  };
 
   const derivedReady =
     type !== 'derived' || (!!parentRatePlanId && derivedAdjustmentValue !== '');
@@ -171,12 +106,14 @@ function RatePlanList() {
       <div className="flex items-center gap-3 mb-6">
         <BadgeDollarSign size={24} className="text-telivity-teal" />
         <h1 className="text-2xl font-semibold text-telivity-navy">{t('ratePlans.title')}</h1>
-        <button onClick={() => setCreateOpen(true)} className="ml-auto flex items-center gap-2 bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold">
+        {canManage && <button onClick={() => setCreateOpen(true)} className="ml-auto flex items-center gap-2 bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold">
           <Plus size={16} /> {t('ratePlans.new')}
-        </button>
+        </button>}
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+      {planQuery.isPending && <p role="status">{t('common.loading')}</p>}
+      {planQuery.isError && <p role="alert">{pricingError(planQuery.error, ru)} <button type="button" onClick={() => void planQuery.refetch()}>{ru ? 'Повторить' : 'Retry'}</button></p>}
+      <div className="bg-white rounded-xl shadow-sm overflow-auto">
         <table className="w-full">
           <thead>
             <tr className="bg-telivity-teal/5 border-b border-gray-100">
@@ -190,12 +127,12 @@ function RatePlanList() {
           </thead>
           <tbody>
             {plans.map((p, i) => (
-              <tr key={p.id} onClick={() => navigate(`/rate-plans/${p.id}`)} className={`border-b border-gray-50 cursor-pointer hover:bg-telivity-light-grey/50 ${i % 2 === 1 ? 'bg-gray-50/50' : ''}`}>
-                <td className="px-4 py-3 text-sm font-medium text-telivity-navy">{p.name}</td>
+              <tr key={p.id} className={`border-b border-gray-50 hover:bg-telivity-light-grey/50 ${i % 2 === 1 ? 'bg-gray-50/50' : ''}`}>
+                <td className="px-4 py-3 text-sm font-medium text-telivity-navy"><Link to={propertyHref(`/rate-plans/${p.id}`, propertyId)}>{p.name}</Link></td>
                 <td className="px-4 py-3 text-sm text-telivity-slate">{p.code}</td>
                 <td className="px-4 py-3"><StatusBadge status={p.type === 'bar' ? 'info' : p.type === 'derived' ? 'warning' : 'success'} label={p.type} /></td>
                 <td className="px-4 py-3 text-sm text-telivity-slate">{p.roomTypeName ?? '—'}</td>
-                <td className="px-4 py-3 text-sm text-right font-medium">{p.baseAmount != null ? formatMoney(p.baseAmount, currencyCode) : '—'}</td>
+                <td className="px-4 py-3 text-sm text-right font-medium whitespace-nowrap tabular-nums">{p.baseAmount != null ? formatMoney(p.baseAmount, currencyCode) : '—'}</td>
                 <td className="px-4 py-3"><StatusBadge status={p.isActive !== false ? 'success' : 'completed'} label={p.isActive !== false ? t('common.active') : t('common.inactive')} /></td>
               </tr>
             ))}
@@ -206,7 +143,7 @@ function RatePlanList() {
         </table>
       </div>
 
-      <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={t('ratePlans.new')} wide>
+      <LiveRateWorkflow propertyId={propertyId} section="overview" editRate={null} onCloseEditor={() => setCreateOpen(false)} plans={[]} createControl={(send, busy) => <Modal open={createOpen} onClose={() => setCreateOpen(false)} title={t('ratePlans.new')} wide>
         <div className="space-y-4">
           <div className="grid grid-cols-2 gap-3">
             <div><label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('ratePlans.nameRequired')}</label><input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal" /></div>
@@ -254,261 +191,47 @@ function RatePlanList() {
               </div>
             </div>
           )}
-          <button onClick={() => createMutation.mutate()} disabled={!name || !code || !roomTypeId || !derivedReady || createMutation.isPending} className="w-full bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">{t('ratePlans.create')}</button>
+          <label className="block text-xs">{ru ? 'Обязательная причина создания' : 'Required creation reason'}<textarea className="w-full rounded-lg border px-3 py-2 text-sm" maxLength={1000} value={reason} onChange={e => setReason(e.target.value)} /></label>
+          <p className="text-xs">{ru ? 'Создание проверяется сервером, журналируется и использует requestId. Политика обязательного согласования может запретить прямое создание.' : 'Creation is server-validated, audited and requestId-guarded. Mandatory approval policy may block direct creation.'}</p>
+          <button onClick={() => void createPlan(send)} disabled={!name.trim() || !code.trim() || !roomTypeId || !derivedReady || !reason.trim() || !currencyCode || busy} className="w-full bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">{t('ratePlans.create')}</button>
         </div>
-      </Modal>
+      </Modal>} />
     </div>
   );
 }
 
-// ---- Restrictions panel ----
+// Existing plans use the guarded preview/approval workflow.
 function RestrictionsPanel({ ratePlanId }: { ratePlanId: string }) {
-  const { t, i18n } = useTranslation();
+  const { propertyId, currencyCode } = useProperty();
+  const { i18n } = useTranslation();
+  const { hasPermission } = useAuth();
   const ru = i18n.language.startsWith('ru');
-  const { propertyId } = useProperty();
-  const queryClient = useQueryClient();
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<RestrictionForm>(emptyRestrictionForm);
-  const [formError, setFormError] = useState('');
-
-  const { data } = useQuery({
-    queryKey: ['rate-restrictions', ratePlanId, propertyId],
-    queryFn: () =>
-      api.get(`/v1/rate-plans/${ratePlanId}/restrictions`, { params: { propertyId } }).then((r) => r.data),
-    enabled: !!ratePlanId && !!propertyId,
+  const q = useQuery<RateRestriction[]>({
+    queryKey: ['rate-plans', 'restrictions', propertyId, ratePlanId],
+    queryFn: ({ signal }) => api.get(`/v1/rate-plans/${ratePlanId}/restrictions`, { params: { propertyId }, signal }).then(r => unwrap(r.data)),
+    enabled: !!propertyId && hasPermission('rateplans.read'),
   });
-
-  const restrictions: RateRestriction[] = data?.data ?? data ?? [];
-
-  const openCreate = () => {
-    setEditingId(null);
-    setForm(emptyRestrictionForm());
-    setFormError('');
-    setFormOpen(true);
-  };
-
-  const openEdit = (r: RateRestriction) => {
-    setEditingId(r.id);
-    setForm({
-      startDate: r.startDate ?? '',
-      endDate: r.endDate ?? '',
-      minLos: r.minLos != null ? String(r.minLos) : '',
-      maxLos: r.maxLos != null ? String(r.maxLos) : '',
-      closedToArrival: !!r.closedToArrival,
-      closedToDeparture: !!r.closedToDeparture,
-      isClosed: !!r.isClosed,
-      dayOfWeekOverridesJson: r.dayOfWeekOverrides
-        ? JSON.stringify(r.dayOfWeekOverrides)
-        : '',
-      rateOverride: r.rateOverride == null ? '' : String(r.rateOverride),
-      overrideReason: r.overrideReason ?? '',
-    });
-    setFormError('');
-    setFormOpen(true);
-  };
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      requirePropertyId(propertyId);
-      let body: Record<string, unknown>;
-      try {
-        body = buildRestrictionBody(form);
-      } catch {
-        throw new Error('overrides');
-      }
-      if (editingId) {
-        return api.patch(
-          `/v1/rate-plans/${ratePlanId}/restrictions/${editingId}`,
-          body,
-          { params: { propertyId }, skipErrorToast: true },
-        );
-      }
-      return api.post(
-        `/v1/rate-plans/${ratePlanId}/restrictions`,
-        {
-          propertyId,
-          ...body,
-        },
-        { skipErrorToast: true },
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['rate-restrictions', ratePlanId] });
-      setFormOpen(false);
-      setFormError('');
-    },
-    onError: (err: Error) => {
-      setFormError(
-        err.message === 'overrides'
-          ? t('ratePlans.overridesInvalid')
-          : t('ratePlans.saveFailed'),
-      );
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: (restrictionId: string) => {
-      requirePropertyId(propertyId);
-      return api.delete(`/v1/rate-plans/${ratePlanId}/restrictions/${restrictionId}`, {
-        params: { propertyId },
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['rate-restrictions', ratePlanId] });
-    },
-  });
-
-  return (
-    <div className="bg-white rounded-xl shadow-sm p-6 mt-6">
-      <div className="flex items-center gap-3 mb-4">
-        <h2 className="text-sm font-semibold text-telivity-navy">{t('ratePlans.restrictions')}</h2>
-        <button
-          onClick={openCreate}
-          className="ml-auto flex items-center gap-1.5 bg-telivity-teal text-white rounded-lg px-3 py-1.5 text-xs font-semibold"
-        >
-          <Plus size={14} /> {t('ratePlans.addRestriction')}
-        </button>
-      </div>
-
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-gray-100">
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.startDate')}</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.endDate')}</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.minLos')}</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.maxLos')}</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.cta')}</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.ctd')}</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.isClosed')}</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{t('ratePlans.dayOfWeekOverrides')}</th>
-              <th className="px-2 py-2 text-left text-xs font-semibold text-telivity-slate uppercase">{ru ? 'Ручная цена' : 'Manual rate'}</th>
-              <th className="px-2 py-2 text-right text-xs font-semibold text-telivity-slate uppercase">{t('common.actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {restrictions.map((r) => (
-              <tr key={r.id} className="border-b border-gray-50">
-                <td className="px-2 py-2 text-sm">{r.startDate}</td>
-                <td className="px-2 py-2 text-sm">{r.endDate}</td>
-                <td className="px-2 py-2 text-sm">{r.minLos ?? '—'}</td>
-                <td className="px-2 py-2 text-sm">{r.maxLos ?? '—'}</td>
-                <td className="px-2 py-2 text-sm">{r.closedToArrival ? t('common.yes') : t('common.no')}</td>
-                <td className="px-2 py-2 text-sm">{r.closedToDeparture ? t('common.yes') : t('common.no')}</td>
-                <td className="px-2 py-2 text-sm">{r.isClosed ? t('common.yes') : t('common.no')}</td>
-                <td className="px-2 py-2 text-xs font-mono text-telivity-slate max-w-[10rem] truncate">
-                  {r.dayOfWeekOverrides ? JSON.stringify(r.dayOfWeekOverrides) : '—'}
-                </td>
-                <td className="px-2 py-2 text-sm">{r.rateOverride == null ? '—' : r.rateOverride}<span className="block max-w-[12rem] truncate text-[10px] text-telivity-mid-grey">{r.overrideReason}</span></td>
-                <td className="px-2 py-2 text-right">
-                  <button onClick={() => openEdit(r)} className="p-1.5 rounded hover:bg-telivity-light-grey inline-flex" title={t('common.edit')}>
-                    <Pencil size={14} />
-                  </button>
-                  <button
-                    onClick={() => {
-                      if (window.confirm(t('ratePlans.confirmDeleteRestriction'))) {
-                        deleteMutation.mutate(r.id);
-                      }
-                    }}
-                    className="p-1.5 rounded hover:bg-telivity-light-grey inline-flex text-red-600"
-                    title={t('common.delete')}
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {restrictions.length === 0 && (
-              <tr>
-                <td colSpan={10} className="px-2 py-6 text-center text-sm text-telivity-mid-grey">
-                  {t('ratePlans.noRestrictions')}
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-
-      <Modal
-        open={formOpen}
-        onClose={() => setFormOpen(false)}
-        title={editingId ? t('ratePlans.editRestriction') : t('ratePlans.addRestriction')}
-        wide
-      >
-        <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('ratePlans.startDate')}</label>
-              <input type="date" value={form.startDate} onChange={(e) => setForm({ ...form, startDate: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('ratePlans.endDate')}</label>
-              <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('ratePlans.minLos')}</label>
-              <input type="number" min={1} value={form.minLos} onChange={(e) => setForm({ ...form, minLos: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('ratePlans.maxLos')}</label>
-              <input type="number" min={1} value={form.maxLos} onChange={(e) => setForm({ ...form, maxLos: e.target.value })} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-4 text-sm">
-            <label className="inline-flex items-center gap-2">
-              <input type="checkbox" checked={form.closedToArrival} onChange={(e) => setForm({ ...form, closedToArrival: e.target.checked })} />
-              {t('ratePlans.cta')}
-            </label>
-            <label className="inline-flex items-center gap-2">
-              <input type="checkbox" checked={form.closedToDeparture} onChange={(e) => setForm({ ...form, closedToDeparture: e.target.checked })} />
-              {t('ratePlans.ctd')}
-            </label>
-            <label className="inline-flex items-center gap-2">
-              <input type="checkbox" checked={form.isClosed} onChange={(e) => setForm({ ...form, isClosed: e.target.checked })} />
-              {t('ratePlans.isClosed')}
-            </label>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{t('ratePlans.dayOfWeekOverrides')}</label>
-            <input
-              type="text"
-              value={form.dayOfWeekOverridesJson}
-              onChange={(e) => setForm({ ...form, dayOfWeekOverridesJson: e.target.value })}
-              placeholder='{"friday":20,"saturday":30}'
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm font-mono"
-            />
-            <p className="text-xs text-telivity-mid-grey mt-1">{t('ratePlans.dayOfWeekOverridesHint')}</p>
-          </div>
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div>
-              <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{ru ? 'Ручная цена за ночь' : 'Manual nightly rate'}</label>
-              <input type="number" min={0} step="0.01" value={form.rateOverride} onChange={(e) => setForm({ ...form, rateOverride: e.target.value })} placeholder={ru ? 'Оставьте пустым, чтобы снять override' : 'Leave empty to clear override'} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-telivity-mid-grey mb-1">{ru ? 'Причина изменения' : 'Reason for change'}{form.rateOverride !== '' && ' *'}</label>
-              <input value={form.overrideReason} onChange={(e) => setForm({ ...form, overrideReason: e.target.value })} placeholder={ru ? 'Например: событие, VIP-группа, решение руководства' : 'Event, VIP group, management decision…'} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-            </div>
-          </div>
-          {formError && <p className="text-sm text-red-600">{formError}</p>}
-          <button
-            onClick={() => saveMutation.mutate()}
-            disabled={!form.startDate || !form.endDate || (form.rateOverride !== '' && !form.overrideReason.trim()) || saveMutation.isPending}
-            className="w-full bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50"
-          >
-            {editingId ? t('common.save') : t('ratePlans.createRestriction')}
-          </button>
-        </div>
-      </Modal>
-    </div>
-  );
+  return <section className="rounded-xl bg-white p-4 shadow-sm space-y-3">
+    <h2 className="font-semibold">{ru ? 'Ограничения продаж' : 'Sales restrictions'}</h2>
+    <p className="text-xs">{ru ? 'Все изменения существующего плана проходят preview, проверку revision, согласование и аудит. Цены принятых броней не меняются.' : 'All existing-plan changes go through preview, revision checks, approval and audit. Accepted reservation prices are unchanged.'}</p>
+    {hasPermission('rateplans.manage') && <Link className="inline-block rounded-lg border px-3 py-2 text-sm font-semibold" to={propertyHref(`/revenue?ratePlanId=${ratePlanId}`, propertyId)}>{ru ? 'Открыть Live: создать / изменить / удалить ограничение' : 'Open Live: create / edit / delete restriction'}</Link>}
+    {q.isPending && <p role="status">{ru ? 'Загрузка…' : 'Loading…'}</p>}
+    {q.isError && <p role="alert">{pricingError(q.error, ru)} <button type="button" onClick={() => void q.refetch()}>{ru ? 'Повторить' : 'Retry'}</button></p>}
+    {q.data?.length === 0 && <p>{ru ? 'Ограничений нет.' : 'No restrictions.'}</p>}
+    <div className="max-h-80 overflow-auto"><table className="w-full text-xs whitespace-nowrap"><thead className="sticky top-0 bg-gray-50"><tr>{[ru ? 'Даты' : 'Dates', 'Min / Max LOS', 'CTA / CTD / STOP', ru ? 'Цена override' : 'Override', ru ? 'Причина' : 'Reason', ru ? 'По дням недели' : 'Weekdays'].map(h => <th key={h} className="p-2 text-left">{h}</th>)}</tr></thead><tbody>{q.data?.map(r => <tr key={r.id} className="border-t"><td className="p-2">{r.startDate} — {r.endDate}</td><td className="p-2">{r.minLos ?? '—'} / {r.maxLos ?? '—'}</td><td className="p-2">{String(r.closedToArrival)} / {String(r.closedToDeparture)} / {String(r.isClosed)}</td><td className="p-2 tabular-nums">{formatMoney(r.rateOverride, currencyCode, i18n.language)}</td><td className="p-2">{r.overrideReason ?? '—'}</td><td className="p-2">{JSON.stringify(r.dayOfWeekOverrides ?? {})}</td></tr>)}</tbody></table></div>
+  </section>;
 }
 
-// ---- Rate Plan Detail ----
 function RatePlanDetail() {
-  const { t } = useTranslation();
+  const { id } = useParams<{ id: string }>();
+  const { propertyId } = useProperty();
+  return <RatePlanDetailContent key={`${propertyId}:${id}`} />;
+}
+
+function RatePlanDetailContent() {
+  const { t, i18n } = useTranslation();
+  const { hasPermission } = useAuth();
+  const ru = i18n.language.startsWith('ru');
   const { propertyId , currencyCode } = useProperty();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -516,13 +239,13 @@ function RatePlanDetail() {
   const [testNights, setTestNights] = useState('7');
   const [effectiveRate, setEffectiveRate] = useState<number | null>(null);
 
-  const { data } = useQuery({
+  const planQuery = useQuery({
     queryKey: ['rate-plans', id, propertyId],
     queryFn: () => api.get(`/v1/rate-plans/${id}`, { params: { propertyId } }).then((r) => r.data),
-    enabled: !!id && !!propertyId,
+    enabled: !!id && !!propertyId && hasPermission('rateplans.read'),
   });
 
-  const plan: RatePlan | null = data?.data ?? data ?? null;
+  const plan: RatePlan | null = planQuery.data?.data ?? planQuery.data ?? null;
 
   const testMutation = useMutation({
     mutationFn: () => {
@@ -547,7 +270,8 @@ function RatePlanDetail() {
     return <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('ratePlans.selectProperty')}</div>;
   }
 
-  if (!plan) return <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('common.loading')}</div>;
+  if (planQuery.isError) return <p role="alert">{pricingError(planQuery.error, ru)} <button type="button" onClick={() => void planQuery.refetch()}>{ru ? 'Повторить' : 'Retry'}</button></p>;
+  if (!plan) return <div role="status" className="py-12 text-center text-telivity-mid-grey">{t('common.loading')}</div>;
 
   return (
     <div>
@@ -585,25 +309,26 @@ function RatePlanDetail() {
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="text-sm font-semibold text-telivity-navy mb-3">{t('ratePlans.calculator')}</h2>
           <div className="flex gap-2 flex-wrap">
-            <input type="date" value={testDate} onChange={(e) => setTestDate(e.target.value)} className="flex-1 min-w-[140px] border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal" />
-            <input type="number" min={1} value={testNights} onChange={(e) => setTestNights(e.target.value)} placeholder="Nights" className="w-24 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal" />
-            <button onClick={() => testMutation.mutate()} disabled={!testDate || !propertyId || testMutation.isPending} className="bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">{t('ratePlans.calculate')}</button>
+            <input type="date" value={testDate} disabled={testMutation.isPending} onChange={(e) => { setTestDate(e.target.value); setEffectiveRate(null); }} className="flex-1 min-w-[140px] border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal" />
+            <input type="number" min={1} max={366} disabled={testMutation.isPending} value={testNights} onChange={(e) => { setTestNights(e.target.value); setEffectiveRate(null); }} placeholder="Nights" className="w-24 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal" />
+            <button onClick={() => testMutation.mutate()} disabled={!testDate || !propertyId || !Number.isInteger(Number(testNights)) || Number(testNights) < 1 || Number(testNights) > 366 || testMutation.isPending} className="bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">{t('ratePlans.calculate')}</button>
           </div>
-          {effectiveRate != null && (
+          {testMutation.isError && <p role="alert">{pricingError(testMutation.error, ru)}</p>}
+          {effectiveRate != null && !testMutation.isError && (
             <div className="mt-4 bg-telivity-light-grey rounded-lg p-4 text-center">
               <p className="text-xs text-telivity-mid-grey">{t('ratePlans.effectiveRateFor', { date: testDate || '—' })}</p>
-              <p className="text-2xl font-semibold text-telivity-navy">{formatMoney(effectiveRate, currencyCode)}</p>
+              <p className="text-2xl font-semibold text-telivity-navy whitespace-nowrap tabular-nums">{formatMoney(effectiveRate, currencyCode)}</p>
             </div>
           )}
         </div>
       </div>
 
+      {id && hasPermission('rateplans.manage') && <Link className="my-4 inline-block rounded-lg border px-3 py-2 text-sm font-semibold" to={propertyHref(`/revenue?ratePlanId=${id}&kind=plan`, propertyId)}>{ru ? 'Preview глобального изменения плана →' : 'Preview global plan change →'}</Link>}
       {id && <RestrictionsPanel ratePlanId={id} />}
       {id && propertyId && (
         <RatePlanCalendar
           ratePlanId={id}
           propertyId={propertyId}
-          baseAmount={Number(plan.baseAmount ?? 0)}
         />
       )}
     </div>
@@ -611,13 +336,13 @@ function RatePlanDetail() {
 }
 
 export default function RatePlans() {
-
+  const { propertyId } = useProperty();
   return (
     <div>
       <RevenueWorkspaceNav />
-      <Routes>
-        <Route index element={<RatePlanList />} />
-        <Route path=":id" element={<RatePlanDetail />} />
+      <Routes key={propertyId}>
+        <Route index element={<RatePlanList key={propertyId} />} />
+        <Route path=":id" element={<RatePlanDetail key={propertyId} />} />
       </Routes>
     </div>
   );

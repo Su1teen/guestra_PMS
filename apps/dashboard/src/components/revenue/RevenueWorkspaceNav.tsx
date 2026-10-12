@@ -11,6 +11,7 @@ const items = [
   ['/reports?report=booking-pace', 'Прирост и темп продаж', 'Pickup & Pace', 'reports.view'],
   ['/reports?report=occupancy-trend', 'Динамика загрузки', 'Occupancy trend', 'reports.view'],
   ['/revenue?section=history', 'История изменений', 'Change history', 'revenue.manage'],
+  ['/revenue?section=agents', 'Advanced Tools', 'Advanced Tools', 'revenue.manage'],
 ] as const;
 
 export default function RevenueWorkspaceNav() {
