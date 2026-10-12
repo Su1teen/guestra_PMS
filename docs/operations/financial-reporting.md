@@ -327,6 +327,11 @@ OCC 0.5. Every Financial/Management/DRR/trend/period actual derives from those s
 Single-property reports reject inconsistent source currencies with HTTP 400
 `CURRENCY_MISMATCH`; they never assume implicit FX rates. This includes charge,
 payment, deposit, open folio and A/R balance sources where consumed.
+The error response includes `code`, `source` and `expectedCurrency` so callers
+can distinguish reconciliation failures from invalid date input. Dashboard
+report widgets render these failures inline instead of duplicating global toasts.
+The occupancy/revenue trend uses the same scoped signed ledger classification
+as financial summaries, including room corrections and deposit-credit exclusions.
 
 Portfolio financial responses contain `currencyStatus`, nullable `currencyCode`,
 `byCurrency` and `byProperty`. With MIXED_CURRENCIES, combined `totalRevenue`,
@@ -351,5 +356,6 @@ charges, tax/cash/refunds, liabilities/credits/A/R, property and currency isolat
 local timestamp boundaries vs UTC business labels, night-audit closed zero vs missing
 history, periods, quote/forecast/actual separation, inventory blocks and releases,
 historical departure-exclusive occupancy, booking metrics, and concurrent snapshots.
-The CI core PostgreSQL release-smoke job runs both financial suites too. No browser
-or UI changes are part of M2; later stages own presentation and browser verification.
+The CI core PostgreSQL release-smoke jobs also run deposit provenance and the
+historical migration regression. These contracts feed the existing Revenue
+workspace and Dashboard; M3/M4 extensions remain separate milestones.

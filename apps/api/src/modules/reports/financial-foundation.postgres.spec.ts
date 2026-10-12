@@ -167,6 +167,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Shared financial contracts on P
     if (source === 'folios') await db.update(folios).set({ currencyCode: 'USD' }).where(eq(folios.id, folio));
     if (source === 'deposits') await db.insert(depositLedgerEntries).values({ propertyId: a, amount: '1', currencyCode: 'USD' });
     await expect(service.getFinancialSummary(a, date)).rejects.toMatchObject({ status: 400, message: expect.stringContaining('CURRENCY_MISMATCH') });
+    const error = await service.getFinancialSummary(a, date).catch(error => error);
+    expect(error.getResponse()).toMatchObject({ code: 'CURRENCY_MISMATCH', expectedCurrency: 'KZT', source: source === 'cash' ? 'payments' : source });
   });
 
   it('uses property-local payment/check-in/booking timestamps but preserves explicit night-audit service dates', async () => {

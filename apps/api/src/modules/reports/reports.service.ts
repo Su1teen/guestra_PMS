@@ -71,9 +71,10 @@ export class ReportsService {
       year: 'numeric', month: '2-digit', day: '2-digit' }).format(timestamp);
   }
 
-  private assertCurrency(rows: any[], currencyCode: string) {
+  private assertCurrency(rows: any[], currencyCode: string, source: string) {
     if (rows.some(row => row.currencyCode !== currencyCode)) {
-      throw new BadRequestException('CURRENCY_MISMATCH: ledger requires explicit currency conversion');
+      throw new BadRequestException({ statusCode: 400, code: 'CURRENCY_MISMATCH',
+        message: 'CURRENCY_MISMATCH: ledger requires explicit currency conversion', expectedCurrency: currencyCode, source });
     }
   }
 
@@ -88,8 +89,7 @@ export class ReportsService {
       other: other.toNumber(), total: earned.plus(tax).toNumber(), earned: earned.toNumber() };
   }
 
-  /** One signed charge aggregation for every reporting consumer; tax is not earned revenue. */
-  private async ledger(propertyId: string, start: string, end: string, currencyCode: string) {
+  private async ledgerRows(propertyId: string, start: string, end: string, currencyCode: string) {
     reportDates(start, end);
     const parent = alias(charges, 'financial_parent_charge');
     const reversedOriginal = alias(charges, 'financial_reversed_charge');
@@ -98,6 +98,7 @@ export class ReportsService {
       and (${parent.type} = 'room' or (${charges.isReversal} = true and ${reversedParent.type} = 'room'))
       then 'room' else ${charges.type}::text end`;
     const rows = await this.db.select({
+      date: this.serviceDay(),
       type: category, currencyCode: charges.currencyCode, isReversal: charges.isReversal,
       total: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
       count: sql<number>`count(*)::int`,
@@ -107,8 +108,14 @@ export class ReportsService {
       .where(and(eq(charges.propertyId, propertyId),
       gte(this.serviceDay(), start), lte(this.serviceDay(), end),
       ne(charges.revenueRole, 'deposit_credit'),
-    )).groupBy(category, charges.currencyCode, charges.isReversal);
-    this.assertCurrency(rows, currencyCode);
+    )).groupBy(this.serviceDay(), category, charges.currencyCode, charges.isReversal);
+    this.assertCurrency(rows, currencyCode, 'charges');
+    return rows;
+  }
+
+  /** One signed charge aggregation for every reporting consumer; tax is not earned revenue. */
+  private async ledger(propertyId: string, start: string, end: string, currencyCode: string) {
+    const rows = await this.ledgerRows(propertyId, start, end, currencyCode);
     const gross: Record<string, Decimal> = {};
     const net: Record<string, Decimal> = {};
     let signedReversals = new Decimal(0);
@@ -142,7 +149,7 @@ export class ReportsService {
       refunded: sql<string>`coalesce(sum(case when ${payments.amount}::numeric < 0 then -${payments.amount}::numeric else 0 end), 0)`,
     }).from(payments).where(and(reportPaymentSumWhere(propertyId),
       eq(this.localDay(payments.processedAt, timezone), date))).groupBy(payments.method, payments.currencyCode);
-    this.assertCurrency(rows, currencyCode);
+    this.assertCurrency(rows, currencyCode, 'payments');
     const byMethod: Record<string, number> = {};
     let received = new Decimal(0), refunds = new Decimal(0), transfers = new Decimal(0);
     for (const row of rows) {
@@ -321,8 +328,8 @@ export class ReportsService {
       }).from(arLedgers).where(and(eq(arLedgers.propertyId, propertyId), eq(arLedgers.status, 'open')))
         .groupBy(arLedgers.currencyCode),
     ]);
-    this.assertCurrency(balances, daily.currencyCode); this.assertCurrency(deposits, daily.currencyCode);
-    this.assertCurrency(receivables, daily.currencyCode);
+    this.assertCurrency(balances, daily.currencyCode, 'folios'); this.assertCurrency(deposits, daily.currencyCode, 'deposits');
+    this.assertCurrency(receivables, daily.currencyCode, 'accounts_receivable');
     const balance = balances[0];
     const byStatus = Object.fromEntries(deposits.map((row: any) => [row.status, Number(row.total)]));
     const adr = ratio(daily.netRevenueByCategory.room, occupancy.occupiedRooms);
@@ -357,18 +364,13 @@ export class ReportsService {
     const { property } = await this.context(propertyId, endDate);
     const [inventory, ledgerRows, stays, closed] = await Promise.all([
       this.inventory(propertyId, endDate, property.timezone),
-      this.db.select({ date: this.serviceDay(), type: charges.type, currencyCode: charges.currencyCode,
-        total: sql<string>`coalesce(sum(${charges.amount}::numeric),0)`,
-      }).from(charges).where(and(eq(charges.propertyId, propertyId),
-        gte(this.serviceDay(), startDate), lte(this.serviceDay(), endDate)))
-        .groupBy(this.serviceDay(), charges.type, charges.currencyCode),
+      this.ledgerRows(propertyId, startDate, endDate, property.currencyCode),
       this.db.select().from(reservations).where(and(eq(reservations.propertyId, propertyId),
         lte(reservations.arrivalDate, endDate), sql`${reservations.departureDate} > ${startDate}`,
         inArray(reservations.status, ['checked_in','stayover','due_out','checked_out'] as any))),
       this.db.select().from(auditRuns).where(and(eq(auditRuns.propertyId, propertyId),
         eq(auditRuns.status, 'completed'), gte(auditRuns.businessDate, startDate), lte(auditRuns.businessDate, endDate))),
     ]);
-    this.assertCurrency(ledgerRows, property.currencyCode);
     const daily = dates.map(date => {
       const stock = inventory(date);
       const rows = ledgerRows.filter((row: any) => row.date === date);
@@ -425,7 +427,7 @@ export class ReportsService {
       amount: sql<string>`coalesce(sum(${reservations.totalAmount}::numeric),0)`, count: sql<number>`count(*)::int`,
     }).from(reservations).where(and(eq(reservations.propertyId, propertyId), gte(reservations.arrivalDate, date),
       inArray(reservations.status, ['pending','confirmed','assigned'] as any))).groupBy(reservations.currencyCode);
-    this.assertCurrency(quoteRows, property.currencyCode);
+    this.assertCurrency(quoteRows, property.currencyCode, 'reservation_quotes');
     const quotes = quoteRows[0];
     const hasSample = Number(statistics?.count ?? 0) > 0;
     return { date, propertyId, timezone: property.timezone, currencyCode: property.currencyCode, periods: actuals,
@@ -477,7 +479,7 @@ export class ReportsService {
       this.db.select({ status: rooms.status, count: sql<number>`count(*)::int` }).from(rooms)
         .where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true))).groupBy(rooms.status),
     ]);
-    this.assertCurrency(depositRows, property.currencyCode);
+    this.assertCurrency(depositRows, property.currencyCode, 'deposits');
     const deposit = depositRows[0];
     const statuses = Object.fromEntries(statusRows.map((row: any) => [row.status, Number(row.count)]));
     const kpis = financial.kpis;
@@ -540,7 +542,9 @@ export class ReportsService {
         .where(and(eq(arTransactions.propertyId, propertyId),
           eq(this.localDay(arTransactions.createdAt, property.timezone), date))).groupBy(arTransactions.currencyCode),
     ]);
-    this.assertCurrency(currencies.flat(), property.currencyCode);
+    for (const [index, source] of ['deposits', 'folios', 'accounts_receivable', 'ar_transactions'].entries()) {
+      this.assertCurrency(currencies[index], property.currencyCode, source);
+    }
     // --- Deposit ledger (KB 10) ---
     // Opening = held liability received before the date and not yet recognized
     // before the date. Closing = held liability as of end of date.

@@ -124,14 +124,14 @@ function PropertyDashboard() {
 
   const financialQuery = useQuery({
     queryKey: ['reports', 'financial-summary', propertyId, today],
-    queryFn: () => api.get('/v1/reports/financial-summary', { params: { propertyId } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/reports/financial-summary', { params: { propertyId }, skipErrorToast: true }).then((r) => r.data),
     enabled: ["metrics"].some(id => widgets.includes(id as typeof widgets[number])) && !!propertyId && !isPortfolioMode && hasPermission('reports.view'),
   });
 
   const financial = financialQuery.data;
   const occupancyQuery = useQuery({
     queryKey: ['reports', 'occupancy', propertyId, today],
-    queryFn: () => api.get('/v1/reports/occupancy', { params: { propertyId } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/reports/occupancy', { params: { propertyId }, skipErrorToast: true }).then((r) => r.data),
     enabled: ["metrics","rooms"].some(id => widgets.includes(id as typeof widgets[number])) && !!propertyId && !isPortfolioMode && hasPermission('reports.view'),
   });
 
@@ -173,7 +173,7 @@ function PropertyDashboard() {
   const agentStatuses = agentStatusesQuery.data;
   const managementQuery = useQuery({
     queryKey: ['reports', 'management-summary', propertyId, today],
-    queryFn: () => api.get('/v1/reports/management-summary', { params: { propertyId } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/reports/management-summary', { params: { propertyId }, skipErrorToast: true }).then((r) => r.data),
     enabled: ["drr","operations"].some(id => widgets.includes(id as typeof widgets[number])) && !!propertyId && !isPortfolioMode && hasPermission('management_dashboard.view'),
   });
 

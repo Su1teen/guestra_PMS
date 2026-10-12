@@ -59,6 +59,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Real-service deposit and accept
     expect((await scoped(domainEventOutbox)).filter(row => (row.payload as any).event === 'deposit.applied')).toHaveLength(1);
     await deposits.applyDeposit(entry.id, { propertyId: ids.a, folioId: ids.folio }, actor);
     expect((await scoped(charges)).filter(row => row.revenueRole === 'deposit_credit')).toHaveLength(1);
+    const trend = await reports.getOccupancyTrend(ids.a, date, date);
+    expect(trend.daily[0]).toMatchObject({ roomRevenue: 100, totalRevenue: 100, ancillaryRevenue: 0 });
   });
   it('recognizes a real forfeited20 exactly once, even across concurrent identical retries', async () => {
     const entry = await deposit();
@@ -85,6 +87,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Real-service deposit and accept
     const posted = await roomCharge({ amount: '-20', reason: 'Custom accepted discount' });
     const financial = await reports.getFinancialSummary(ids.a, date);
     expect(financial.kpis).toMatchObject({ roomRevenue: 80, totalRevenue: 80, ancillaryRevenue: 0, adr: 80, revpar: 80 });
+    expect((await reports.getOccupancyTrend(ids.a, date, date)).daily[0]).toMatchObject({ roomRevenue: 80, totalRevenue: 80, ancillaryRevenue: 0, adr: 80, revpar: 80 });
     await folioService.reverseCharge(ids.folio, posted.id, ids.a);
     expect(await earned()).toBe(0);
   });

@@ -13,6 +13,12 @@ describe('Russian system text', () => {
     expect(errorMessage(new Error('No availability for room type rt on 2026-10-10'))).toContain('Размещение недоступно');
     expect(errorMessage(new Error('Проверьте выбранный номер.'))).toBe('Проверьте выбранный номер.');
   });
+  it('explains currency reconciliation without treating it as invalid date input', () => {
+    expect(errorMessage({ response: { status: 400, data: { code: 'CURRENCY_MISMATCH', message: 'CURRENCY_MISMATCH: ledger requires explicit currency conversion' } } }))
+      .toContain('Валюты финансовых записей');
+    expect(errorMessage({ response: { status: 400, data: { message: 'CURRENCY_MISMATCH: ledger requires explicit currency conversion' } } }))
+      .toContain('Валюты финансовых записей');
+  });
   it('localizes legacy hotel notifications without rewriting custom messages', () => {
     expect(staffNotificationText({ type: 'audit_completed', title: 'Night audit completed', message: 'Business date closed.' }).title).toBe('Ночной аудит завершён');
     expect(staffNotificationText({ type: 'custom', title: 'VIP', message: 'Анна: подготовить номер' })).toEqual({ type: 'custom', title: 'VIP', message: 'Анна: подготовить номер' });
