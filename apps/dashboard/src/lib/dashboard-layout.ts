@@ -1,4 +1,4 @@
-import { isWorkspaceLayout, workspaceTemplate, WORKSPACE_WIDGETS, WORKSPACE_TEMPLATE_WIDGETS, type WorkspaceLayout, type WorkspaceWidgetType } from '@telivityhaip/shared';
+import { isWorkspaceLayout, validWorkspaceGrid, normalizeWorkspace, widgetDefaultGrid, packWorkspace, workspaceTemplate, WORKSPACE_WIDGETS, WORKSPACE_TEMPLATE_WIDGETS, type WorkspaceLayout, type WorkspaceWidgetType } from '@telivityhaip/shared';
 export type { WorkspacePreset, WorkspaceWidget, WorkspacePage } from '@telivityhaip/shared';
 export type DashboardLayout = WorkspaceLayout;
 export type DashboardWidget = WorkspaceWidgetType;
@@ -12,17 +12,24 @@ export const WIDGET_PERMISSIONS: Record<DashboardWidget, string[]> = {
   unassigned: ['reservations.read'], availability: ['reservations.read', 'rooms.read'],
   tasks: ['ops.read'], maintenance: ['ops.read', 'maintenance.view'], requests: ['ops.read'],
   occupancy: ['reports.view'], adr: ['reports.view'], revpar: ['reports.view'], pickup: ['reports.view'], bookingPace: ['reports.view'],
+  earnedRevenue: ['reports.view'], financialSummary: ['reports.view'], housekeeping: ['housekeeping.read'], services: ['services.read'],
 };
-export const REPORT_WIDGETS: DashboardWidget[] = ['occupancy', 'adr', 'revpar', 'pickup', 'bookingPace'];
-export const CONFIGURABLE_WIDGETS: DashboardWidget[] = ['arrivals', 'departures', 'inhouse', 'unassigned', 'availability', 'tasks', 'maintenance', 'requests', ...REPORT_WIDGETS];
+export const REPORT_WIDGETS: DashboardWidget[] = ['occupancy', 'adr', 'revpar', 'pickup', 'bookingPace','earnedRevenue','financialSummary'];
+export const CONFIGURABLE_WIDGETS: DashboardWidget[] = ['arrivals', 'departures', 'inhouse', 'unassigned', 'availability', 'tasks', 'maintenance', 'requests','housekeeping','services', ...REPORT_WIDGETS];
 export function layoutKey(userId: string, propertyId: string) { return 'guestra.dashboard.v1:' + encodeURIComponent(userId) + ':' + encodeURIComponent(propertyId); }
 export function parseLayout(raw: string | null): DashboardLayout {
   try {
     const value = JSON.parse(raw ?? 'null');
-    if (isWorkspaceLayout(value)) return value;
+    if (isWorkspaceLayout(value)) return normalizeWorkspace(value);
+    // Repair only coordinates, never allow arbitrary settings/fields through the wire validator.
+    // The original server preference is unchanged until an explicit save.
+    if (value?.version === 3 && Array.isArray(value.pages) && value.pages.length <= 8 && value.pages.every((p: any)=>Array.isArray(p.widgets)&&p.widgets.length<=24)) {
+      const repaired={...value,pages:value.pages.map((p:any)=>({...p,widgets:packWorkspace(p.widgets.map((w:any)=>({...w,grid:validWorkspaceGrid(w.grid)?w.grid:widgetDefaultGrid(w.type)})))}))};
+      if (isWorkspaceLayout(repaired)) return repaired;
+    }
     if (value?.version === 1 && Object.prototype.hasOwnProperty.call(PRESETS, value.preset) && Array.isArray(value.widgets)) {
       const next = workspaceTemplate(value.preset);
-      next.pages[0].widgets = [...new Set<DashboardWidget>(value.widgets.filter((id: unknown) => DASHBOARD_WIDGETS.includes(id as DashboardWidget)))].map(type => ({ id: type, type, width: 3, height: 1, settings: { period: 'today', density: 'comfortable' } }));
+      next.pages[0].widgets = packWorkspace([...new Set<DashboardWidget>(value.widgets.filter((id: unknown) => DASHBOARD_WIDGETS.includes(id as DashboardWidget)))].map(type => ({ id: type, type, grid:widgetDefaultGrid(type), settings: { period: 'today', density: 'comfortable' } })));
       return next;
     }
   } catch { /* Corrupt caches fall back to the bounded default, never execute. */ }

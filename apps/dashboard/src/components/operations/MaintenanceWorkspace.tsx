@@ -13,15 +13,7 @@ import Modal from '../ui/Modal';
 import StatusBadge from '../ui/StatusBadge';
 import PrivatePhotos from './PrivatePhotos';
 
-const statuses: Record<string, string> = {
-  open: 'Открыта',
-  assigned: 'Назначена',
-  in_progress: 'В работе',
-  waiting_parts: 'Ожидание запчастей',
-  resolved: 'Решена',
-  closed: 'Закрыта',
-  cancelled: 'Отменена',
-};
+import { maintenanceStatuses as statuses } from '../../lib/maintenance-labels';
 const priorities: Record<string, string> = {
   low: 'Низкий',
   normal: 'Обычный',

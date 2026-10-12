@@ -3,10 +3,14 @@ import {
   Get,
   Query,
   ParseUUIDPipe,
+  Post, Body,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiQuery, ApiOkResponse } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import { ReportsService } from './reports.service';
+import { ManagementInputsService } from './management-inputs.service';
+import { ManagementInputDto, ManagementReportQueryDto, ManagementOperationsQueryDto } from './dto/management-report.dto';
+import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
 import { PortfolioPropertyResolver } from './portfolio-property-resolver';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
@@ -25,11 +29,32 @@ export class ReportsController {
     private readonly reportsService: ReportsService,
     private readonly portfolioResolver: PortfolioPropertyResolver,
     private readonly configService: ConfigService,
+    private readonly managementInputs: ManagementInputsService,
   ) {}
 
   private authOn(): boolean {
     return this.configService.get<string>('AUTH_ENABLED', 'true') !== 'false';
   }
+
+  @Get('/management-report')
+  @RequirePermissions('reports.view','management_dashboard.view')
+  @ApiOperation({ summary:'Signed management hierarchy with versioned supplied budgets and expenses' })
+  async managementReport(@Query() q: ManagementReportQueryDto) { return this.reportsService.getManagementReport(q.propertyId,q.startDate,q.endDate,q.date); }
+
+  @Get('/management-operations')
+  @RequirePermissions('reports.view','management_dashboard.view','folios.read')
+  @ApiOperation({ summary:'Property-scoped signed earned operations, 100 rows per page' })
+  async managementOperations(@Query() q: ManagementOperationsQueryDto) { return this.reportsService.getManagementOperations(q.propertyId,q.startDate,q.endDate,q.article,Number(q.offset ?? 0)); }
+
+  @Get('/management-inputs')
+  @RequirePermissions('reports.view','management_dashboard.view')
+  @ApiOperation({ summary:'Immutable management input versions for one property and period' })
+  async managementInputHistory(@Query() q: ManagementReportQueryDto) { return this.managementInputs.history(q.propertyId,q.startDate,q.endDate); }
+
+  @Post('/management-inputs')
+  @RequirePermissions('reports.view','management_dashboard.view','accounting.manage')
+  @ApiOperation({ summary:'Publish a versioned daily budget or confirmed operating expenses without posting to folios' })
+  async publishManagementInputs(@Body() body: ManagementInputDto,@AuditActorCtx() actor: AuditActor) { return this.managementInputs.save(body,actor); }
 
   private parsePropertyIds(raw?: string): string[] | undefined {
     if (!raw) return undefined;

@@ -4,6 +4,7 @@ import { Test, type TestingModule } from '@nestjs/testing';
 import { ValidationPipe } from '@nestjs/common';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
+import { ManagementInputsService } from './management-inputs.service';
 import { PortfolioPropertyResolver } from './portfolio-property-resolver';
 import { ConfigService } from '@nestjs/config';
 import { ReportQueryDto } from './dto/report-query.dto';
@@ -20,6 +21,7 @@ describe('ReportsController occupancy', () => {
       controllers: [ReportsController],
       providers: [
         { provide: ReportsService, useValue: { getOccupancy } },
+        { provide: ManagementInputsService, useValue: {} },
         { provide: PortfolioPropertyResolver, useValue: {} },
         { provide: ConfigService, useValue: { get: vi.fn() } },
       ],

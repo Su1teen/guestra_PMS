@@ -2436,7 +2436,11 @@
       "adr": "Average daily rate (ADR)",
       "revpar": "Revenue per available room (RevPAR)",
       "pickup": "Booking pickup",
-      "bookingPace": "Booking pace"
+      "bookingPace": "Booking pace",
+      "earnedRevenue": "Earned revenue",
+      "financialSummary": "Financial summary",
+      "housekeeping": "Housekeeping",
+      "services": "Services"
     },
     "moveUp": "Move up: {{name}}",
     "moveDown": "Move down: {{name}}",

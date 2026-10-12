@@ -3,6 +3,7 @@ import { SlidersHorizontal, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import Modal from '../ui/Modal';
 import { DASHBOARD_WIDGETS, PRESETS, WIDGET_PERMISSIONS, workspaceTemplate, type DashboardLayout, type WorkspacePreset } from '../../lib/dashboard-layout';
+import { packWorkspace } from '@telivityhaip/shared';
 export default function WorkspaceSettings({ layout, pageId, onChange, onSelectPage, hasPermission }: {
   layout: DashboardLayout; pageId: string; onChange: (layout: DashboardLayout) => void; onSelectPage: (id: string) => void;
   hasPermission: (...permissions: string[]) => boolean;
@@ -12,7 +13,7 @@ export default function WorkspaceSettings({ layout, pageId, onChange, onSelectPa
   const [preset, setPreset] = useState<WorkspacePreset>('frontdesk');
   const update = (patch: Partial<typeof page>) => onChange({ ...layout, pages: layout.pages.map(p => p.id === page.id ? { ...p, ...patch } : p) });
   return <>
-    <button onClick={() => setOpen(true)} className="inline-flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm font-semibold"><SlidersHorizontal size={16}/>{t('workspace.customize')}</button>
+    <button onClick={() => setOpen(true)} className="inline-flex items-center gap-2 rounded-lg border bg-white px-3 py-2 text-sm font-semibold"><SlidersHorizontal size={16}/>Добавить карточки и страницы</button>
     <Modal open={open} onClose={() => setOpen(false)} title={t('workspace.customize')}>
       <div className="space-y-5">
         <p className="text-sm text-telivity-mid-grey">{t('workspace.builderHint')}</p>
@@ -26,7 +27,7 @@ export default function WorkspaceSettings({ layout, pageId, onChange, onSelectPa
         <button className="rounded-lg border p-2 text-sm" onClick={() => update({ preset, widgets: workspaceTemplate(preset).pages[0].widgets })}>{t('workspace.restore')}</button>
         <div className="grid grid-cols-2 gap-2">{DASHBOARD_WIDGETS.filter(id => hasPermission(...WIDGET_PERMISSIONS[id])).map(type => {
           const exists = page.widgets.some(w => w.type === type);
-          return <label key={type} className="flex items-center gap-2 rounded-lg border p-3 text-sm"><input type="checkbox" checked={exists} onChange={e => update({ widgets: e.target.checked ? [...page.widgets, { id: crypto.randomUUID(), type, width: 1, height: 1, settings: { period: 'today', density: 'comfortable' } }] : page.widgets.filter(w => w.type !== type) })}/>{t('workspace.widgets.' + type)}</label>;
+          return <label key={type} className="flex items-center gap-2 rounded-lg border p-3 text-sm"><input type="checkbox" checked={exists} onChange={e => update({ widgets: e.target.checked ? packWorkspace([...page.widgets, { id: crypto.randomUUID(), type, settings: { period: 'today', density: 'comfortable' } }]) : page.widgets.filter(w => w.type !== type) })}/>{t('workspace.widgets.' + type)}</label>;
         })}</div>
         <button disabled={layout.pages.length < 2} className="flex items-center gap-2 rounded-lg border border-red-200 p-2 text-sm text-red-700 disabled:opacity-30" onClick={() => {
           const pages = layout.pages.filter(p => p.id !== page.id);

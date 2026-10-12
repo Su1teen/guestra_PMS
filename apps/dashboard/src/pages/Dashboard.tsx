@@ -29,7 +29,7 @@ import KpiCard from '../components/ui/KpiCard';
 import { formatMoney } from '../lib/money';
 import { useTranslation } from 'react-i18next';
 import WorkspaceCanvas from '../components/dashboard/WorkspaceCanvas';
-import { isWorkspaceLayout } from '@telivityhaip/shared';
+import { isWorkspaceLayout,normalizeWorkspace } from '@telivityhaip/shared';
 import { hotelDate } from '../lib/hotel-date';
 import { errorMessage } from '../lib/error-message';
 import WorkspaceSettings from '../components/dashboard/WorkspaceSettings';
@@ -76,25 +76,29 @@ function PropertyDashboard() {
   const [pageId, setPageId] = useState(layout.startPageId);
   const [dirty, setDirty] = useState(false); const [saving, setSaving] = useState(false); const [saveError, setSaveError] = useState('');
   const [revision, setRevision] = useState(0);
+  const [customizing,setCustomizing] = useState(false);
+  const [undo,setUndo] = useState<DashboardLayout[]>([]);
   const workspaceQuery = useQuery({ queryKey: ['workspace', storageKey], enabled: !!propertyId && !isPortfolioMode,
     queryFn: () => api.get('/v1/admin/me/workspace', { params: { propertyId }, skipErrorToast: true }).then(r => r.data?.data ?? r.data) });
   const hydrated = useRef(false);
   useEffect(() => {
     if (!workspaceQuery.data || dirty) return;
-    if (isWorkspaceLayout(workspaceQuery.data.layout)) { setLayout(workspaceQuery.data.layout); if (!hydrated.current) setPageId(workspaceQuery.data.layout.startPageId); else setPageId(current => workspaceQuery.data.layout.pages.some((p: { id: string }) => p.id === current) ? current : workspaceQuery.data.layout.startPageId); hydrated.current = true; }
+    if (isWorkspaceLayout(workspaceQuery.data.layout)) { setLayout(normalizeWorkspace(workspaceQuery.data.layout)); if (!hydrated.current) setPageId(workspaceQuery.data.layout.startPageId); else setPageId(current => workspaceQuery.data.layout.pages.some((p: { id: string }) => p.id === current) ? current : workspaceQuery.data.layout.startPageId); hydrated.current = true; }
+    else if (workspaceQuery.data.layout) { const recovered=parseLayout(JSON.stringify(workspaceQuery.data.layout));setLayout(recovered);setPageId(recovered.startPageId);setSaveError('Повреждённые координаты восстановлены локально. Исходная серверная версия сохранена; проверьте экран перед сохранением.'); }
     setRevision(workspaceQuery.data.revision ?? 0);
   }, [workspaceQuery.data, dirty]);
   const persistLayout = async () => {
     if (!isWorkspaceLayout(layout)) { setSaveError(t('workspace.invalid')); return; }
     setSaving(true); setSaveError('');
     try {
-      if (workspaceQuery.data?.persistent === false) { localStorage.setItem(storageKey, JSON.stringify(layout)); setDirty(false); return; }
+      if (workspaceQuery.data?.persistent === false) { localStorage.setItem(storageKey, JSON.stringify(layout)); setDirty(false); setCustomizing(false); setUndo([]); return; }
       const response = await api.patch('/v1/admin/me/workspace', { propertyId, expectedRevision: revision, layout }, { skipErrorToast: true });
-      const saved = response.data?.data ?? response.data; setRevision(saved.revision); queryClient.setQueryData(['workspace', storageKey], saved); setDirty(false);
+      const saved = response.data?.data ?? response.data; setRevision(saved.revision); queryClient.setQueryData(['workspace', storageKey], saved); setDirty(false); setCustomizing(false); setUndo([]);
     } catch (error) { setSaveError(errorMessage(error)); } finally { setSaving(false); }
   };
   const widgets = visibleWidgets(layout, hasPermission, pageId);
   const saveLayout = (next: DashboardLayout) => {
+    setUndo(previous=>[...previous.slice(-19),layout]);
     setLayout(next); setDirty(true);
     try { localStorage.setItem(storageKey, JSON.stringify(next)); setStorageError(false); } catch { setStorageError(true); }
   };
@@ -348,7 +352,7 @@ function PropertyDashboard() {
       <div className="flex flex-wrap items-center gap-3 mb-6" style={{ order: -3 }}>
         <LayoutDashboard size={24} className="text-telivity-teal" />
         <h1 className="text-2xl font-semibold text-telivity-navy">{t('nav.dashboard')}</h1>
-        <div className="ml-auto flex flex-wrap items-center gap-3"><span className="text-sm text-telivity-mid-grey">{formattedToday}</span><WorkspaceSettings layout={layout} pageId={pageId} onChange={saveLayout} onSelectPage={setPageId} hasPermission={hasPermission} /><button disabled={!dirty || saving || workspaceQuery.isPending || workspaceQuery.isError} onClick={() => void persistLayout()} className="rounded-lg bg-telivity-teal px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">{saving ? t('common.saving') : t('workspace.save')}</button></div>
+        <div className="ml-auto flex flex-wrap items-center gap-3"><span className="text-sm text-telivity-mid-grey">{formattedToday}</span><button className="rounded-lg border bg-white px-3 py-2 text-sm" aria-pressed={customizing} onClick={()=>setCustomizing(v=>!v)}>{customizing ? 'Закончить настройку' : 'Настроить экран'}</button>{customizing && <><button className="rounded-lg border px-3 py-2 text-sm" disabled={!undo.length} onClick={()=>{const previous=undo[undo.length-1];if(previous){setLayout(previous);setUndo(s=>s.slice(0,-1));setDirty(true);try{localStorage.setItem(storageKey,JSON.stringify(previous));}catch{setStorageError(true);}}}}>Отменить изменение</button><WorkspaceSettings layout={layout} pageId={pageId} onChange={saveLayout} onSelectPage={setPageId} hasPermission={hasPermission} /></>}<button disabled={!dirty || saving || workspaceQuery.isPending || workspaceQuery.isError} onClick={() => void persistLayout()} className="rounded-lg bg-telivity-teal px-3 py-2 text-sm font-semibold text-white disabled:opacity-40">{saving ? t('common.saving') : t('workspace.save')}</button></div>
       </div>
 
       {storageError && <p role="status" style={{ order: -2 }} className="mb-3 text-sm text-amber-700">{t('workspace.storageError')}</p>}
@@ -360,9 +364,9 @@ function PropertyDashboard() {
         {hasPermission('reservations.read') && <button className="rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-telivity-slate" onClick={() => navigate('/reservations/calendar')}>{t('workspace.calendar')}</button>}
       </nav>
       {widgets.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-telivity-mid-grey">{t('workspace.empty')}</p>}
-      {fin.actual && <p role="status" className="mb-3 text-xs">{fin.date ?? managementData?.date ?? businessDate.data?.date} · {fin.actual.status} · {fin.actual.closedDays}/{fin.actual.expectedDays} · charges.serviceDate · Signed earned revenue; cash, deposits and separately posted tax are not actual revenue.</p>}
+      {fin.actual && <p role="status" className="mb-3 text-xs">{fin.date ?? managementData?.date ?? businessDate.data?.date} · {fin.actual.status} · {fin.actual.closedDays}/{fin.actual.expectedDays} · charges.serviceDate · Заработанная выручка; оплаты, депозиты и отдельно проведённые налоги отражаются отдельно.</p>}
       <ReceivablesCurrencyNotice balances={fin.outstandingBalances} />
-      <WorkspaceCanvas layout={layout} pageId={pageId} onChange={saveLayout} queryStates={{ metrics: [financialQuery, occupancyQuery], rooms: [roomSummaryQuery, arrivalsQuery, departuresQuery, inHouseQuery], drr: [managementQuery], operations: [attentionQuery], revenue: [agentStatusesQuery] }}>
+      <WorkspaceCanvas customizing={customizing} layout={layout} pageId={pageId} onChange={saveLayout} queryStates={{ metrics: [financialQuery, occupancyQuery], rooms: [roomSummaryQuery, arrivalsQuery, departuresQuery, inHouseQuery], drr: [managementQuery], operations: [attentionQuery], revenue: [agentStatusesQuery] }}>
       {drr && (
         <section className="bg-white rounded-xl shadow-sm p-5 mb-6" data-widget="drr">
           <div className="flex flex-wrap items-center gap-3 mb-4">

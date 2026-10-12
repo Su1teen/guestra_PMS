@@ -1,0 +1,23 @@
+{
+  "widths": [
+    390,
+    768,
+    1366,
+    1440,
+    1920
+  ],
+  "screenshots": 13,
+  "pointerDrag": true,
+  "pointerResize": true,
+  "keyboard": true,
+  "collisionFree": true,
+  "localSaveReload": true,
+  "excelReconciled": true,
+  "sourceDrill": true,
+  "budgetInspector": true,
+  "widgetInspector": true,
+  "roleTemplates": 5,
+  "multiPageReload": true,
+  "errors": [],
+  "httpFailures": []
+}

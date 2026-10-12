@@ -21,7 +21,7 @@ describe('ReportsController authorization', () => {
 
   it('passes the caller property and optional operational date to shared Revenue reporting', async () => {
     const reports = { getRevenueOverview: vi.fn().mockResolvedValue({ date: '2027-05-01' }) };
-    const controller = new ReportsController(reports as any, {} as any, {} as any);
+    const controller = new ReportsController(reports as any, {} as any, {} as any, {} as any);
     const query = { propertyId: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb', date: '2027-05-01' };
     expect(await controller.getRevenueOverview(query)).toEqual({ date: query.date });
     expect(reports.getRevenueOverview).toHaveBeenCalledWith(query.propertyId, query.date);

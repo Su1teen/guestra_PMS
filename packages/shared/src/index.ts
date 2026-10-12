@@ -411,3 +411,4 @@ export const MIGRATION_SOURCE_PMS = ['mews', 'cloudbeds', 'apaleo', 'ohip'] as c
 export type MigrationSourcePms = (typeof MIGRATION_SOURCE_PMS)[number];
 
 export * from './workspace-layout.js';
+export * from './management-report.js';
