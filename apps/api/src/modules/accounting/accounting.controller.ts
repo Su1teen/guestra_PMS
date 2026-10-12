@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { RequirePermissions } from '../auth/permissions.decorator';
+import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
 import { DepositService } from './deposit.service';
 import { ArService } from './ar.service';
 import { AccountingCodeService } from './accounting-code.service';
@@ -47,8 +48,8 @@ export class AccountingController {
   @RequirePermissions('accounting.manage')
   @ApiOperation({ summary: 'Record an advance deposit (held liability)' })
   @ApiResponse({ status: 201, description: 'Deposit recorded' })
-  recordDeposit(@Body() dto: RecordDepositDto) {
-    return this.depositService.recordDeposit(dto);
+  recordDeposit(@Body() dto: RecordDepositDto, @AuditActorCtx() actor: AuditActor) {
+    return this.depositService.recordDeposit(dto, actor);
   }
 
   @Get('deposits')
@@ -77,8 +78,9 @@ export class AccountingController {
   applyDeposit(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: ApplyDepositDto,
+    @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.depositService.applyDeposit(id, dto);
+    return this.depositService.applyDeposit(id, dto, actor);
   }
 
   @Post('deposits/:id/refund')
@@ -89,8 +91,9 @@ export class AccountingController {
   refundDeposit(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.depositService.refundDeposit(id, propertyId);
+    return this.depositService.refundDeposit(id, propertyId, actor);
   }
 
   @Post('deposits/:id/forfeit')
@@ -101,8 +104,9 @@ export class AccountingController {
   forfeitDeposit(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.depositService.forfeitDeposit(id, propertyId);
+    return this.depositService.forfeitDeposit(id, propertyId, actor);
   }
 
   // --- Accounts Receivable (KB 11) ---
