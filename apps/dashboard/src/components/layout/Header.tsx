@@ -52,18 +52,18 @@ export default function Header({ onMenuClick }: HeaderProps) {
             <Menu size={20} className="text-telivity-slate" />
           </button>
 
-          <div className="relative">
+          <div className="relative min-w-0">
             <button
               onClick={() => setOpen(!open)}
-              className="flex max-w-[108px] sm:max-w-none items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-telivity-teal text-sm font-medium transition-colors"
+              className="flex min-w-0 w-full max-w-[120px] sm:max-w-[260px] items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg border border-gray-200 hover:border-telivity-teal text-sm font-medium transition-colors"
               aria-haspopup="listbox"
               aria-expanded={open}
             >
-              <span className="truncate max-w-[140px] sm:max-w-none">{propertyLabel}</span>
-              <ChevronDown size={14} />
+              <span className="truncate min-w-0">{propertyLabel}</span>
+              <ChevronDown size={14} className="shrink-0" />
             </button>
             {open && (
-              <div className="absolute top-full left-0 mt-1 w-64 bg-white rounded-lg shadow-lg border border-gray-200 z-50 py-1" role="listbox">
+              <div className="absolute top-full left-0 mt-1 w-64 max-w-[calc(100vw-80px)] max-h-[70vh] overflow-auto bg-white rounded-lg shadow-lg border border-gray-200 z-50 py-1" role="listbox">
                 {properties.length > 1 && (
                   <button
                     onClick={() => { setPropertyId(PORTFOLIO_MODE_ID); setOpen(false); }}

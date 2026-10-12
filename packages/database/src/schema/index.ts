@@ -7,6 +7,7 @@
 
 // Organization (hotel groups)
 export { organizations } from './organization.js';
+export { managementInputs } from './management-input.js';
 
 // Property
 export { properties } from './property.js';

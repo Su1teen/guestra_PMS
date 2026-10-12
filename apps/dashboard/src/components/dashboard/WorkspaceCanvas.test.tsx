@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { screen } from '@testing-library/react';
+import { screen,fireEvent } from '@testing-library/react';
 import { renderWithProviders } from '../../test/helpers';
 import { workspaceTemplate } from '../../lib/dashboard-layout';
 import WorkspaceCanvas from './WorkspaceCanvas';
@@ -30,5 +30,14 @@ describe('Dashboard widget failures', () => {
     </WorkspaceCanvas>);
     expect(screen.getByRole('status')).toBeInTheDocument();
     expect(screen.queryByText('Not a loaded KPI')).not.toBeInTheDocument();
+  });
+  it('shows editing controls only in Customize and commits keyboard move and resize',()=>{
+    const onChange=vi.fn();const {rerender}=renderWithProviders(<WorkspaceCanvas layout={layout} pageId={layout.startPageId} onChange={onChange}><div data-widget="metrics">Показатели</div></WorkspaceCanvas>);
+    expect(screen.queryByRole('button',{name:/Изменить размер/})).not.toBeInTheDocument();
+    rerender(<WorkspaceCanvas customizing layout={layout} pageId={layout.startPageId} onChange={onChange}><div data-widget="metrics">Показатели</div></WorkspaceCanvas>);
+    fireEvent.keyDown(screen.getByRole('button',{name:/^Move Hotel metrics widget$/}),{key:'ArrowDown'});
+    expect(onChange.mock.calls[0][0].pages[0].widgets[0].grid.y).toBe(1);
+    fireEvent.keyDown(screen.getByRole('button',{name:/Изменить размер/}),{key:'ArrowDown'});
+    expect(onChange.mock.calls[1][0].pages[0].widgets[0].grid.h).toBe(7);
   });
 });

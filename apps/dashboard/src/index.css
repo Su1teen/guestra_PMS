@@ -2,7 +2,18 @@
 @tailwind components;
 @tailwind utilities;
 
-.workspace-canvas { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; align-items: start; }
-.workspace-tile { grid-column: span var(--tile-width); height: calc(340px * var(--tile-height)); display: flex; flex-direction: column; min-width: 0; overflow: hidden; border: 1px solid #e5e7eb; border-radius: 14px; background: white; box-shadow: 0 2px 6px #12263908; }
-.workspace-tile [data-widget] { margin-bottom: 0; box-shadow: none; }
-@media (max-width: 1023px) { .workspace-canvas { grid-template-columns: 1fr; } .workspace-tile { grid-column: span 1; } }
+.workspace-canvas { display:grid; grid-auto-rows:40px; gap:12px; align-items:stretch; min-width:0; }
+.workspace-tile { position:relative; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border:1px solid #e3e9e5; border-radius:14px; background:white; box-shadow:0 2px 6px #12263908; container-type:inline-size; }
+.workspace-tile-heading { display:flex; align-items:center; gap:6px; min-height:38px; padding:8px 12px; border-bottom:1px solid #f1f3f2; }
+.workspace-tile-heading h2 { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:650; color:#183332; }
+.workspace-tile-heading button { flex:none; border-radius:5px; padding:3px; }
+.workspace-tile-heading button:focus-visible,.workspace-resize:focus-visible { outline:2px solid #0c7368; outline-offset:2px; }
+.workspace-tile-content { flex:1; min-height:0; overflow:auto; scrollbar-width:thin; }
+.workspace-tile [data-widget] { margin-bottom:0; box-shadow:none; }
+.workspace-grip { cursor:grab; touch-action:none; }
+.workspace-customizing .workspace-tile { border-color:#7fbbb3; }
+.workspace-resize { position:absolute; bottom:0; right:0; padding:6px; border-radius:7px 0 12px 0; background:#e7f3ef; color:#0c7368; cursor:se-resize; touch-action:none; }
+.workspace-kpi-value { font-size:clamp(18px,7cqi,30px); font-weight:650; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; line-height:1.2; }
+.workspace-financial-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+@container (max-width:480px) { .workspace-financial-grid {grid-template-columns:1fr;} .workspace-tile-content .grid-cols-4,.workspace-tile-content .grid-cols-3 {grid-template-columns:repeat(2,minmax(0,1fr));} }
+@container (max-width:300px) { .workspace-tile-content .grid {grid-template-columns:1fr;} .workspace-tile-content .text-3xl {font-size:20px;} }

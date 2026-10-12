@@ -16,7 +16,9 @@ import {
   arTransactions,
   roomInventoryBlocks,
   roomTypes,
+  managementInputs,
 } from '@telivityhaip/database';
+import { MANAGEMENT_REVENUE_ARTICLES, MANAGEMENT_EXPENSE_ARTICLES, MANAGEMENT_LABELS, managementGroup, type ManagementMetrics, type ManagementRow, type ManagementReportData, type ManagementInput } from '@telivityhaip/shared';
 import { DRIZZLE } from '../../database/database.module';
 import { reportPaymentSumWhere } from '../payment/payment-ledger';
 import { reportDate, reportDates, priorYearDate, ratio } from './reporting-policy';
@@ -52,6 +54,93 @@ export class ReportsService {
     const { property, operationalDate } = await this.context(propertyId);
     return { propertyId, date: operationalDate, timezone: property.timezone, currencyCode: property.currencyCode,
       source: 'completed_night_audit_or_property_local_today' };
+  }
+
+  async getManagementReport(propertyId: string, startDate: string, endDate: string, requestedDate?: string): Promise<ManagementReportData> {
+    reportDates(startDate,endDate);
+    if (!this.inSnapshot) return this.snapshot(s => s.getManagementReport(propertyId,startDate,endDate,requestedDate));
+    const { property,date,operationalDate:businessDate } = await this.context(propertyId,requestedDate);
+    const effective = [date,businessDate,endDate].sort()[0]!;
+    const cutoff = effective < startDate ? null : effective;
+    const lyStart = priorYearDate(startDate), lyEnd = priorYearDate(endDate), lyCutoff = cutoff ? priorYearDate(cutoff) : null;
+    const [fullLy, toDateLy, current, versions, periods] = await Promise.all([
+      this.ledger(propertyId,lyStart,lyEnd,property.currencyCode),
+      lyCutoff ? this.ledger(propertyId,lyStart,lyCutoff,property.currencyCode) : null,
+      cutoff ? this.ledger(propertyId,startDate,cutoff,property.currencyCode) : null,
+      Promise.all(['budget','expenses'].map(kind => this.db.select().from(managementInputs).where(and(eq(managementInputs.propertyId,propertyId),eq(managementInputs.startDate,startDate),eq(managementInputs.endDate,endDate),eq(managementInputs.kind,kind))).orderBy(sql`${managementInputs.revision} desc`).limit(1))).then(rows => rows.flat()),
+      cutoff ? this.getRevenuePeriods(propertyId,cutoff) : null,
+    ]);
+    const budget = versions.find((v: any) => v.kind === 'budget') ?? null;
+    const expense = versions.find((v: any) => v.kind === 'expenses') ?? null;
+    for (const input of [budget,expense]) if (input && input.currencyCode !== property.currencyCode) this.assertCurrency([input],property.currencyCode,'management_inputs');
+    const inputSum = (input: any, articles: readonly string[], through: string|null) => {
+      if (!input || !through) return null;
+      const entries = input.entries.filter((e: any) => articles.includes(e.article) && e.date <= through);
+      if (input.kind === 'expenses' && !entries.length && (!input.coverageThrough || input.coverageThrough < through)) return null;
+      return entries.reduce((sum: Decimal,e: any) => sum.plus(e.amount),new Decimal(0)).toNumber();
+    };
+    const ledgerSum = (ledger: typeof current, articles: readonly string[]) => !ledger || ledger.actual.value === null ? null : articles.reduce((sum,a) => sum.plus(ledger.revenueByType[a] ?? 0),new Decimal(0)).toNumber();
+    const metrics = (articles: readonly string[], kind: 'revenue'|'expense'): ManagementMetrics => {
+      const actual = kind === 'revenue' ? ledgerSum(current,articles) : inputSum(expense,articles,cutoff);
+      const plan = inputSum(budget,articles,endDate), planToDate = inputSum(budget,articles,cutoff);
+      return { actual,plan,planToDate,ly:kind === 'revenue' ? ledgerSum(fullLy,articles) : null,lytd:kind === 'revenue' ? ledgerSum(toDateLy,articles) : null,
+        attainment:actual === null || plan === null || plan === 0 ? null : new Decimal(actual).div(plan).mul(100).toDecimalPlaces(2).toNumber(),
+        toDateVariance:actual === null || planToDate === null ? null : new Decimal(actual).minus(planToDate).toNumber(),
+        remaining:actual === null || plan === null ? null : new Decimal(plan).minus(actual).toNumber(),forecast:null };
+    };
+    const row = (id: string,label: string,depth: number,articles: readonly string[],kind: 'revenue'|'expense',children?: ManagementRow[]): ManagementRow => ({ id:`${propertyId}:${id}`,propertyId,label,depth,article:depth === 2 ? articles[0] : undefined,metrics:metrics(articles,kind),children });
+    const revenueChildren = ['accommodation','fnb','ancillary'].map(group => {
+      const articles = MANAGEMENT_REVENUE_ARTICLES.filter(a => managementGroup(a) === group);
+      return row(group,MANAGEMENT_LABELS[group]!,1,articles,'revenue',articles.map(a => row(a,MANAGEMENT_LABELS[a]!,2,[a],'revenue')));
+    });
+    const expenseChildren = MANAGEMENT_EXPENSE_ARTICLES.map(a => row(`expense-${a}`,MANAGEMENT_LABELS[a]!,1,[a],'expense',[row(`expense-article-${a}`,MANAGEMENT_LABELS[a]!,2,[a],'expense')]));
+    const revenue = metrics(MANAGEMENT_REVENUE_ARTICLES,'revenue'), expenses = metrics(MANAGEMENT_EXPENSE_ARTICLES,'expense');
+    const expenseComplete = !!cutoff && !!expense?.coverageThrough && expense.coverageThrough >= cutoff;
+    const canCalculateResult = current?.actual.status === 'COMPLETE' && expenseComplete;
+    const dailyLedger = cutoff ? await this.ledgerRows(propertyId,startDate,cutoff,property.currencyCode) : [];
+    const closedDays = cutoff ? await this.db.select({date:auditRuns.businessDate}).from(auditRuns).where(and(eq(auditRuns.propertyId,propertyId),eq(auditRuns.status,'completed'),gte(auditRuns.businessDate,startDate),lte(auditRuns.businessDate,cutoff))) : [];
+    const dailyFinancial = cutoff ? await this.getFinancialSummary(propertyId,cutoff) : null;
+    const dailyOccupancy = cutoff ? await this.getOccupancy(propertyId,cutoff) : null;
+    const previousDay = cutoff ? new Date(Date.parse(cutoff)-86400000).toISOString().slice(0,10) : null;
+    const pickup = cutoff ? await this.getPickup(propertyId,cutoff,previousDay!,cutoff) : null;
+    const pace = cutoff ? await this.getBookingPace(propertyId,cutoff,cutoff) : null;
+    return { propertyId,propertyName:property.name,currencyCode:property.currencyCode,timezone:property.timezone,
+      period:{ start:startDate,end:endDate,cutoff,businessDate,lyStart,lyEnd,lyCutoff },
+      revenueRows:[row('revenue',property.name,0,MANAGEMENT_REVENUE_ARTICLES,'revenue',revenueChildren)],
+      expenseRows:[row('expense',property.name,0,MANAGEMENT_EXPENSE_ARTICLES,'expense',expenseChildren)],
+      totals:{ revenue,expenses,operatingResult:canCalculateResult ? new Decimal(revenue.actual!).minus(expenses.actual!).toNumber() : null },
+      sources:{ actual:current?.actual.status ?? 'NO_DATA',history:fullLy.actual.value === null ? 'NO_DATA' : fullLy.actual.status,
+        budget:budget ? 'CONFIGURED' : 'NOT_CONFIGURED',expenses:expense ? expenseComplete ? 'COMPLETE' : 'PARTIAL' : 'NOT_CONFIGURED',forecast:'INSUFFICIENT_HISTORY',operatingResult:canCalculateResult ? 'COMPLETE' : 'INSUFFICIENT_DATA' },
+      inputs:{ budget:budget as ManagementInput|null,expenses:expense as ManagementInput|null },
+      executive:dailyFinancial && dailyOccupancy ? {date:cutoff!,occupancy:dailyFinancial.kpis.occ,adr:dailyFinancial.kpis.ratioStatus.adr !== 'AVAILABLE' || dailyFinancial.actual.value === null ? null : dailyFinancial.kpis.adr,revpar:dailyFinancial.kpis.ratioStatus.revpar !== 'AVAILABLE' || dailyFinancial.actual.value === null ? null : dailyFinancial.kpis.revpar,
+        arrivals:dailyOccupancy.arrivals,departures:dailyOccupancy.departures,cancellations:dailyOccupancy.cancellations,noShows:dailyOccupancy.noShows,
+        receivedPayments:dailyFinancial.cash.received,refunds:dailyFinancial.cash.refunds,heldDeposits:dailyFinancial.deposits.held,separatelyPostedTax:dailyFinancial.kpis.separatelyPostedTax,pickup:pickup?.pickup.roomNights ?? null,pace:pace?.daily[0]?.roomsOnBooks ?? null} : null,
+      periods:periods?.periods ?? {},
+      daily:reportDates(startDate,endDate).map(d => {
+        const postings = dailyLedger.filter((r: any) => r.date === d && r.type !== 'tax');
+        const expenseEntries = expense?.entries.filter((e:any)=>e.date===d) ?? [];
+        return { date:d,actual:d > (cutoff ?? '') || (!postings.length && !closedDays.some((day:any)=>day.date===d)) ? null : postings.reduce((sum: Decimal,r: any) => sum.plus(r.total),new Decimal(0)).toNumber(),
+          plan:budget ? budget.entries.filter((e: any) => MANAGEMENT_REVENUE_ARTICLES.includes(e.article) && e.date === d).reduce((sum: Decimal,e: any) => sum.plus(e.amount),new Decimal(0)).toNumber() : null,
+          expenses:expense && cutoff && d <= cutoff && (expenseEntries.length || (expense.coverageThrough && expense.coverageThrough >= d)) ? expenseEntries.reduce((sum:Decimal,e:any)=>sum.plus(e.amount),new Decimal(0)).toNumber() : null,
+          expensePlan:budget ? budget.entries.filter((e:any)=>(MANAGEMENT_EXPENSE_ARTICLES as readonly string[]).includes(e.article)&&e.date===d).reduce((sum:Decimal,e:any)=>sum.plus(e.amount),new Decimal(0)).toNumber() : null };
+      }) };
+  }
+
+  async getManagementOperations(propertyId: string, startDate: string, endDate: string, article?: string, offset = 0) {
+    reportDates(startDate,endDate);
+    if (article && !(MANAGEMENT_REVENUE_ARTICLES as readonly string[]).includes(article)) throw new BadRequestException('Неизвестная статья');
+    if (!Number.isInteger(offset) || offset < 0 || offset > 100000) throw new BadRequestException('Некорректная страница');
+    // Same provenance classification as ledgerRows, including reversals of room amendments.
+    const parent = alias(charges,'management_parent');
+    const original = alias(charges,'management_original');
+    const originalParent = alias(charges,'management_original_parent');
+    const category = sql<string>`case when ${charges.type} = 'adjustment' and (${parent.type} = 'room' or (${charges.isReversal} = true and ${originalParent.type} = 'room')) then 'room' else ${charges.type}::text end`;
+    return this.db.select({ id:charges.id,folioId:charges.folioId,date:this.serviceDay(),article:category,description:charges.description,amount:charges.amount,currencyCode:charges.currencyCode,isReversal:charges.isReversal }).from(charges)
+      .leftJoin(parent,and(eq(parent.id,charges.parentChargeId),eq(parent.propertyId,propertyId)))
+      .leftJoin(original,and(eq(original.id,charges.originalChargeId),eq(original.propertyId,propertyId)))
+      .leftJoin(originalParent,and(eq(originalParent.id,original.parentChargeId),eq(originalParent.propertyId,propertyId)))
+      .where(and(eq(charges.propertyId,propertyId),gte(this.serviceDay(),startDate),lte(this.serviceDay(),endDate),ne(charges.revenueRole,'deposit_credit'),ne(charges.type,'tax'),article ? eq(category,article) : undefined))
+      .orderBy(charges.serviceDate,charges.id).limit(100).offset(offset);
   }
 
   /** serviceDate is an explicit UTC-encoded business-date label, not posting time. */

@@ -9,6 +9,7 @@ interface ModalProps {
   children: ReactNode;
   wide?: boolean;
   closeDisabled?: boolean;
+  side?: boolean;
 }
 
 export default function Modal({
@@ -18,6 +19,7 @@ export default function Modal({
   children,
   wide,
   closeDisabled = false,
+  side = false,
 }: ModalProps) {
   const { t } = useTranslation();
   const titleId = useId();
@@ -64,7 +66,7 @@ export default function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className={`fixed inset-0 z-50 flex ${side ? 'items-stretch justify-end' : 'items-center justify-center'}`}>
       <button
         type="button"
         tabIndex={-1}
@@ -79,7 +81,7 @@ export default function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`relative bg-white rounded-xl shadow-xl ${wide ? 'w-full max-w-2xl' : 'w-full max-w-md'} max-h-[85vh] overflow-y-auto mx-4`}
+        className={`relative bg-white shadow-xl ${side ? 'w-full max-w-sm h-full overflow-y-auto' : `rounded-xl ${wide ? 'w-full max-w-2xl' : 'w-full max-w-md'} max-h-[85vh] overflow-y-auto mx-4`}`}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h2 id={titleId} className="text-lg font-semibold text-telivity-navy">{title}</h2>

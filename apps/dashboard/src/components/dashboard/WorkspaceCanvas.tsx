@@ -1,42 +1,419 @@
-import { Children, isValidElement, useState, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, GripVertical, Settings2, Trash2 } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
-import { CONFIGURABLE_WIDGETS, REPORT_WIDGETS, WIDGET_PERMISSIONS, type DashboardLayout, type WorkspaceWidget } from '../../lib/dashboard-layout';
-import { useAuth } from '../../context/AuthContext';
-import { useProperty } from '../../context/PropertyContext';
-import { QueryError } from '../ui/ErrorBoundary';
-import WorkspaceDataWidget from './WorkspaceDataWidget';
-import WorkspaceReportWidget from './WorkspaceReportWidget';
-export default function WorkspaceCanvas({ children, layout, pageId, onChange, queryStates = {} }: { queryStates?: Partial<Record<string, Array<{ isError: boolean; isPending: boolean; error?: unknown; refetch: () => Promise<unknown> }>>>; children: ReactNode; layout: DashboardLayout; pageId: string; onChange: (next: DashboardLayout) => void }) {
-  const { t } = useTranslation(); const { hasPermission } = useAuth(); const { properties } = useProperty();
-  const [dragged, setDragged] = useState<string | null>(null); const [editing, setEditing] = useState<string | null>(null);
-  const page = layout.pages.find(p => p.id === pageId) ?? layout.pages[0];
-  const content = new Map(Children.toArray(children).filter(isValidElement).map(child => [(child.props as Record<string, unknown>)['data-widget'], child]));
-  const update = (widgets: WorkspaceWidget[]) => onChange({ ...layout, pages: layout.pages.map(p => p.id === page.id ? { ...p, widgets } : p) });
-  const patch = (id: string, values: Partial<WorkspaceWidget>) => update(page.widgets.map(w => w.id === id ? { ...w, ...values } : w));
-  const move = (from: string, to: string) => {
-    const widgets = [...page.widgets]; const a = widgets.findIndex(w => w.id === from); const b = widgets.findIndex(w => w.id === to);
-    if (a < 0 || b < 0 || a === b) return; widgets.splice(b, 0, widgets.splice(a, 1)[0]); update(widgets);
+import {
+  Children,
+  isValidElement,
+  useState,
+  useEffect,
+  useRef,
+  type ReactNode,
+  type PointerEvent,
+} from "react";
+import { GripVertical, Settings2, Trash2, Expand } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import {
+  packWorkspace,
+  widgetDefaultGrid,
+  type WorkspaceGrid,
+} from "@telivityhaip/shared";
+import {
+  CONFIGURABLE_WIDGETS,
+  REPORT_WIDGETS,
+  WIDGET_PERMISSIONS,
+  type DashboardLayout,
+  type WorkspaceWidget,
+} from "../../lib/dashboard-layout";
+import { useAuth } from "../../context/AuthContext";
+import { useProperty } from "../../context/PropertyContext";
+import { QueryError } from "../ui/ErrorBoundary";
+import Modal from "../ui/Modal";
+import WorkspaceDataWidget from "./WorkspaceDataWidget";
+import WorkspaceReportWidget from "./WorkspaceReportWidget";
+import { projectWorkspace, commitGridChange } from "../../lib/workspace-grid";
+
+export default function WorkspaceCanvas({
+  children,
+  layout,
+  pageId,
+  onChange,
+  customizing = false,
+  queryStates = {},
+}: {
+  queryStates?: Partial<
+    Record<
+      string,
+      Array<{
+        isError: boolean;
+        isPending: boolean;
+        error?: unknown;
+        refetch: () => Promise<unknown>;
+      }>
+    >
+  >;
+  children: ReactNode;
+  layout: DashboardLayout;
+  pageId: string;
+  onChange: (next: DashboardLayout) => void;
+  customizing?: boolean;
+}) {
+  const { t } = useTranslation(),
+    { hasPermission } = useAuth(),
+    { properties } = useProperty();
+  const container = useRef<HTMLDivElement>(null),
+    [width, setWidth] = useState(1200),
+    [editing, setEditing] = useState<string | null>(null),
+    [preview, setPreview] = useState<WorkspaceWidget[] | null>(null),
+    [announcement, setAnnouncement] = useState("");
+  const gesture = useRef<{
+    id: string;
+    mode: "move" | "resize";
+    pointer: number;
+    sx: number;
+    sy: number;
+    grid: WorkspaceGrid;
+    current: WorkspaceGrid;
+  } | null>(null);
+  useEffect(() => {
+    const el = container.current;
+    if (!el) return;
+    const measure = () => setWidth(el.getBoundingClientRect().width);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    setPreview(null);
+    gesture.current = null;
+    setEditing(null);
+  }, [pageId, customizing]);
+  const page = layout.pages.find((p) => p.id === pageId) ?? layout.pages[0],
+    columns = width >= 1000 ? 12 : width >= 640 ? 8 : 4;
+  const projected = projectWorkspace(
+      page.widgets.filter((w) => hasPermission(...WIDGET_PERMISSIONS[w.type])),
+      columns,
+    ),
+    rendered = preview ?? projected;
+  const content = new Map(
+    Children.toArray(children)
+      .filter(isValidElement)
+      .map((c) => [(c.props as Record<string, unknown>)["data-widget"], c]),
+  );
+  const update = (widgets: WorkspaceWidget[]) =>
+    onChange({
+      ...layout,
+      version: 3,
+      pages: layout.pages.map((p) =>
+        p.id === page.id ? { ...p, widgets } : p,
+      ),
+    });
+  const patch = (id: string, values: Partial<WorkspaceWidget>) =>
+    update(
+      packWorkspace(
+        page.widgets.map((w) => (w.id === id ? { ...w, ...values } : w)),
+        12,
+        id,
+      ),
+    );
+  const commit = (id: string, grid: WorkspaceGrid) => {
+    update(commitGridChange(page.widgets, id, grid, columns));
+    setAnnouncement("Положение и размер изменены. Сохраните рабочий стол.");
   };
-  return <div className="workspace-canvas">{page.widgets.filter(w => hasPermission(...WIDGET_PERMISSIONS[w.type])).map((widget, index) => <section key={widget.id} className="workspace-tile group" style={{ '--tile-width': widget.width, '--tile-height': widget.height } as React.CSSProperties}
-    onDragOver={e => { if (dragged) e.preventDefault(); }} onDrop={e => { e.preventDefault(); if (dragged) move(dragged, widget.id); setDragged(null); }}>
-    <div className="flex flex-wrap items-center gap-1 border-b border-gray-100 bg-white p-2 text-xs">
-      <button draggable onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', widget.id); setDragged(widget.id); }} onDragEnd={() => setDragged(null)} className="cursor-grab rounded p-1" aria-label={t('workspace.drag', { name: t('workspace.widgets.' + widget.type) })}><GripVertical size={15}/></button>
-      <span className="flex-1 font-semibold text-telivity-navy">{t('workspace.widgets.' + widget.type)}</span>
-      <button disabled={index === 0} onClick={() => move(widget.id, page.widgets[index - 1].id)} aria-label={t('workspace.moveUp', { name: t('workspace.widgets.' + widget.type) })} className="rounded p-1 disabled:opacity-20"><ArrowLeft size={14}/></button>
-      <button disabled={index === page.widgets.length - 1} onClick={() => move(widget.id, page.widgets[index + 1].id)} aria-label={t('workspace.moveDown', { name: t('workspace.widgets.' + widget.type) })} className="rounded p-1 disabled:opacity-20"><ArrowRight size={14}/></button>
-      <button onClick={() => setEditing(editing === widget.id ? null : widget.id)} aria-label={t('workspace.widgetSettings')} className="rounded p-1"><Settings2 size={14}/></button>
-      <button onClick={() => update(page.widgets.filter(w => w.id !== widget.id))} aria-label={t('workspace.removeWidget')} className="rounded p-1"><Trash2 size={14}/></button>
-    </div>
-    {editing === widget.id && <div className="grid grid-cols-2 gap-2 border-b bg-gray-50 p-3 text-xs">
-      <label>{t('workspace.width')}<input type="range" min={1} max={3} value={widget.width} onChange={e => patch(widget.id, { width: Number(e.target.value) as 1|2|3 })}/></label>
-      <label>{t('workspace.height')}<input type="range" min={1} max={3} value={widget.height} onChange={e => patch(widget.id, { height: Number(e.target.value) as 1|2|3 })}/></label>
-      {CONFIGURABLE_WIDGETS.includes(widget.type) ? <>
-        <label>{t('workspace.property')}<select className="mt-1 w-full rounded border p-1" value={widget.settings.propertyId ?? ''} onChange={e => patch(widget.id, { settings: { ...widget.settings, propertyId: e.target.value || undefined } })}><option value="">{t('workspace.currentProperty')}</option>{properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-        {!['tasks','maintenance','requests','inhouse'].includes(widget.type) ? <label>{t('workspace.period')}<select className="mt-1 w-full rounded border p-1" value={widget.settings.period} onChange={e => patch(widget.id, { settings: { ...widget.settings, period: e.target.value as WorkspaceWidget['settings']['period'] } })}>{(REPORT_WIDGETS.includes(widget.type) ? widget.type === 'bookingPace' ? ['today','next7','next28','past7','past28'] : ['today','past7','past28'] : ['today','next7','next28']).map(p => <option key={p} value={p}>{t('workspace.periods.' + p)}</option>)}</select></label> : <p>{t('workspace.fixedPeriod')}</p>}
-        <label>{t('workspace.density')}<select className="mt-1 w-full rounded border p-1" value={widget.settings.density} onChange={e => patch(widget.id, { settings: { ...widget.settings, density: e.target.value as 'compact'|'comfortable' } })}>{['compact','comfortable'].map(d => <option key={d} value={d}>{t('workspace.' + d)}</option>)}</select></label>
-      </> : <p className="col-span-2 text-gray-500">{t('workspace.fixedPeriod')}</p>}
-    </div>}
-    <div className="min-h-0 flex-1 overflow-auto">{REPORT_WIDGETS.includes(widget.type) ? <WorkspaceReportWidget widget={widget}/> : CONFIGURABLE_WIDGETS.includes(widget.type) ? <WorkspaceDataWidget widget={widget}/> : queryStates[widget.type]?.some(q => q.isError) ? <QueryError error={queryStates[widget.type]?.find(q => q.isError)?.error} onRetry={() => { queryStates[widget.type]?.forEach(q => { void q.refetch(); }); }}/> : queryStates[widget.type]?.some(q => q.isPending) ? <p role="status" className="p-5 text-sm text-gray-500">{t('common.loading')}</p> : content.get(widget.type) ?? <p className="p-5 text-sm text-gray-500">{t('workspace.noData')}</p>}</div>
-  </section>)}</div>;
+  const start = (
+    e: PointerEvent<HTMLButtonElement>,
+    id: string,
+    mode: "move" | "resize",
+    grid: WorkspaceGrid,
+  ) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    gesture.current = {
+      id,
+      mode,
+      pointer: e.pointerId,
+      sx: e.clientX,
+      sy: e.clientY,
+      grid,
+      current: grid,
+    };
+  };
+  const change = (e: PointerEvent<HTMLButtonElement>) => {
+    const g = gesture.current;
+    if (!g || g.pointer !== e.pointerId) return;
+    const dx = Math.round((e.clientX - g.sx) / ((width + 12) / columns)),
+      dy = Math.round((e.clientY - g.sy) / 52);
+    g.current =
+      g.mode === "move"
+        ? {
+            ...g.grid,
+            x: Math.max(0, Math.min(columns - g.grid.w, g.grid.x + dx)),
+            y: Math.max(0, Math.min(1024, g.grid.y + dy)),
+          }
+        : {
+            ...g.grid,
+            w: Math.max(2, Math.min(columns - g.grid.x, g.grid.w + dx)),
+            h: Math.max(3, Math.min(16, g.grid.h + dy)),
+          };
+    setPreview(
+      packWorkspace(
+        projected.map((w) => (w.id === g.id ? { ...w, grid: g.current } : w)),
+        columns,
+        g.id,
+      ),
+    );
+  };
+  const finish = (e: PointerEvent<HTMLButtonElement>, cancel = false) => {
+    const g = gesture.current;
+    if (!g) return;
+    gesture.current = null;
+    setPreview(null);
+    if (e.currentTarget.hasPointerCapture(e.pointerId))
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    if (!cancel && JSON.stringify(g.current) !== JSON.stringify(g.grid))
+      commit(g.id, g.current);
+  };
+  const keyboard = (
+    event: React.KeyboardEvent,
+    id: string,
+    grid: WorkspaceGrid,
+    resize = false,
+  ) => {
+    if (event.key === "Escape") {
+      gesture.current = null;
+      setPreview(null);
+      return;
+    }
+    if (
+      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+    )
+      return;
+    event.preventDefault();
+    const dx =
+        event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0,
+      dy = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+    commit(
+      id,
+      resize || event.shiftKey
+        ? {
+            ...grid,
+            w: Math.max(2, Math.min(columns - grid.x, grid.w + dx)),
+            h: Math.max(3, Math.min(16, grid.h + dy)),
+          }
+        : {
+            ...grid,
+            x: Math.max(0, Math.min(columns - grid.w, grid.x + dx)),
+            y: Math.max(0, Math.min(1024, grid.y + dy)),
+          },
+    );
+  };
+  const selected = page.widgets.find((w) => w.id === editing);
+  return (
+    <>
+      <p className="sr-only" aria-live="polite">
+        {announcement}
+      </p>
+      {customizing && (
+        <p className="mb-3 text-xs text-gray-500">
+          Перетащите карточку за ручку; размер — в нижнем углу. Стрелки на ручке
+          — перемещение, Shift + стрелки — размер. Esc отменяет перетаскивание.
+        </p>
+      )}
+      <div
+        ref={container}
+        className={`workspace-canvas ${customizing ? "workspace-customizing" : ""}`}
+        style={{ gridTemplateColumns: `repeat(${columns},minmax(0,1fr))` }}
+      >
+        {rendered.map((widget) => {
+          const g = widget.grid ?? widgetDefaultGrid(widget.type),
+            name = t("workspace.widgets." + widget.type);
+          return (
+            <section
+              data-workspace-id={widget.id}
+              data-grid={JSON.stringify(g)}
+              key={widget.id}
+              className="workspace-tile"
+              style={{
+                gridColumn: `${g.x + 1} / span ${g.w}`,
+                gridRow: `${g.y + 1} / span ${g.h}`,
+              }}
+            >
+              <div className="workspace-tile-heading">
+                {customizing && (
+                  <button
+                    className="workspace-grip"
+                    aria-label={t("workspace.drag", { name })}
+                    onPointerDown={(e) => start(e, widget.id, "move", g)}
+                    onPointerMove={change}
+                    onPointerUp={(e) => finish(e)}
+                    onPointerCancel={(e) => finish(e, true)}
+                    onKeyDown={(e) => keyboard(e, widget.id, g)}
+                  >
+                    <GripVertical size={16} />
+                  </button>
+                )}
+                <h2 title={name}>{name}</h2>
+                {customizing && (
+                  <>
+                    <button
+                      aria-label={`Настройки: ${name}`}
+                      onClick={() => setEditing(widget.id)}
+                    >
+                      <Settings2 size={16} />
+                    </button>
+                    <button
+                      aria-label={`Удалить: ${name}`}
+                      onClick={() =>
+                        update(page.widgets.filter((w) => w.id !== widget.id))
+                      }
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </>
+                )}
+              </div>
+              <div className="workspace-tile-content">
+                {REPORT_WIDGETS.includes(widget.type) ? (
+                  <WorkspaceReportWidget widget={widget} />
+                ) : CONFIGURABLE_WIDGETS.includes(widget.type) ? (
+                  <WorkspaceDataWidget widget={widget} />
+                ) : queryStates[widget.type]?.some((q) => q.isError) ? (
+                  <QueryError
+                    error={
+                      queryStates[widget.type]?.find((q) => q.isError)?.error
+                    }
+                    onRetry={() => {
+                      queryStates[widget.type]?.forEach(
+                        (q) => void q.refetch(),
+                      );
+                    }}
+                  />
+                ) : queryStates[widget.type]?.some((q) => q.isPending) ? (
+                  <p role="status" className="p-5 text-sm text-gray-500">
+                    {t("common.loading")}
+                  </p>
+                ) : (
+                  (content.get(widget.type) ?? (
+                    <p className="p-5 text-sm text-gray-500">
+                      {t("workspace.noData")}
+                    </p>
+                  ))
+                )}
+              </div>
+              {customizing && (
+                <button
+                  className="workspace-resize"
+                  aria-label={`Изменить размер: ${name}`}
+                  onPointerDown={(e) => start(e, widget.id, "resize", g)}
+                  onPointerMove={change}
+                  onPointerUp={(e) => finish(e)}
+                  onPointerCancel={(e) => finish(e, true)}
+                  onKeyDown={(e) => keyboard(e, widget.id, g, true)}
+                >
+                  <Expand size={14} />
+                </button>
+              )}
+            </section>
+          );
+        })}
+      </div>
+      <Modal
+        side
+        open={!!selected && customizing}
+        onClose={() => setEditing(null)}
+        title={
+          selected
+            ? `Настройки · ${t("workspace.widgets." + selected.type)}`
+            : "Настройки карточки"
+        }
+      >
+        {selected && (
+          <div className="space-y-4">
+            <p className="text-xs text-gray-500">
+              Размер: {selected.grid?.w} × {selected.grid?.h}. Изменяйте его на
+              рабочем столе.
+            </p>
+            {CONFIGURABLE_WIDGETS.includes(selected.type) ? (
+              <>
+                <label className="block">
+                  Объект
+                  <select
+                    className="block w-full rounded border p-2"
+                    value={selected.settings.propertyId ?? ""}
+                    aria-label="Объект карточки"
+                    onChange={(e) =>
+                      patch(selected.id, {
+                        settings: {
+                          ...selected.settings,
+                          propertyId: e.target.value || undefined,
+                        },
+                      })
+                    }
+                  >
+                    <option value="">Текущий объект</option>
+                    {properties.map((p) => (
+                      <option value={p.id} key={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  Период
+                  <select
+                    disabled={["financialSummary", "tasks", "maintenance", "requests", "inhouse", "housekeeping"].includes(selected.type)}
+                    className="block w-full rounded border p-2"
+                    value={selected.settings.period}
+                    aria-label="Период карточки"
+                    onChange={(e) =>
+                      patch(selected.id, {
+                        settings: {
+                          ...selected.settings,
+                          period: e.target
+                            .value as WorkspaceWidget["settings"]["period"],
+                        },
+                      })
+                    }
+                  >
+                    {(REPORT_WIDGETS.includes(selected.type)
+                      ? selected.type === "bookingPace"
+                        ? ["today", "next7", "next28", "past7", "past28"]
+                        : ["today", "past7", "past28"]
+                      : ["today", "next7", "next28"]
+                    ).map((p) => (
+                      <option value={p} key={p}>
+                        {t("workspace.periods." + p)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block">
+                  Отображение
+                  <select
+                    className="block w-full rounded border p-2"
+                    value={selected.settings.density}
+                    aria-label="Отображение карточки"
+                    onChange={(e) =>
+                      patch(selected.id, {
+                        settings: {
+                          ...selected.settings,
+                          density: e.target.value as "compact" | "comfortable",
+                        },
+                      })
+                    }
+                  >
+                    {["compact", "comfortable"].map((d) => (
+                      <option key={d} value={d}>
+                        {t("workspace." + d)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </>
+            ) : (
+              <p>Карточка показывает операционные данные текущего объекта.</p>
+            )}
+          </div>
+        )}
+      </Modal>
+    </>
+  );
 }

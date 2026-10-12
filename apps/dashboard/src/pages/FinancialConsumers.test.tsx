@@ -18,6 +18,10 @@ beforeEach(() => {
     if (path.endsWith('business-date')) return Promise.resolve({ data: { date: options.params.propertyId === PROPERTY ? '2027-05-01' : '2027-05-02' } });
     if (path.includes('preferences')) return Promise.resolve({ data: {} });
     if (path.endsWith('management-summary') || path.endsWith('revenue-overview')) return Promise.resolve({ data: summary });
+    if (path.endsWith('management-report')) {
+      const metrics = {ly:null,lytd:null,plan:null,planToDate:null,actual:115,attainment:null,toDateVariance:null,remaining:null,forecast:null};
+      return Promise.resolve({data:{propertyId:options.params.propertyId,propertyName:'Hotel A',currencyCode:'KZT',timezone:'Asia/Almaty',period:{start:options.params.startDate,end:options.params.endDate,cutoff:options.params.date??'2027-05-01',businessDate:'2027-05-01'},revenueRows:[{id:'hotel',propertyId:options.params.propertyId,label:'Hotel A',depth:0,metrics}],expenseRows:[],totals:{revenue:metrics,expenses:{...metrics,actual:null},operatingResult:null},sources:{actual:'PARTIAL',history:'NO_DATA',budget:'NOT_CONFIGURED',expenses:'NOT_CONFIGURED',forecast:'INSUFFICIENT_HISTORY',operatingResult:'INSUFFICIENT_DATA'},inputs:{budget:null,expenses:null},daily:[],periods:{}}});
+    }
     return Promise.resolve({ data: { date: options.params.date, currencyCode: 'KZT', actual: { ...summary.financial.actual, value: state.missing ? null : 115, status: state.missing ? 'NO_POSTINGS' : 'PARTIAL' }, revenue: { total: 140, room: 100 }, netRevenueByCategory: { room: 75, foodBeverage: 25, other: 15, tax: 9 }, adjustments: 16 } });
   });
 });
@@ -59,15 +63,14 @@ describe('Live shared financial consumer boundary', () => {
   it('defaults Management to authoritative shared actuals, isolates demo and resets the live date on property switch', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = render(shell(<ManagementReport />, client, '/management'));
-    await screen.findByText('Total Revenue / Actual');
+    await screen.findByRole('heading', {name:'Управленческий отчёт'});
+    await screen.findByRole('table');
     expect(screen.queryByText('ДЕМО · MOCK DATA')).not.toBeInTheDocument();
     const date = view.container.querySelector('input[type="date"]')!;
     fireEvent.change(date, { target: { value: '2027-05-01' } });
-    await waitFor(() => expect(state.get).toHaveBeenCalledWith('/v1/reports/revenue-overview', expect.objectContaining({ params: { propertyId: PROPERTY, date: '2027-05-01' } })));
+    await waitFor(() => expect(state.get).toHaveBeenCalledWith('/v1/reports/management-report', expect.objectContaining({ params: expect.objectContaining({propertyId: PROPERTY, date: '2027-05-01'}) })));
     state.propertyId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa'; view.rerender(shell(<ManagementReport />, client, '/management'));
-    expect(view.container.querySelector('input[type="date"]')).toHaveValue('');
-    fireEvent.click(screen.getByRole('tab', { name: 'Демонстрация · MOCK DATA' }));
-    expect(screen.queryByText('Total Revenue / Actual')).not.toBeInTheDocument();
-    expect(screen.getByText('ДЕМО · MOCK DATA')).toBeInTheDocument();
+    await waitFor(() => expect(view.container.querySelector('input[type="date"]')).toHaveValue(''));
+    expect(screen.queryByRole('tab', { name: 'Демонстрация · MOCK DATA' })).not.toBeInTheDocument();
   });
 });

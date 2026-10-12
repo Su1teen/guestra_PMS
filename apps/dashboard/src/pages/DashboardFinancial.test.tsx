@@ -16,6 +16,7 @@ vi.mock('../components/dashboard/WorkspaceCanvas', () => ({ default: ({ children
 beforeEach(() => {
   localStorage.clear(); api.get.mockReset();
   const layout = workspaceTemplate();
+  layout.version = 2;
   layout.pages[0].widgets = [{ id: 'drr', type: 'drr', width: 3, height: 1, settings: { period: 'today', density: 'comfortable' } }];
   localStorage.setItem(layoutKey('financial-reader', PROPERTY), JSON.stringify(layout));
   api.get.mockImplementation((path: string) => Promise.resolve({ data: path.endsWith('management-summary')
@@ -38,6 +39,7 @@ describe('Dashboard financial completeness', () => {
   });
   it('keeps report errors inline instead of duplicating global validation toasts', async () => {
     const layout = workspaceTemplate();
+    layout.version = 2;
     layout.pages[0].widgets = [
       { id: 'metrics', type: 'metrics', width: 3, height: 1, settings: { period: 'today', density: 'comfortable' } },
       { id: 'drr', type: 'drr', width: 3, height: 1, settings: { period: 'today', density: 'comfortable' } },
