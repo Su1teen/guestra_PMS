@@ -782,16 +782,19 @@ export class FolioService {
     folioId: string,
     dto: CreateChargeDto,
     tx?: any,
-    persistence?: { parentChargeId?: string; sourceKey?: string },
+    persistence?: { parentChargeId?: string; sourceKey?: string; revenueRole?: 'deposit_credit' },
   ) {
     const publicInput = dto as unknown as Record<string, unknown>;
-    if (['isReversal', 'originalChargeId', 'parentChargeId', 'adjustsChargeId', 'sourceKey']
+    if (['isReversal', 'originalChargeId', 'parentChargeId', 'adjustsChargeId', 'sourceKey', 'revenueRole']
       .some((key) => publicInput[key] !== undefined)) {
       throw new BadRequestException(
         'Internal charge provenance cannot be supplied to generic charge posting',
       );
     }
     const db = tx ?? this.db;
+    if (persistence?.revenueRole && (dto.type !== 'adjustment' || !persistence.sourceKey?.startsWith('deposit:'))) {
+      throw new BadRequestException('Deposit credit requires immutable deposit provenance');
+    }
     const folio = await this.findById(folioId, dto.propertyId, tx);
     if (folio.status !== 'open') {
       throw new BadRequestException('Cannot post charge to a folio that is not open');
@@ -825,6 +828,7 @@ export class FolioService {
         isReversal: false,
         parentChargeId: persistence?.parentChargeId,
         sourceKey: persistence?.sourceKey,
+        revenueRole: persistence?.revenueRole ?? 'earned',
         postedBy: dto.postedBy,
       });
     const [charge] = persistence?.sourceKey
@@ -1112,6 +1116,8 @@ export class FolioService {
           serviceDate: original.serviceDate,
           isReversal: true,
           originalChargeId: chargeId,
+          revenueRole: original.revenueRole,
+          sourceKey: original.revenueRole === 'deposit_credit' ? `${original.sourceKey}:reversal` : undefined,
         })
         .returning();
 
@@ -1162,6 +1168,8 @@ export class FolioService {
             isReversal: true,
             originalChargeId: childCharge.id,
             parentChargeId: reversal.id,
+            revenueRole: childCharge.revenueRole,
+            sourceKey: childCharge.revenueRole === 'deposit_credit' ? `${childCharge.sourceKey}:reversal` : undefined,
           })
           .returning();
       }

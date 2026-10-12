@@ -2622,6 +2622,7 @@
     "dnr": "Guest is on the do-not-rent list"
   },
   "errorCodes": {
+    "CURRENCY_MISMATCH": "Financial records do not match the property currency. Reconcile the source records; totals cannot combine currencies without verified conversion.",
     "TAX_INCLUSIVE_NOT_REPRESENTABLE": "The gross price cannot be decomposed exactly with the configured tax rounding. Check the tariff and tax rules.",
     "QUOTE_CHANGED": "The price changed. Refresh the quote and accept the new total.",
     "REQUEST_CHANGED": "This request key was used for different booking details. Check the existing reservation.",

@@ -61,10 +61,15 @@ export interface RatePlanRecord {
   currencyCode: string; derivedAdjustmentType: string | null; derivedAdjustmentValue: string | null;
   losAdjustments?: unknown; occupancyBands?: unknown; isActive: boolean;
 }
+export interface ReceivablesSnapshot {
+  accountsReceivableDue: number | null;
+  accountsReceivableCurrencyStatus?: 'MATCHED' | 'CURRENCY_MISMATCH';
+  accountsReceivableByCurrency?: { currencyCode: string; due: number; credits: number }[];
+}
 export interface ManagementSummary {
   date: string; currencyCode: string;
   financial: { kpis: FinancialKpis; actual: ActualRevenue; deposits: { held: number; asOf: string };
-    outstandingBalances: { totalBalanceDue: number; accountsReceivableDue: number; creditBalances: number; asOf: string };
+    outstandingBalances: ReceivablesSnapshot & { totalBalanceDue: number; creditBalances: number; asOf: string };
     cash: { net: number; received: number; refunds: number } };
   periods: Record<string, ActualRevenue & { start: string; end: string }>;
   bookingWindow: { value: number | null; unit: string; sampleSize: number };

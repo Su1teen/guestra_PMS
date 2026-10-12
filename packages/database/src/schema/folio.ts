@@ -1,4 +1,5 @@
-import { foreignKey, pgTable, uuid, varchar, text, boolean, timestamp, numeric, pgEnum, uniqueIndex } from 'drizzle-orm/pg-core';
+import { check, foreignKey, pgTable, uuid, varchar, text, boolean, timestamp, numeric, pgEnum, uniqueIndex } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { properties } from './property.js';
 import { reservations, bookings } from './reservation.js';
 import { guests } from './guest.js';
@@ -113,6 +114,9 @@ export const charges = pgTable('charges', {
   // Stable, namespaced identity for conflict-safe system posting. Legacy and
   // manually entered rows remain NULL and cannot collide with these keys.
   sourceKey: varchar('source_key', { length: 255 }),
+  // Durable accounting classification: a deposit applied to a folio is a
+  // liability credit, not a negative earned-revenue adjustment.
+  revenueRole: varchar('revenue_role', { length: 32 }).notNull().default('earned'),
 
   // Night audit lock (KB 5.8: transactions locked after day close)
   isLocked: boolean('is_locked').notNull().default(false),
@@ -128,6 +132,11 @@ export const charges = pgTable('charges', {
     .on(table.propertyId, table.id),
   propertyFolioSourceKeyUnique: uniqueIndex('charges_property_folio_source_key_unique')
     .on(table.propertyId, table.folioId, table.sourceKey),
+  depositSourceUnique: uniqueIndex('charges_deposit_source_unique')
+    .on(table.propertyId, table.sourceKey).where(sql`${table.sourceKey} like 'deposit:%'`),
+  revenueRoleCheck: check('charges_revenue_role_check', sql`${table.revenueRole} in ('earned', 'deposit_credit')`),
+  depositCreditSourceCheck: check('charges_deposit_credit_source_check', sql`${table.revenueRole} <> 'deposit_credit' or
+    (${table.type} = 'adjustment' and ${table.sourceKey} is not null and ${table.sourceKey} like 'deposit:%')`),
   adjustsChargeOwnership: foreignKey({
     name: 'charges_adjusts_charge_property_fkey',
     columns: [table.propertyId, table.adjustsChargeId],

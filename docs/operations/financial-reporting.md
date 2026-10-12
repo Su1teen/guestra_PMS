@@ -10,14 +10,16 @@ canonical financial writes and their audit trails stay in the existing domains.
 The earned-revenue source is **signed `charges.amount`**, grouped by property,
 business date, charge type and currency. Include originals, signed amendment
 corrections and signed reversal rows exactly once. Do not negate a negative
-reversal again. Do not join reservations, bookings, folios or service sales to
-compute revenue: such joins duplicate service-only charges or omit non-stay sales.
+reversal again. Exclude structured deposit liability credits. Do not join
+reservations, bookings, folios or service sales to count revenue: such joins
+duplicate service-only charges or omit non-stay sales. Scoped one-to-one charge
+parent/original joins classify corrections without adding revenue rows.
 
 | Category | Source |
 | --- | --- |
-| Room Revenue | Net signed charges with `type = room` |
+| Room Revenue | Net signed `room` charges plus `adjustment` children of a same-property room charge and their signed reversals |
 | F&B Revenue | Net signed charges with `type = food_beverage` |
-| Ancillary Revenue | All remaining types except `room`, `food_beverage`, `tax`; includes minibar, spa, packages, fees and adjustments |
+| Ancillary Revenue | Remaining earned types except room-classified corrections, `food_beverage`, `tax`; includes minibar, spa, packages, fees and unallocated adjustments |
 | Separately posted tax | Net signed `type = tax` rows, including tax reversals |
 | Total earned revenue | Room + F&B + Ancillary, **excluding separately posted tax** |
 | Posted total | Earned revenue + separately posted tax; legacy `netRevenue` |
@@ -117,6 +119,121 @@ status contracts and must not be folded into actual totals.
 If the baseline exists but the current day has NO_POSTINGS, keep the known baseline
 value but return null deltas/percentage with CURRENT_NO_POSTINGS; do not invent a decline.
 
+## Deposit and correction provenance (migration 0040)
+
+`charges.revenueRole` defaults to `earned`. `deposit_credit` requires an immutable
+`deposit:` source key and adjustment type, enforced by the DB and internal folio
+posting boundary. It affects folio balance, not earned revenue, posted revenue tax
+totals, room KPI numerators or actual-posting completeness. Merely editing a
+description cannot make a charge a liability credit. Signed reversals keep the role
+and use the original key with `:reversal` suffix.
+
+| Posting | Immutable source key | Accounting treatment |
+| --- | --- | --- |
+| Apply held deposit | `deposit:<depositId>:apply` | Negative folio adjustment / `deposit_credit`; room100 + deposit40 stays earned100, folio balance60 |
+| Retained deposit covering policy fees | `deposit:<depositId>:forfeit-credit` | Negative liability credit, capped at net unallocated structured policy fees (signed fee reversals and earlier credits included) |
+| Remaining retained deposit | `deposit:<depositId>:forfeit` | Positive earned fee posting; never sum forfeited-status totals into earned revenue again |
+| Cancellation/no-show policy penalty | `settlement:<reservationId>:policy` | Earned fee, posted once for identical policy settlement retries |
+| Additive no-show fee | `settlement:<reservationId>:additional` | Earned fee, posted once independently of policy penalty |
+
+For example, penalty20 + forfeited deposit20 earns20, not40. If total structured
+penalties are25 and retained deposits30, earned revenue is30: fees25 plus residual5.
+Already-reversed fees do not consume a deposit. A closed/settled guest folio with
+unallocated penalties must be reopened through the existing workflow before
+forfeiture; no duplicate standalone income is silently created to bypass it.
+No reservation quote, forecast, deposit receipt or refundable-deposit status change
+is an earned posting. Refund state transitions do not themselves execute an external
+cash refund; existing payment/refund processing remains the cash source.
+
+Deposit transitions and settlement serialize on the same-property reservation,
+then lock the deposit. Folio credits, policy/residual fees, deposit state, actor
+audit rows and durable domain outbox records commit together. A durable outbox
+failure rolls back the whole financial transaction. Same terminal-state retries
+replay without reposting; a different terminal transition is rejected. Applying to
+a different property/reservation/currency or replaying to a different folio fails.
+Source keys are unique per property, including standalone forfeiture charges.
+Post-commit dispatch may retry; durable records, not a successful network callback,
+are the commit boundary. Internal cancellation/night-audit callers without actor
+context retain system/null actor fields; accounting controller operations include
+the authenticated audit actor. Reservation status claims remain owned by existing
+cancellation/night-audit flows, outside this financial transaction.
+
+Accepted-price custom room discounts/corrections stay in Room Revenue through
+`parentChargeId` (and scoped original-parent provenance for standalone reversal
+rows). Room100/custom discount-20 therefore gives room/total80 and ADR/RevPAR80 for
+one occupied/sellable room night. Reversing the canonical accepted group nets0.
+Separate tax children remain tax. A foreign-property parent cannot reclassify an
+adjustment; accepted prices and source identities are never rewritten.
+
+### Historical attribution and reconciliation limits
+
+Migration0040 defaults legacy charges to earned and audits every attribution.
+It marks only a **unique** applied deposit/charge match: same property, reservation
+folio and currency, exact negative amount, applied status/recognized timestamp,
+the exact legacy emitted shape, and posting/recognition within60seconds. Its unique
+signed reversal is also marked. The migration separately attributes uniquely
+identifiable canonical cancellation/no-show fees using exact emitted shape,
+matching reservation terminal state/time/currency/property and an associated
+deposit. Runtime reporting/settlement never matches free-text descriptions.
+
+Ambiguous/imported/multi-match historical credits or fees are deliberately not
+guessed. Historical forfeited entries with no charge are **not** silently synthesized
+as earned revenue or reposted on terminal retries. Such rows need reviewed
+reconciliation with deterministic original provenance before the affected periods
+can be called financially reconciled. This migration is not a bulk historical
+recognition or refund operation. Do not run it on production as a test.
+
+### Local verification / browser handoff
+
+Use an explicitly local scratch database. Required new core migration:
+`0040_deposit_revenue_provenance.sql` (in addition to the preceding migrations).
+Build the database package before API tests because API imports its `dist` schema.
+
+```sh
+pnpm --filter @telivityhaip/database build
+DATABASE_URL=postgresql://haip:haip@localhost:5432/haip_m2_test pnpm db:migrate
+PMS_LIVE_PG=1 DATABASE_URL=postgresql://haip:haip@localhost:5432/haip_m2_test \
+  pnpm --filter @telivityhaip/api exec vitest run \
+  src/modules/reports/deposit-provenance.postgres.spec.ts \
+  src/modules/reports/financial-foundation.postgres.spec.ts
+PMS_LIVE_PG=1 DATABASE_URL=postgresql://haip:haip@localhost:5432/haip_m2_test \
+  pnpm --filter @telivityhaip/database exec vitest run \
+  src/deposit-provenance-migration.postgres.spec.ts
+```
+
+The regression creates isolated synthetic properties/reservations/folios and
+cleans them afterwards; it is not a persistent browser seed. The historical test
+creates/drops its own local database and needs a test role with CREATEDB. For an
+empty browser-demo database, use the existing `DATABASE_URL=<local-demo-db> pnpm seed`
+script, then create an unused reservation/open guest folio through existing UI/API
+flows. Use that actual property currency and the report's selected operational date;
+do not rely on the test's fixed2027date or blindly reuse an already-charged folio.
+
+With `folios.manage`, `accounting.manage` and `reports.view`, verify these on the
+local API (base `/api/v1`); authenticating and browser setup remain the caller's task:
+
+1. Post a room100 charge to `/folios/<folioId>/charges`, with `propertyId`,
+   `currencyCode`, `serviceDate`, `type: room`, and `skipTaxCalculation: true` for this
+   tax-free fixture. Capture the report's initial signed actual.
+2. Record `/accounting/deposits` with `propertyId`, linked `reservationId`, amount40,
+   matching currency and `isRefundable: false`. Apply via
+   `/accounting/deposits/<id>/apply` with `propertyId` and `folioId`.
+   `/reports/financial-summary?propertyId=<id>&date=<date>` and Daily Revenue must
+   remain earned100/room100 (PARTIAL until audit close); folio balance becomes60.
+   Retry apply to the same folio: no duplicate credit. Foreign folio/property fails.
+3. On separate fixtures, held non-refundable20 → forfeit endpoint gives one earned20
+   fee; held refundable20 → refund endpoint leaves earned revenue unchanged.
+   Forfeit/refund use required `?propertyId=<id>`. Retry the same terminal action:
+   no duplicate charges or lifecycle events. A different terminal action fails.
+4. For a cancellation/no-show fixture whose configured policy posts penalty20 and
+   retains deposit20, compare before/after totals: penalty earns20, not40. An
+   additive configured no-show fee remains separately earned; retained-deposit
+   allocation cannot credit more than the net structured penalties.
+5. Accepted room100/custom discount-20 → room/total80 (one occupied/sellable night:
+   ADR/RevPAR80). Reverse the accepted base group, not its protected child: totals0.
+   Existing accepted-pricing workflow supplies provenance; generic charge posting
+   must never accept `sourceKey`, `revenueRole` or parent/reversal fields from clients.
+
 ## Cash and balance separation
 
 Use existing `reportPaymentSumWhere(propertyId)` rather than a second payment model:
@@ -207,9 +324,24 @@ OCC 0.5. Every Financial/Management/DRR/trend/period actual derives from those s
 
 ## Currency safety
 
-Single-property reports reject inconsistent source currencies with HTTP 400
-`CURRENCY_MISMATCH`; they never assume implicit FX rates. This includes charge,
-payment, deposit, open folio and A/R balance sources where consumed.
+Single-property earned/cash reports reject inconsistent charge, payment, deposit
+and open-folio currencies with HTTP 400 `CURRENCY_MISMATCH`; they never assume FX.
+Open A/R is a separate current snapshot, not an earned-revenue input. Financial,
+Revenue Overview and Management summaries expose `accountsReceivableByCurrency`
+with positive `due` and negative `credits` in each original currency. When any
+open A/R currency differs from the property, `accountsReceivableDue` and
+`accountsReceivableCredits` are **null**, and
+`accountsReceivableCurrencyStatus` is `CURRENCY_MISMATCH`. Valid earned KPIs still
+load. Dashboard and Revenue show a reconciliation notice with currency-labelled
+balances; they never label USD balances as KZT or replace the null total with zero.
+Empty or solely property-currency A/R keeps numeric compatibility totals and
+status `MATCHED`. Closed and other-property ledgers are excluded. Trial Balance
+remains fail-closed for all financial sources, including A/R and its transactions.
+The error response includes `code`, `source` and `expectedCurrency` so callers
+can distinguish reconciliation failures from invalid date input. Dashboard
+report widgets render these failures inline instead of duplicating global toasts.
+The occupancy/revenue trend uses the same scoped signed ledger classification
+as financial summaries, including room corrections and deposit-credit exclusions.
 
 Portfolio financial responses contain `currencyStatus`, nullable `currencyCode`,
 `byCurrency` and `byProperty`. With MIXED_CURRENCIES, combined `totalRevenue`,
@@ -234,5 +366,6 @@ charges, tax/cash/refunds, liabilities/credits/A/R, property and currency isolat
 local timestamp boundaries vs UTC business labels, night-audit closed zero vs missing
 history, periods, quote/forecast/actual separation, inventory blocks and releases,
 historical departure-exclusive occupancy, booking metrics, and concurrent snapshots.
-The CI core PostgreSQL release-smoke job runs both financial suites too. No browser
-or UI changes are part of M2; later stages own presentation and browser verification.
+The CI core PostgreSQL release-smoke jobs also run deposit provenance and the
+historical migration regression. These contracts feed the existing Revenue
+workspace and Dashboard; M3/M4 extensions remain separate milestones.

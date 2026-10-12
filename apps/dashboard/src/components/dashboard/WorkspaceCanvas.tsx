@@ -7,7 +7,7 @@ import { useProperty } from '../../context/PropertyContext';
 import { QueryError } from '../ui/ErrorBoundary';
 import WorkspaceDataWidget from './WorkspaceDataWidget';
 import WorkspaceReportWidget from './WorkspaceReportWidget';
-export default function WorkspaceCanvas({ children, layout, pageId, onChange, queryStates = {} }: { queryStates?: Partial<Record<string, Array<{ isError: boolean; isPending: boolean; refetch: () => Promise<unknown> }>>>; children: ReactNode; layout: DashboardLayout; pageId: string; onChange: (next: DashboardLayout) => void }) {
+export default function WorkspaceCanvas({ children, layout, pageId, onChange, queryStates = {} }: { queryStates?: Partial<Record<string, Array<{ isError: boolean; isPending: boolean; error?: unknown; refetch: () => Promise<unknown> }>>>; children: ReactNode; layout: DashboardLayout; pageId: string; onChange: (next: DashboardLayout) => void }) {
   const { t } = useTranslation(); const { hasPermission } = useAuth(); const { properties } = useProperty();
   const [dragged, setDragged] = useState<string | null>(null); const [editing, setEditing] = useState<string | null>(null);
   const page = layout.pages.find(p => p.id === pageId) ?? layout.pages[0];
@@ -37,6 +37,6 @@ export default function WorkspaceCanvas({ children, layout, pageId, onChange, qu
         <label>{t('workspace.density')}<select className="mt-1 w-full rounded border p-1" value={widget.settings.density} onChange={e => patch(widget.id, { settings: { ...widget.settings, density: e.target.value as 'compact'|'comfortable' } })}>{['compact','comfortable'].map(d => <option key={d} value={d}>{t('workspace.' + d)}</option>)}</select></label>
       </> : <p className="col-span-2 text-gray-500">{t('workspace.fixedPeriod')}</p>}
     </div>}
-    <div className="min-h-0 flex-1 overflow-auto">{REPORT_WIDGETS.includes(widget.type) ? <WorkspaceReportWidget widget={widget}/> : CONFIGURABLE_WIDGETS.includes(widget.type) ? <WorkspaceDataWidget widget={widget}/> : queryStates[widget.type]?.some(q => q.isError) ? <QueryError onRetry={() => { queryStates[widget.type]?.forEach(q => { void q.refetch(); }); }}/> : queryStates[widget.type]?.some(q => q.isPending) ? <p role="status" className="p-5 text-sm text-gray-500">{t('common.loading')}</p> : content.get(widget.type) ?? <p className="p-5 text-sm text-gray-500">{t('workspace.noData')}</p>}</div>
+    <div className="min-h-0 flex-1 overflow-auto">{REPORT_WIDGETS.includes(widget.type) ? <WorkspaceReportWidget widget={widget}/> : CONFIGURABLE_WIDGETS.includes(widget.type) ? <WorkspaceDataWidget widget={widget}/> : queryStates[widget.type]?.some(q => q.isError) ? <QueryError error={queryStates[widget.type]?.find(q => q.isError)?.error} onRetry={() => { queryStates[widget.type]?.forEach(q => { void q.refetch(); }); }}/> : queryStates[widget.type]?.some(q => q.isPending) ? <p role="status" className="p-5 text-sm text-gray-500">{t('common.loading')}</p> : content.get(widget.type) ?? <p className="p-5 text-sm text-gray-500">{t('workspace.noData')}</p>}</div>
   </section>)}</div>;
 }

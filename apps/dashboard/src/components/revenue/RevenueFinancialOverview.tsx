@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import { formatMoney } from '../../lib/money';
 import { propertyHref } from '../../lib/navigation';
 import { pricingError, ratioValue, realisedMoney, unwrap, type ManagementSummary } from '../../lib/live-revenue';
+import ReceivablesCurrencyNotice from './ReceivablesCurrencyNotice';
 
 export default function RevenueFinancialOverview({ propertyId, canRead, date }: { propertyId: string; canRead: boolean; date?: string }) {
   const { i18n } = useTranslation();
@@ -45,6 +46,7 @@ export default function RevenueFinancialOverview({ propertyId, canRead, date }: 
   return <section className="rounded-xl bg-white p-4 shadow-sm">
     <div className="mb-3 flex flex-wrap items-center justify-between gap-2"><div><h2 className="font-semibold text-telivity-navy">{text('Финансовый обзор', 'Financial overview')}</h2><p className="text-xs text-telivity-mid-grey">ReportsService · {text('Объект целиком, операционная дата', 'Whole property, operational date')}: {data.date} · {data.currencyCode}</p></div><span className="rounded-full bg-slate-100 px-3 py-1 text-xs">{actualLabel}</span></div>
     {f.actual.status !== 'COMPLETE' && <p role="status" className="mb-3 rounded-lg bg-amber-50 p-3 text-xs">{text('Данные неполные. Отсутствие проводок не означает нулевую выручку; незакрытые дни отображаются как PARTIAL.', 'Data is incomplete. Missing postings are not zero revenue; unclosed days are PARTIAL.')}</p>}
+    <ReceivablesCurrencyNotice balances={f.outstandingBalances} />
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">{metrics.map(([label, value, method]) => <div key={label} className="min-w-0 rounded-lg bg-slate-50 p-3"><p className="text-xs text-telivity-mid-grey">{label}</p><p className="mt-1 whitespace-nowrap text-lg font-semibold tabular-nums text-telivity-navy">{value}</p><p className="mt-1 text-[11px] text-telivity-mid-grey">{method}</p></div>)}</div>
     <div className="mt-3 grid gap-3 sm:grid-cols-3">{([['Forecast', data.forecast], ['Plan to Date', data.planToDate], ['GOP', data.gop]] as const).map(([label, metric]) => <div key={label} className="rounded-lg border p-3 text-xs"><p className="font-semibold">{label} · {metric.status}</p><p className="mt-1">— · {metric.reason}</p></div>)}</div>
     <p className="mt-3 text-xs text-telivity-mid-grey">{text('Источник Actual: ledger, по service/business date; налоги, сторно и сервисные начисления учитываются ReportsService один раз. Quotes, депозиты и cash не подменяют earned revenue. DRR — ежедневный отчёт, не процент.', 'Actual source: ledger by service/business date; ReportsService counts taxes, reversals and service charges once. Quotes, deposits and cash are not earned revenue. DRR is a daily report, not a ratio.')}</p>

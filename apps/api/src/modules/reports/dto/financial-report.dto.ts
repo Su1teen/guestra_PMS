@@ -121,12 +121,20 @@ export class FinancialKpisDto {
   @ApiProperty({ type: 'object', description: 'Explicit missing-denominator statuses for legacy numeric aliases' }) ratioStatus!: Record<string, string>;
 }
 
+export class ReceivablesCurrencyDto {
+  @ApiProperty() currencyCode!: string;
+  @ApiProperty({ description: 'Positive open A/R balances in this original currency only' }) due!: number;
+  @ApiProperty({ description: 'Negative open A/R credits in this original currency only' }) credits!: number;
+}
+
 export class OutstandingBalancesDto {
   @ApiProperty() totalFoliosOpen!: number;
   @ApiProperty({ description: 'Positive open-folio balances only, not offset by unrelated guest credits' }) totalBalanceDue!: number;
   @ApiProperty({ description: 'Negative open-folio credit balances separately' }) creditBalances!: number;
-  @ApiProperty({ description: 'Positive balances in open A/R ledgers, separately from guest folios' }) accountsReceivableDue!: number;
-  @ApiProperty() accountsReceivableCredits!: number;
+  @ApiProperty({ type: Number, nullable: true, description: 'Positive open A/R balances; null when original currencies differ from property currency' }) accountsReceivableDue!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) accountsReceivableCredits!: number | null;
+  @ApiProperty({ enum: ['MATCHED', 'CURRENCY_MISMATCH'] }) accountsReceivableCurrencyStatus!: string;
+  @ApiProperty({ type: [ReceivablesCurrencyDto], description: 'Independent currency buckets, never converted or summed across currencies' }) accountsReceivableByCurrency!: ReceivablesCurrencyDto[];
   @ApiProperty({ enum: ['CURRENT_SNAPSHOT'] }) asOf!: string;
 }
 

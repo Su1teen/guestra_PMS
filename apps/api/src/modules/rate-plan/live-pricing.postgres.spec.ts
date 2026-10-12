@@ -378,7 +378,18 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Live pricing real PostgreSQL tr
     expect(await svc.decideLiveChange(result.record.id, ids.a, 'apply', dto, actor)).toEqual({ record: applied.record, replayed: true });
     expect(await svc.approvalQueue(ids.a)).toHaveLength(0);
     expect(await svc.changeHistory(ids.a)).toHaveLength(1);
-    expect((await svc.pricingHistory(ids.a)).map(row => row.action)).toContain('apply');
+    const history = await svc.pricingHistory(ids.a);
+    expect(history.map(row => row.action)).toContain('apply');
+    const appliedAudit = history.find(row => row.action === 'apply')!;
+    const sequence = 9007199254740993n;
+    await db.update(auditLogs).set({ timelineSequence: sequence })
+      .where(and(eq(auditLogs.id, appliedAudit.id), eq(auditLogs.propertyId, ids.a)));
+    const response = await auth('get', 'pricing-history?propertyId=' + ids.a).expect(200);
+    expect(response.body.find((row: any) => row.id === appliedAudit.id)).toMatchObject({
+      propertyId: ids.a, action: 'apply', timelineSequence: sequence.toString(),
+    });
+    const serializedHistory = await svc.pricingHistory(ids.a);
+    expect(() => JSON.stringify(serializedHistory)).not.toThrow();
     expect((await plan()).baseAmount).toBe('120.00');
   });
 

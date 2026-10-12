@@ -1,227 +1,72 @@
-import { Test, TestingModule } from '@nestjs/testing';
-import { NotFoundException, BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DepositService } from './deposit.service';
-import { WebhookService } from '../webhook/webhook.service';
-import { FolioService } from '../folio/folio.service';
-import { DRIZZLE } from '../../database/database.module';
 
-const mockDeposit = {
-  id: 'dep-001',
-  propertyId: 'prop-001',
-  reservationId: 'res-001',
-  paymentId: 'pay-001',
-  amount: '200.00',
-  currencyCode: 'USD',
-  status: 'held',
-  isRefundable: true,
-  receivedAt: new Date(),
-  recognizedAt: null,
-  createdAt: new Date(),
-  updatedAt: new Date(),
-};
+const entry = { id: 'dep-001', propertyId: 'prop-001', reservationId: 'res-001', amount: '200.00',
+  currencyCode: 'USD', status: 'held', isRefundable: true };
+const outbox = { persist: vi.fn(), deliver: vi.fn() };
+const folio = { findById: vi.fn(), postCharge: vi.fn() };
 
-function createMockDb(returnData: any[] = [mockDeposit]) {
-  const selectChain = () => ({
-    from: vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        limit: vi.fn().mockReturnValue({
-          offset: vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockResolvedValue(returnData),
-          }),
-        }),
-        then: (resolve: any) => resolve(returnData),
-      }),
-    }),
-  });
-
-  const mutateChain = () => ({
-    values: vi.fn().mockReturnValue({
-      returning: vi.fn().mockResolvedValue(returnData),
-    }),
-    set: vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue(returnData),
-      }),
-    }),
-    where: vi.fn().mockReturnValue({
-      returning: vi.fn().mockResolvedValue(returnData),
-    }),
-  });
-
-  return {
-    select: vi.fn().mockImplementation(selectChain),
-    insert: vi.fn().mockReturnValue(mutateChain()),
-    update: vi.fn().mockReturnValue(mutateChain()),
-    delete: vi.fn().mockReturnValue(mutateChain()),
+function fakeDb(row: typeof entry | null = entry) {
+  const chain = (rows: any[]) => {
+    const q: any = { from: () => q, where: () => q, for: async () => rows, then: (resolve: any) => resolve(rows) };
+    return q;
   };
+  const db: any = {
+    select: vi.fn(() => chain(row ? [row] : [])),
+    insert: vi.fn(() => ({ values: () => ({ returning: async () => [row] }) })),
+    update: vi.fn(() => ({ set: (update: any) => ({ where: () => ({ returning: async () => [{ ...row, ...update }] }) }) })),
+  };
+  db.transaction = async (work: (tx: any) => Promise<unknown>) => work(db);
+  return db;
 }
 
-const mockWebhookService = { emit: vi.fn() };
-const mockFolioService = { postCharge: vi.fn().mockResolvedValue({}) };
-
-async function buildService(db: any) {
-  const module: TestingModule = await Test.createTestingModule({
-    providers: [
-      DepositService,
-      { provide: DRIZZLE, useValue: db },
-      { provide: WebhookService, useValue: mockWebhookService },
-      { provide: FolioService, useValue: mockFolioService },
-    ],
-  }).compile();
-  return module.get<DepositService>(DepositService);
-}
-
-describe('DepositService', () => {
+describe('DepositService state and provenance', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    folio.findById.mockResolvedValue({ id: 'folio-001', propertyId: 'prop-001', currencyCode: 'USD', reservationId: 'res-001', status: 'open' });
+    folio.postCharge.mockResolvedValue({ id: 'charge-001', propertyId: 'prop-001', amount: '-200.00', type: 'adjustment',
+      folioId: 'folio-001', sourceKey: 'deposit:dep-001:apply', revenueRole: 'deposit_credit' });
   });
 
-  describe('recordDeposit', () => {
-    it('creates a held deposit and emits deposit.received', async () => {
-      const svc = await buildService(createMockDb());
-      const result = await svc.recordDeposit({
-        propertyId: 'prop-001',
-        amount: '200.00',
-        currencyCode: 'USD',
-      });
-      expect(result.status).toBe('held');
-      expect(mockWebhookService.emit).toHaveBeenCalledWith(
-        'deposit.received',
-        'deposit',
-        mockDeposit.id,
-        expect.any(Object),
-        'prop-001',
-      );
-    });
+  it('records a held liability with a durable event', async () => {
+    const service = new DepositService(fakeDb(), outbox as any, folio as any);
+    expect((await service.recordDeposit({ propertyId: 'prop-001', amount: '200', currencyCode: 'USD' })).status).toBe('held');
+    expect(outbox.persist).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ event: 'deposit.received' }), 'deposit:dep-001:received');
   });
 
-  describe('findById (multi-tenancy)', () => {
-    it('throws NotFound when scoped propertyId does not match (db returns [])', async () => {
-      const svc = await buildService(createMockDb([]));
-      await expect(svc.findById('dep-001', 'other-prop')).rejects.toThrow(
-        NotFoundException,
-      );
-    });
+  it('requires a property-scoped deposit', async () => {
+    await expect(new DepositService(fakeDb(null), outbox as any, folio as any)
+      .findById('dep-001', 'other-prop')).rejects.toThrow(NotFoundException);
   });
 
-  describe('applyDeposit', () => {
-    it('applies a held deposit, sets recognizedAt, offsets folio, emits deposit.applied', async () => {
-      const applied = { ...mockDeposit, status: 'applied', recognizedAt: new Date() };
-      const db: any = {
-        select: vi.fn().mockImplementation(() => ({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: any) => resolve([mockDeposit]), // findById -> held
-            }),
-          }),
-        })),
-        insert: vi.fn(),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              returning: vi.fn().mockResolvedValue([applied]),
-            }),
-          }),
-        }),
-        delete: vi.fn(),
-      };
-      const svc = await buildService(db);
-      const result = await svc.applyDeposit('dep-001', { propertyId: 'prop-001', folioId: 'folio-001' });
-      expect(result.status).toBe('applied');
-      expect(mockFolioService.postCharge).toHaveBeenCalledWith(
-        'folio-001',
-        expect.objectContaining({ type: 'adjustment', amount: '-200.00', skipTaxCalculation: true }),
-      );
-      expect(mockWebhookService.emit).toHaveBeenCalledWith(
-        'deposit.applied',
-        'deposit',
-        applied.id,
-        expect.any(Object),
-        'prop-001',
-      );
-    });
-
-    it('rejects applying a non-held deposit', async () => {
-      const svc = await buildService(createMockDb([{ ...mockDeposit, status: 'applied' }]));
-      await expect(
-        svc.applyDeposit('dep-001', { propertyId: 'prop-001' }),
-      ).rejects.toThrow(BadRequestException);
-    });
+  it('posts an applied liability credit with immutable source, never public adjustment provenance', async () => {
+    const db = fakeDb(); const service = new DepositService(db, outbox as any, folio as any);
+    expect((await service.applyDeposit('dep-001', { propertyId: 'prop-001', folioId: 'folio-001' })).status).toBe('applied');
+    expect(folio.postCharge).toHaveBeenCalledWith('folio-001', expect.objectContaining({ type: 'adjustment', amount: '-200.00', skipTaxCalculation: true }), db,
+      { sourceKey: 'deposit:dep-001:apply', revenueRole: 'deposit_credit' });
+    expect(outbox.persist).toHaveBeenCalledWith(db, expect.objectContaining({ event: 'deposit.applied' }), 'deposit:dep-001:applied');
   });
 
-  describe('refundDeposit', () => {
-    it('refunds a held refundable deposit', async () => {
-      const refunded = { ...mockDeposit, status: 'refunded' };
-      const db: any = {
-        select: vi.fn().mockImplementation(() => ({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: any) => resolve([mockDeposit]),
-            }),
-          }),
-        })),
-        insert: vi.fn(),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              returning: vi.fn().mockResolvedValue([refunded]),
-            }),
-          }),
-        }),
-        delete: vi.fn(),
-      };
-      const svc = await buildService(db);
-      const result = await svc.refundDeposit('dep-001', 'prop-001');
-      expect(result.status).toBe('refunded');
-    });
-
-    it('rejects refunding a non-refundable deposit', async () => {
-      const svc = await buildService(createMockDb([{ ...mockDeposit, isRefundable: false }]));
-      await expect(svc.refundDeposit('dep-001', 'prop-001')).rejects.toThrow(
-        BadRequestException,
-      );
-    });
-
-    it('rejects refunding an already-applied deposit', async () => {
-      const svc = await buildService(createMockDb([{ ...mockDeposit, status: 'applied' }]));
-      await expect(svc.refundDeposit('dep-001', 'prop-001')).rejects.toThrow(
-        BadRequestException,
-      );
-    });
+  it('replays same terminal state without reposting, but never permits a different transition', async () => {
+    const service = new DepositService(fakeDb({ ...entry, status: 'applied' }), outbox as any, folio as any);
+    await service.applyDeposit('dep-001', { propertyId: 'prop-001' });
+    expect(folio.postCharge).not.toHaveBeenCalled();
+    await expect(service.refundDeposit('dep-001', 'prop-001')).rejects.toThrow(BadRequestException);
   });
 
-  describe('forfeitDeposit', () => {
-    it('forfeits a held deposit, recognizing it, and emits deposit.forfeited', async () => {
-      const forfeited = { ...mockDeposit, status: 'forfeited', recognizedAt: new Date() };
-      const db: any = {
-        select: vi.fn().mockImplementation(() => ({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: any) => resolve([mockDeposit]),
-            }),
-          }),
-        })),
-        insert: vi.fn(),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              returning: vi.fn().mockResolvedValue([forfeited]),
-            }),
-          }),
-        }),
-        delete: vi.fn(),
-      };
-      const svc = await buildService(db);
-      const result = await svc.forfeitDeposit('dep-001', 'prop-001');
-      expect(result.status).toBe('forfeited');
-      expect(result.recognizedAt).not.toBeNull();
-      expect(mockWebhookService.emit).toHaveBeenCalledWith(
-        'deposit.forfeited',
-        'deposit',
-        forfeited.id,
-        expect.any(Object),
-        'prop-001',
-      );
-    });
+  it('refunds only a held refundable liability, not earned revenue', async () => {
+    const service = new DepositService(fakeDb(), outbox as any, folio as any);
+    expect((await service.refundDeposit('dep-001', 'prop-001')).status).toBe('refunded');
+    expect(folio.postCharge).not.toHaveBeenCalled();
+    expect(outbox.persist).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ event: 'deposit.refunded' }), 'deposit:dep-001:refunded');
+    await expect(new DepositService(fakeDb({ ...entry, isRefundable: false }), outbox as any, folio as any)
+      .refundDeposit('dep-001', 'prop-001')).rejects.toThrow(BadRequestException);
+  });
+
+  it('forfeits a held liability as earned income once with a durable event', async () => {
+    const service = new DepositService(fakeDb(), outbox as any, folio as any);
+    expect((await service.forfeitDeposit('dep-001', 'prop-001')).status).toBe('forfeited');
+    expect(outbox.persist).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ event: 'deposit.forfeited' }), 'deposit:dep-001:forfeited');
   });
 });

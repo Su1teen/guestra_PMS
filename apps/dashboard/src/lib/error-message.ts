@@ -10,9 +10,9 @@ export function errorMessage(error: unknown): string {
   if (status && status >= 500) return i18n.t('systemErrors.server');
   const messages = e?.response?.data?.message ?? e?.message ?? (typeof error === 'string' ? error : '');
   const list = Array.isArray(messages) ? messages : [messages];
-  if (!i18n.resolvedLanguage?.startsWith('ru')) return list.join(', ') || i18n.t('errors.Request failed');
-  const code = e?.response?.data?.code;
+  const code = e?.response?.data?.code ?? (list.some(message => message.startsWith('CURRENCY_MISMATCH:')) ? 'CURRENCY_MISMATCH' : undefined);
   if (code && i18n.exists('errorCodes.' + code)) return i18n.t('errorCodes.' + code);
+  if (!i18n.resolvedLanguage?.startsWith('ru')) return list.join(', ') || i18n.t('errors.Request failed');
   const translated = list.map((message) => {
     const dictionary = i18n.getResource('ru', 'translation', 'errors') as Record<string, string>;
     if (dictionary?.[message]) return dictionary[message];

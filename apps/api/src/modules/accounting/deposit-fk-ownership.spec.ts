@@ -3,7 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { DepositService } from './deposit.service';
 import { DRIZZLE } from '../../database/database.module';
-import { WebhookService } from '../webhook/webhook.service';
+import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 import { FolioService } from '../folio/folio.service';
 
 const A = 'aaaaaaaa-0000-4000-a000-000000000001';
@@ -27,7 +27,7 @@ async function mkSvc(db: any) {
     providers: [
       DepositService,
       { provide: DRIZZLE, useValue: db },
-      { provide: WebhookService, useValue: { emit: vi.fn() } },
+      { provide: DomainEventOutboxService, useValue: { persist: vi.fn(), deliver: vi.fn() } },
       { provide: FolioService, useValue: {} },
     ],
   }).compile();
