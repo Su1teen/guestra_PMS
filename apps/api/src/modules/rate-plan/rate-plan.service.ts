@@ -336,9 +336,10 @@ export class RatePlanService {
 
   async pricingHistory(propertyId: string) {
     await this.property(propertyId, this.db);
-    return this.db.select().from(auditLogs).where(and(eq(auditLogs.propertyId, propertyId),
+    const history = await this.db.select().from(auditLogs).where(and(eq(auditLogs.propertyId, propertyId),
       or(eq(auditLogs.entityType, 'rate_plan'), eq(auditLogs.entityType, 'rate_restriction'), eq(auditLogs.entityType, 'rate_change')),
       sql`${auditLogs.description} not like 'Webhook event:%'`)).orderBy(desc(auditLogs.occurredAt)).limit(200);
+    return history.map((row: typeof auditLogs.$inferSelect) => ({ ...row, timelineSequence: row.timelineSequence.toString() }));
   }
 
   async liveCalendar(query: LiveCalendarQueryDto) {
