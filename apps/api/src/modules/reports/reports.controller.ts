@@ -11,7 +11,7 @@ import { PortfolioPropertyResolver } from './portfolio-property-resolver';
 import { RequirePermissions } from '../auth/permissions.decorator';
 import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
 import { ReportQueryDto } from './dto/report-query.dto';
-import { DailyRevenueResponseDto, FinancialSummaryResponseDto, ManagementSummaryResponseDto,
+import { BusinessDateResponseDto, DailyRevenueResponseDto, FinancialSummaryResponseDto, ManagementSummaryResponseDto,
   RevenuePeriodsResponseDto, RevenueTrendResponseDto, ReportRangeDto } from './dto/financial-report.dto';
 
 @ApiTags('reports')
@@ -59,12 +59,19 @@ export class ReportsController {
   @ApiOperation({ summary: 'Daily revenue report' })
   @ApiOkResponse({ type: DailyRevenueResponseDto })
   @ApiQuery({ name: 'propertyId', required: true })
-  @ApiQuery({ name: 'date', required: true })
+  @ApiQuery({ name: 'date', required: false })
   async getDailyRevenue(
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
-    @Query('date') date: string,
+    @Query('date') date?: string,
   ) {
     return this.reportsService.getDailyRevenue(propertyId, date);
+  }
+
+  @Get('/business-date')
+  @ApiOperation({ summary: 'Authoritative operational business date from completed audit or property timezone' })
+  @ApiOkResponse({ type: BusinessDateResponseDto })
+  async getBusinessDate(@Query() query: ReportQueryDto) {
+    return this.reportsService.getBusinessDate(query.propertyId);
   }
 
   @Get('/management-summary')
@@ -95,10 +102,10 @@ export class ReportsController {
   @ApiOperation({ summary: 'Financial summary (Manager\'s Report)' })
   @ApiOkResponse({ type: FinancialSummaryResponseDto })
   @ApiQuery({ name: 'propertyId', required: true })
-  @ApiQuery({ name: 'date', required: true })
+  @ApiQuery({ name: 'date', required: false })
   async getFinancialSummary(
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
-    @Query('date') date: string,
+    @Query('date') date?: string,
   ) {
     return this.reportsService.getFinancialSummary(propertyId, date);
   }
@@ -172,11 +179,11 @@ export class ReportsController {
 
   @Get('/portfolio/financial-summary')
   @ApiOperation({ summary: 'Portfolio financial summary across properties' })
-  @ApiQuery({ name: 'date', required: true })
+  @ApiQuery({ name: 'date', required: false, description: 'Omit for each property operational business date' })
   @ApiQuery({ name: 'organizationId', required: false })
   @ApiQuery({ name: 'propertyIds', required: false, description: 'Comma-separated property UUIDs' })
   async getPortfolioFinancialSummary(
-    @Query('date') date: string,
+    @Query('date') date: string | undefined,
     @Query('organizationId') organizationId: string | undefined,
     @Query('propertyIds') propertyIdsRaw: string | undefined,
     @CurrentUser() user?: AuthUser,
@@ -192,11 +199,11 @@ export class ReportsController {
 
   @Get('/portfolio/occupancy')
   @ApiOperation({ summary: 'Portfolio occupancy across properties' })
-  @ApiQuery({ name: 'date', required: true })
+  @ApiQuery({ name: 'date', required: false, description: 'Omit for each property operational business date' })
   @ApiQuery({ name: 'organizationId', required: false })
   @ApiQuery({ name: 'propertyIds', required: false, description: 'Comma-separated property UUIDs' })
   async getPortfolioOccupancy(
-    @Query('date') date: string,
+    @Query('date') date: string | undefined,
     @Query('organizationId') organizationId: string | undefined,
     @Query('propertyIds') propertyIdsRaw: string | undefined,
     @CurrentUser() user?: AuthUser,

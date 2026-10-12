@@ -34,6 +34,29 @@ function fixture(options: Record<string, any> = {}) {
 }
 
 describe('ReportsService shared foundation', () => {
+  it('resolves omitted daily / financial / portfolio dates from the same completed audit boundary', async () => {
+    const { service } = fixture({ audits: [{ businessDate: '2027-04-30' }] });
+    expect(await service.getBusinessDate(PROP)).toMatchObject({ date: DATE, timezone: 'Asia/Almaty', currencyCode: 'KZT' });
+    expect((await service.getDailyRevenue(PROP)).date).toBe(DATE);
+    expect((await service.getFinancialSummary(PROP)).date).toBe(DATE);
+    expect((await service.getPortfolioFinancialSummary([PROP])).byProperty[0]?.date).toBe(DATE);
+  });
+  it('resolves property-local midnight without using the browser timezone', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2027-04-30T20:30:00Z'));
+    try { expect((await fixture().service.getBusinessDate(PROP)).date).toBe(DATE); } finally { vi.useRealTimers(); }
+  });
+  it('preserves nullable portfolio Actual and ratios, with confirmed zero and partial coverage distinct', async () => {
+    const missing = await fixture().service.getPortfolioFinancialSummary([PROP], DATE);
+    expect(missing.actual).toMatchObject({ value: null, status: 'NO_POSTINGS', missingProperties: 1 });
+    expect(missing.kpis).toMatchObject({ totalRevenue: null, adr: null, revpar: null });
+    const complete = await fixture({ closedDays: 1 }).service.getPortfolioFinancialSummary([PROP], DATE);
+    expect(complete.actual).toMatchObject({ value: 0, status: 'COMPLETE', missingProperties: 0 });
+    const { service } = fixture(); const original = await service.getFinancialSummary(PROP, DATE);
+    (service as any).inSnapshot = true;
+    vi.spyOn(service, 'getFinancialSummary').mockImplementation(async (id) => id === PROP ? { ...original, actual: { ...original.actual, value: 115, status: 'COMPLETE' as const }, kpis: { ...original.kpis, roomRevenue: 75 } } : original);
+    const partial = await service.getPortfolioFinancialSummary([PROP, 'another'], DATE);
+    expect(partial.actual).toMatchObject({ value: 115, status: 'PARTIAL', propertiesWithActual: 1, missingProperties: 1 });
+  });
   it('sums signed charges by type without treating separately posted tax as earned revenue', async () => {
     const { service } = fixture({ charges: [charge('room', '3000'), charge('tax', '300'), charge('food_beverage', '500'), charge('room', '-50', true)] });
     const r = await service.getDailyRevenue(PROP, DATE);

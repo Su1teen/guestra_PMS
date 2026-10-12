@@ -47,6 +47,12 @@ export class ReportsService {
     return { property, date: reportDate(date ?? operationalDate), operationalDate };
   }
 
+  async getBusinessDate(propertyId: string) {
+    const { property, operationalDate } = await this.context(propertyId);
+    return { propertyId, date: operationalDate, timezone: property.timezone, currencyCode: property.currencyCode,
+      source: 'completed_night_audit_or_property_local_today' };
+  }
+
   /** serviceDate is an explicit UTC-encoded business-date label, not posting time. */
   private serviceDay() { return sql<string>`(${charges.serviceDate} at time zone 'UTC')::date`; }
 
@@ -138,12 +144,12 @@ export class ReportsService {
       net: received.minus(refunds).toNumber(), arTransfers: transfers.toNumber() };
   }
 
-  async getDailyRevenue(propertyId: string, requestedDate: string) {
-    reportDate(requestedDate);
+  async getDailyRevenue(propertyId: string, requestedDate?: string) {
+    if (requestedDate) reportDate(requestedDate);
     return this.inSnapshot ? this.readDailyRevenue(propertyId, requestedDate) : this.snapshot(service => service.readDailyRevenue(propertyId, requestedDate));
   }
 
-  private async readDailyRevenue(propertyId: string, requestedDate: string) {
+  private async readDailyRevenue(propertyId: string, requestedDate?: string) {
     const { property, date } = await this.context(propertyId, requestedDate);
     const [ledger, cash] = await Promise.all([
       this.ledger(propertyId, date, date, property.currencyCode),
@@ -278,12 +284,13 @@ export class ReportsService {
       arrivals, departures, stayovers, noShows, cancellations };
   }
 
-  async getFinancialSummary(propertyId: string, date: string) {
-    reportDate(date);
+  async getFinancialSummary(propertyId: string, date?: string) {
+    if (date) reportDate(date);
     return this.inSnapshot ? this.readFinancialSummary(propertyId, date) : this.snapshot(service => service.readFinancialSummary(propertyId, date));
   }
 
-  private async readFinancialSummary(propertyId: string, date: string) {
+  private async readFinancialSummary(propertyId: string, requestedDate?: string) {
+    const { date } = await this.context(propertyId, requestedDate);
     const [daily, occupancy] = await Promise.all([this.getDailyRevenue(propertyId, date), this.getOccupancy(propertyId, date)]);
     const [balances, deposits, lastAudit, receivables] = await Promise.all([
       this.db.select({ currencyCode: folios.currencyCode, count: sql<number>`count(*)::int`,
@@ -317,7 +324,9 @@ export class ReportsService {
         ancillaryRevenue: daily.netRevenueByCategory.other, separatelyPostedTax: daily.separatelyPostedTax,
         roomsSold: occupancy.occupiedRooms, availableRooms: occupancy.availableRooms,
         ratioStatus: { adr: adr === null ? 'NO_ROOMS_SOLD' : 'AVAILABLE',
-          revpar: revpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE' } },
+          revpar: revpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE',
+          trevpar: trevpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE',
+          occ: occupancy.occ === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE' } },
       actual: daily.actual, revenueByType: daily.revenueByType, paymentsByMethod: daily.cash.byMethod,
       cash: daily.cash, deposits: { held: Number(byStatus['held'] ?? 0), byStatus, asOf: 'CURRENT_SNAPSHOT' },
       outstandingBalances: { totalFoliosOpen: Number(balance?.count ?? 0),
@@ -654,33 +663,47 @@ export class ReportsService {
   /**
    * Portfolio financial summary — aggregates KPIs across multiple properties.
    */
-  async getPortfolioFinancialSummary(propertyIds: string[], date: string) {
+  async getPortfolioFinancialSummary(propertyIds: string[], date?: string) {
     return this.inSnapshot ? this.readPortfolioFinancialSummary(propertyIds, date) : this.snapshot(service => service.readPortfolioFinancialSummary(propertyIds, date));
   }
 
-  private async readPortfolioFinancialSummary(propertyIds: string[], date: string) {
+  private async readPortfolioFinancialSummary(propertyIds: string[], date?: string) {
     propertyIds = [...new Set(propertyIds)];
     const summaries = await Promise.all(propertyIds.map(id => this.getFinancialSummary(id, date)));
     const byProperty = summaries.map((summary, i) => ({ propertyId: propertyIds[i], currencyCode: summary.currencyCode,
-      ...summary.kpis, actual: summary.actual }));
+      date: summary.date, ...summary.kpis, actual: summary.actual }));
     const aggregate = (rows: typeof summaries) => {
       const sum = (key: 'totalRevenue' | 'roomRevenue' | 'roomsSold' | 'availableRooms') =>
         rows.reduce((total, row) => total.plus(row.kpis[key]), new Decimal(0)).toNumber();
-      return { totalRevenue: sum('totalRevenue'), roomRevenue: sum('roomRevenue'),
+      const available = rows.filter(row => row.actual.value !== null);
+      const status = rows.length > 0 && rows.every(row => row.actual.status === 'COMPLETE') ? 'COMPLETE' : available.length ? 'PARTIAL' : 'NO_POSTINGS';
+      const earned = available.length ? available.reduce((total, row) => total.plus(row.actual.value!), new Decimal(0)).toNumber() : null;
+      const room = available.length ? available.reduce((total, row) => total.plus(row.kpis.roomRevenue), new Decimal(0)).toNumber() : null;
+      const adr = room === null ? null : ratio(room, sum('roomsSold'));
+      const revpar = room === null ? null : ratio(room, sum('availableRooms'));
+      const trevpar = earned === null ? null : ratio(earned, sum('availableRooms'));
+      return { totalRevenue: earned, roomRevenue: room,
         totalRoomsSold: sum('roomsSold'), totalAvailableRooms: sum('availableRooms'),
-        occupancyRate: ratio(sum('roomsSold'), sum('availableRooms'), 4) ?? 0,
-        adr: ratio(sum('roomRevenue'), sum('roomsSold')) ?? 0,
-        revpar: ratio(sum('roomRevenue'), sum('availableRooms')) ?? 0,
-        trevpar: ratio(sum('totalRevenue'), sum('availableRooms')) };
+        occupancyRate: ratio(sum('roomsSold'), sum('availableRooms'), 4),
+        occ: ratio(sum('roomsSold'), sum('availableRooms'), 4), adr, revpar, trevpar,
+        ratioStatus: { adr: earned === null ? 'NO_POSTINGS' : adr === null ? 'NO_ROOMS_SOLD' : 'AVAILABLE',
+          revpar: earned === null ? 'NO_POSTINGS' : revpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE',
+          trevpar: earned === null ? 'NO_POSTINGS' : trevpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE' },
+        actual: { value: earned, status, source: 'charges.serviceDate',
+          closedDays: rows.reduce((n, row) => n + row.actual.closedDays, 0),
+          expectedDays: rows.reduce((n, row) => n + row.actual.expectedDays, 0),
+          propertiesWithActual: available.length, missingProperties: rows.length - available.length } };
     };
     const currencies = [...new Set(summaries.map(summary => summary.currencyCode))];
     const byCurrency = currencies.map(currencyCode => ({ currencyCode,
       ...aggregate(summaries.filter(summary => summary.currencyCode === currencyCode)) }));
     const combined = aggregate(summaries);
+    const { actual: combinedActual, ...combinedKpis } = combined;
     const mixed = currencies.length > 1;
-    return { date, propertyCount: propertyIds.length, propertyIds, currencyCode: mixed ? null : currencies[0] ?? null,
+    return { date: date ?? null, dateMode: date ? 'EXPLICIT' : 'PROPERTY_OPERATIONAL_DATE', propertyCount: propertyIds.length, propertyIds, currencyCode: mixed ? null : currencies[0] ?? null,
       currencyStatus: mixed ? 'MIXED_CURRENCIES' : 'SINGLE_CURRENCY',
-      kpis: { ...combined, totalRevenue: mixed ? null : combined.totalRevenue,
+      actual: { ...combinedActual, value: mixed ? null : combinedActual.value, status: mixed ? 'MIXED_CURRENCIES' : combinedActual.status },
+      kpis: { ...combinedKpis, totalRevenue: mixed ? null : combined.totalRevenue,
         roomRevenue: mixed ? null : combined.roomRevenue, adr: mixed ? null : combined.adr,
         revpar: mixed ? null : combined.revpar, trevpar: mixed ? null : combined.trevpar },
       byCurrency, byProperty };
@@ -689,7 +712,7 @@ export class ReportsService {
   /**
    * Portfolio occupancy — sums room counts and activity across properties.
    */
-  async getPortfolioOccupancy(propertyIds: string[], date: string) {
+  async getPortfolioOccupancy(propertyIds: string[], date?: string) {
     const rows = await Promise.all(
       propertyIds.map((id) => this.getOccupancy(id, date)),
     );
@@ -710,7 +733,8 @@ export class ReportsService {
       stayovers += r.stayovers ?? 0;
       return {
         propertyId,
-        occupancyRate: r.occupancyRate ?? 0,
+        date: r.date,
+        occupancyRate: r.availableRooms > 0 ? r.occupancyRate : null,
         occupiedRooms: r.occupiedRooms ?? 0,
         availableRooms: r.availableRooms ?? 0,
         arrivals: r.arrivals ?? 0,
@@ -718,7 +742,7 @@ export class ReportsService {
       };
     });
 
-    const occupancyRate = availableRooms > 0 ? occupiedRooms / availableRooms : 0;
+    const occupancyRate = availableRooms > 0 ? occupiedRooms / availableRooms : null;
 
     return {
       date,
@@ -727,8 +751,8 @@ export class ReportsService {
       totalRooms,
       availableRooms,
       occupiedRooms,
-      occupancyRate: Math.round(occupancyRate * 10000) / 10000,
-      occupancyPercent: `${(occupancyRate * 100).toFixed(1)}%`,
+      occupancyRate: occupancyRate === null ? null : Math.round(occupancyRate * 10000) / 10000,
+      occupancyPercent: occupancyRate === null ? 'N/A' : `${(occupancyRate * 100).toFixed(1)}%`,
       arrivals,
       departures,
       stayovers,

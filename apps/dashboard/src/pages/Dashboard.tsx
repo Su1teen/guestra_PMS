@@ -18,7 +18,7 @@ import {
   CalendarCheck,
   Download,
 } from 'lucide-react';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { format } from 'date-fns';
 import { api } from '../lib/api';
 import { formatOccupancyPercent } from '../lib/api-helpers';
@@ -35,6 +35,9 @@ import { errorMessage } from '../lib/error-message';
 import WorkspaceSettings from '../components/dashboard/WorkspaceSettings';
 import { layoutKey, parseLayout, visibleWidgets, type DashboardLayout } from '../lib/dashboard-layout';
 import { useAuth } from '../context/AuthContext';
+import { useOperationalDate } from '../hooks/useOperationalDate';
+import { reportedKpis } from '../lib/financial-presentation';
+import PortfolioRevenue from '../components/revenue/PortfolioRevenue';
 
 const ROOM_STATUS_COLORS: Record<string, string> = {
   occupied: '#06bdb4',
@@ -98,8 +101,9 @@ function PropertyDashboard() {
   const queryClient = useQueryClient();
   const now = new Date();
   const dateLocale = getDateLocale(i18n.resolvedLanguage);
-  const today = hotelDate(properties.find(p => p.id === propertyId)?.timezone, now);
-  const formattedToday = format(now, 'PPPP', { locale: dateLocale });
+  const businessDate = useOperationalDate(propertyId, !isPortfolioMode && hasPermission('reports.view'));
+  const today = businessDate.data?.date ?? hotelDate(properties.find(p => p.id === propertyId)?.timezone, now);
+  const formattedToday = businessDate.data?.date ?? (i18n.language.startsWith('ru') ? 'Операционная дата · загрузка' : 'Operational date · loading');
 
   const activeProperty = isPortfolioMode
     ? null
@@ -108,26 +112,26 @@ function PropertyDashboard() {
 
   const { data: portfolioFinancial } = useQuery({
     queryKey: ['reports', 'portfolio', 'financial-summary', today],
-    queryFn: () => api.get('/v1/reports/portfolio/financial-summary', { params: { date: today } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/reports/portfolio/financial-summary').then((r) => r.data),
     enabled: isPortfolioMode && hasPermission('reports.view'),
   });
 
   const { data: portfolioOccupancy } = useQuery({
     queryKey: ['reports', 'portfolio', 'occupancy', today],
-    queryFn: () => api.get('/v1/reports/portfolio/occupancy', { params: { date: today } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/reports/portfolio/occupancy').then((r) => r.data),
     enabled: isPortfolioMode && hasPermission('reports.view'),
   });
 
   const financialQuery = useQuery({
     queryKey: ['reports', 'financial-summary', propertyId, today],
-    queryFn: () => api.get('/v1/reports/financial-summary', { params: { propertyId, date: today } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/reports/financial-summary', { params: { propertyId } }).then((r) => r.data),
     enabled: ["metrics"].some(id => widgets.includes(id as typeof widgets[number])) && !!propertyId && !isPortfolioMode && hasPermission('reports.view'),
   });
 
   const financial = financialQuery.data;
   const occupancyQuery = useQuery({
     queryKey: ['reports', 'occupancy', propertyId, today],
-    queryFn: () => api.get('/v1/reports/occupancy', { params: { propertyId, date: today } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/reports/occupancy', { params: { propertyId } }).then((r) => r.data),
     enabled: ["metrics","rooms"].some(id => widgets.includes(id as typeof widgets[number])) && !!propertyId && !isPortfolioMode && hasPermission('reports.view'),
   });
 
@@ -169,7 +173,7 @@ function PropertyDashboard() {
   const agentStatuses = agentStatusesQuery.data;
   const managementQuery = useQuery({
     queryKey: ['reports', 'management-summary', propertyId, today],
-    queryFn: () => api.get('/v1/reports/management-summary', { params: { propertyId, date: today } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/reports/management-summary', { params: { propertyId } }).then((r) => r.data),
     enabled: ["drr","operations"].some(id => widgets.includes(id as typeof widgets[number])) && !!propertyId && !isPortfolioMode && hasPermission('management_dashboard.view'),
   });
 
@@ -212,14 +216,9 @@ function PropertyDashboard() {
   if (isPortfolioMode) {
     const fin = portfolioFinancial?.data ?? portfolioFinancial ?? {};
     const occ = portfolioOccupancy?.data ?? portfolioOccupancy ?? {};
-    const kpis = fin.kpis ?? {};
+    const kpis = reportedKpis(fin);
     const byProperty = fin.byProperty ?? [];
     const propertyNameMap = new Map(properties.map((p) => [p.id, p.name]));
-
-    const chartData = byProperty.map((row: { propertyId: string; totalRevenue: number }) => ({
-      name: propertyNameMap.get(row.propertyId) ?? row.propertyId.slice(0, 8),
-      revenue: row.totalRevenue,
-    }));
 
     return (
       <div>
@@ -240,38 +239,25 @@ function PropertyDashboard() {
           />
           <KpiCard
             title={t('dashboard.portfolio.adr')}
-            value={kpis.adr != null ? formatMoney(kpis.adr, currencyCode) : '—'}
+            value={formatMoney(kpis.adr, fin.currencyCode)}
             subtitle={t('dashboard.portfolio.weightedAverage')}
             icon={DollarSign}
           />
           <KpiCard
             title={t('dashboard.portfolio.revpar')}
-            value={kpis.revpar != null ? formatMoney(kpis.revpar, currencyCode) : '—'}
+            value={formatMoney(kpis.revpar, fin.currencyCode)}
             subtitle={t('dashboard.portfolio.acrossAllProperties')}
             icon={TrendingUp}
           />
           <KpiCard
             title={t('dashboard.portfolio.totalRevenueToday')}
-            value={kpis.totalRevenue != null ? formatMoney(kpis.totalRevenue, currencyCode) : '—'}
+            value={formatMoney(kpis.totalRevenue, fin.currencyCode)}
             subtitle={t('dashboard.portfolio.arrivalsAndDepartures', { arrivals: occ.arrivals ?? 0, departures: occ.departures ?? 0 })}
             icon={BedDouble}
           />
         </div>
 
-        {chartData.length > 0 && (
-          <div className="bg-white rounded-xl shadow-sm p-5 mb-6">
-            <h2 className="text-sm font-semibold text-telivity-navy mb-4">{t('dashboard.portfolio.revenueByProperty')}</h2>
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v: number) => [formatMoney(v, currencyCode), t('dashboard.portfolio.revenue')]} />
-                <Bar dataKey="revenue" fill="#06bdb4" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
+        <PortfolioRevenue data={fin} names={propertyNameMap} />
 
         <div className="bg-white rounded-xl shadow-sm p-5">
           <h2 className="text-sm font-semibold text-telivity-navy mb-4">{t('dashboard.portfolio.propertyBreakdown')}</h2>
@@ -287,7 +273,7 @@ function PropertyDashboard() {
                 </tr>
               </thead>
               <tbody>
-                {byProperty.map((row: { propertyId: string; occupancyRate: number; adr: number; revpar: number; totalRevenue: number }) => (
+                {byProperty.map((row: any) => (
                   <tr key={row.propertyId} className="border-b border-gray-50 last:border-0">
                     <td className="py-2.5 font-medium text-telivity-navy">
                       <button
@@ -298,9 +284,9 @@ function PropertyDashboard() {
                       </button>
                     </td>
                     <td className="py-2.5">{formatOccupancyPercent(row.occupancyRate)}</td>
-                    <td className="py-2.5">{formatMoney(row.adr, currencyCode)}</td>
-                    <td className="py-2.5">{formatMoney(row.revpar, currencyCode)}</td>
-                    <td className="py-2.5">{formatMoney(row.totalRevenue, currencyCode)}</td>
+                    <td className="py-2.5 whitespace-nowrap">{formatMoney(reportedKpis(row).adr, row.currencyCode)}</td>
+                    <td className="py-2.5 whitespace-nowrap">{formatMoney(reportedKpis(row).revpar, row.currencyCode)}</td>
+                    <td className="py-2.5 whitespace-nowrap">{formatMoney(reportedKpis(row).totalRevenue, row.currencyCode)} · {row.actual?.status} · {row.date}</td>
                   </tr>
                 ))}
               </tbody>
@@ -313,7 +299,7 @@ function PropertyDashboard() {
 
   const occ = occupancy?.data ?? occupancy ?? {};
   const fin = financial?.data ?? financial ?? {};
-  const kpis = fin.kpis ?? {};
+  const kpis = reportedKpis(fin);
   const arrList = arrivals?.data ?? arrivals ?? [];
   const depList = departures?.data ?? departures ?? [];
   const ihList = inHouse?.data ?? inHouse ?? [];
@@ -373,6 +359,7 @@ function PropertyDashboard() {
         {hasPermission('reservations.read') && <button className="rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-telivity-slate" onClick={() => navigate('/reservations/calendar')}>{t('workspace.calendar')}</button>}
       </nav>
       {widgets.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-telivity-mid-grey">{t('workspace.empty')}</p>}
+      <p role="status" className="mb-3 text-xs">{fin.date ?? businessDate.data?.date} · {fin.actual?.status ?? 'UNKNOWN'} · {fin.actual?.closedDays}/{fin.actual?.expectedDays} · charges.serviceDate · Signed earned revenue; cash, deposits and separately posted tax are not actual revenue.</p>
       <WorkspaceCanvas layout={layout} pageId={pageId} onChange={saveLayout} queryStates={{ metrics: [financialQuery, occupancyQuery], rooms: [roomSummaryQuery, arrivalsQuery, departuresQuery, inHouseQuery], drr: [managementQuery], operations: [attentionQuery], revenue: [agentStatusesQuery] }}>
       {drr && (
         <section className="bg-white rounded-xl shadow-sm p-5 mb-6" data-widget="drr">

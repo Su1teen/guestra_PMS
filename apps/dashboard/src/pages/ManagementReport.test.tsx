@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
-import ManagementReport from './ManagementReport';
+import { DemoManagementReport as ManagementReport } from './ManagementReport';
 
 // По умолчанию раскрыты отели (видны направления), статьи свёрнуты —
 // как в исходной версии отчёта. Страница работает без API: это демо-модель.

@@ -7,6 +7,14 @@ export class ReportRangeDto {
   @ApiProperty({ example: '2027-05-31' }) @IsDateString() @Matches(/^\d{4}-\d{2}-\d{2}$/) endDate!: string;
 }
 
+export class BusinessDateResponseDto {
+  @ApiProperty({ format: 'uuid' }) propertyId!: string;
+  @ApiProperty() date!: string;
+  @ApiProperty() timezone!: string;
+  @ApiProperty() currencyCode!: string;
+  @ApiProperty() source!: string;
+}
+
 export class RevenueCategoriesDto {
   @ApiProperty() room!: number;
   @ApiProperty({ description: 'Separately posted tax, excluded from earned revenue' }) tax!: number;

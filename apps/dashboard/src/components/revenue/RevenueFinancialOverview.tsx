@@ -6,13 +6,13 @@ import { formatMoney } from '../../lib/money';
 import { propertyHref } from '../../lib/navigation';
 import { pricingError, ratioValue, realisedMoney, unwrap, type ManagementSummary } from '../../lib/live-revenue';
 
-export default function RevenueFinancialOverview({ propertyId, canRead }: { propertyId: string; canRead: boolean }) {
+export default function RevenueFinancialOverview({ propertyId, canRead, date }: { propertyId: string; canRead: boolean; date?: string }) {
   const { i18n } = useTranslation();
   const ru = i18n.language.startsWith('ru');
   const text = (r: string, e: string) => ru ? r : e;
   const summary = useQuery<ManagementSummary>({
-    queryKey: ['reports', 'management-summary', propertyId, 'operational'],
-    queryFn: ({ signal }) => api.get('/v1/reports/management-summary', { params: { propertyId }, signal }).then(r => unwrap(r.data)),
+    queryKey: ['reports', 'management-summary', propertyId, date || 'operational'],
+    queryFn: ({ signal }) => api.get('/v1/reports/management-summary', { params: { propertyId, date: date || undefined }, signal }).then(r => unwrap(r.data)),
     enabled: canRead,
   });
   if (!canRead) return <p>{text('Для KPI требуется reports.view.', 'KPIs require reports.view.')}</p>;
