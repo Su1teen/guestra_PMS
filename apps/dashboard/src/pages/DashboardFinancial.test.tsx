@@ -25,6 +25,17 @@ beforeEach(() => {
 });
 
 describe('Dashboard financial completeness', () => {
+  it('keeps shared financial data visible and shows original-currency receivables on the main page', async () => {
+    api.get.mockImplementation((path: string) => Promise.resolve({ data: path.endsWith('management-summary')
+      ? { data: { ...summary, financial: { ...summary.financial, outstandingBalances: {
+        ...summary.financial.outstandingBalances, accountsReceivableDue: null, accountsReceivableCurrencyStatus: 'CURRENCY_MISMATCH',
+        accountsReceivableByCurrency: [{ currencyCode: 'USD', due: 250, credits: -80 }] } } } }
+      : { persistent: false } }));
+    renderWithProviders(<Dashboard />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('A/R');
+    expect(screen.getByRole('alert')).toHaveTextContent('USD');
+    expect(screen.getByText(/COMPLETE · 1\/1 · charges.serviceDate/)).toBeInTheDocument();
+  });
   it('keeps report errors inline instead of duplicating global validation toasts', async () => {
     const layout = workspaceTemplate();
     layout.pages[0].widgets = [

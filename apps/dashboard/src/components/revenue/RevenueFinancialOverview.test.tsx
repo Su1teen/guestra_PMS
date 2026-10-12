@@ -12,6 +12,17 @@ function mount(canRead = true) {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><RevenueFinancialOverview propertyId={PROPERTY} canRead={canRead} /></MemoryRouter></QueryClientProvider>);
 }
 describe('ReportsService financial overview', () => {
+  it('renders currency-separated A/R while retaining valid earned KPIs', async () => {
+    api.get.mockResolvedValue({ data: { ...summary, financial: { ...summary.financial,
+      outstandingBalances: { ...summary.financial.outstandingBalances, accountsReceivableDue: null,
+        accountsReceivableCurrencyStatus: 'CURRENCY_MISMATCH', accountsReceivableByCurrency: [{ currencyCode: 'USD', due: 250, credits: -30 }] } } } });
+    mount(); await screen.findByText('Total Revenue / Actual');
+    expect(within(screen.getByText('A/R').parentElement!).getByText('—')).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('receivables');
+    expect(screen.getByRole('alert')).toHaveTextContent(formatMoney(250, 'USD', 'en'));
+    expect(screen.getByRole('alert')).toHaveTextContent(formatMoney(-30, 'USD', 'en'));
+    expect(screen.getByText('Total Revenue / Actual').parentElement!.children[1].textContent).toBe(formatMoney(12500, 'KZT', 'en'));
+  });
   it('renders reconciled ledger amounts, operational date and currency, not cash/deposits as actual', async () => {
     mount(); await screen.findByText('Total Revenue / Actual');
     const card = screen.getByText('Total Revenue / Actual').parentElement!;

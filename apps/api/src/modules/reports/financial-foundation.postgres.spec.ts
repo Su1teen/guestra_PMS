@@ -141,6 +141,41 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Shared financial contracts on P
     expect(r.kpis.totalRevenue).toBe(0);
   });
 
+  it('loads Dashboard/DRR with legacy USD receivables without relabelling them as property KZT', async () => {
+    await db.insert(arLedgers).values([
+      { propertyId: a, name: 'Legacy corporate', currencyCode: 'USD', balance: '250' },
+      { propertyId: a, name: 'Legacy credit', currencyCode: 'USD', balance: '-80' },
+    ]);
+    const financial = await service.getFinancialSummary(a, date);
+    expect(financial.actual).toMatchObject({ value: null, status: 'NO_POSTINGS' });
+    expect(financial.outstandingBalances).toMatchObject({ totalBalanceDue: 150,
+      accountsReceivableDue: null, accountsReceivableCredits: null,
+      accountsReceivableCurrencyStatus: 'CURRENCY_MISMATCH',
+      accountsReceivableByCurrency: [{ currencyCode: 'USD', due: 250, credits: -80 }] });
+    expect((await service.getManagementSummary(a, date)).financial).toEqual(financial);
+    expect((await service.getRevenueOverview(a, date)).financial).toEqual(financial);
+    expect((await db.select().from(arLedgers).where(eq(arLedgers.propertyId, a))).map(row => row.currencyCode)).toEqual(['USD', 'USD']);
+    await expect(service.dailyTrialBalance(a, date)).rejects.toMatchObject({ status: 400, message: expect.stringContaining('CURRENCY_MISMATCH') });
+  });
+
+  it('keeps earned KPIs available while grouping open receivables by original currency and property', async () => {
+    await post('100');
+    await db.insert(arLedgers).values([
+      { propertyId: a, name: 'Local', currencyCode: 'KZT', balance: '50' },
+      { propertyId: a, name: 'USD due', currencyCode: 'USD', balance: '250' },
+      { propertyId: a, name: 'USD credit', currencyCode: 'USD', balance: '-30' },
+      { propertyId: a, name: 'Closed', currencyCode: 'EUR', balance: '900', status: 'closed' },
+      { propertyId: b, name: 'Foreign', currencyCode: 'EUR', balance: '800' },
+    ]);
+    const financial = await service.getFinancialSummary(a, date);
+    expect(financial.actual.value).toBe(100);
+    expect(financial.outstandingBalances.accountsReceivableDue).toBeNull();
+    expect(financial.outstandingBalances.accountsReceivableByCurrency).toEqual(expect.arrayContaining([
+      { currencyCode: 'KZT', due: 50, credits: 0 }, { currencyCode: 'USD', due: 250, credits: -30 },
+    ]));
+    expect(financial.outstandingBalances.accountsReceivableByCurrency).toHaveLength(2);
+  });
+
   it('isolates all property ledgers and buckets portfolios by currency without FX assumptions', async () => {
     await post('10');
     await post('500', { propertyId: b, folioId: foreignFolio, currencyCode: 'USD' });

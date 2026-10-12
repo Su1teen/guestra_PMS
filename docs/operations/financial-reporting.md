@@ -324,9 +324,19 @@ OCC 0.5. Every Financial/Management/DRR/trend/period actual derives from those s
 
 ## Currency safety
 
-Single-property reports reject inconsistent source currencies with HTTP 400
-`CURRENCY_MISMATCH`; they never assume implicit FX rates. This includes charge,
-payment, deposit, open folio and A/R balance sources where consumed.
+Single-property earned/cash reports reject inconsistent charge, payment, deposit
+and open-folio currencies with HTTP 400 `CURRENCY_MISMATCH`; they never assume FX.
+Open A/R is a separate current snapshot, not an earned-revenue input. Financial,
+Revenue Overview and Management summaries expose `accountsReceivableByCurrency`
+with positive `due` and negative `credits` in each original currency. When any
+open A/R currency differs from the property, `accountsReceivableDue` and
+`accountsReceivableCredits` are **null**, and
+`accountsReceivableCurrencyStatus` is `CURRENCY_MISMATCH`. Valid earned KPIs still
+load. Dashboard and Revenue show a reconciliation notice with currency-labelled
+balances; they never label USD balances as KZT or replace the null total with zero.
+Empty or solely property-currency A/R keeps numeric compatibility totals and
+status `MATCHED`. Closed and other-property ledgers are excluded. Trial Balance
+remains fail-closed for all financial sources, including A/R and its transactions.
 The error response includes `code`, `source` and `expectedCurrency` so callers
 can distinguish reconciliation failures from invalid date input. Dashboard
 report widgets render these failures inline instead of duplicating global toasts.

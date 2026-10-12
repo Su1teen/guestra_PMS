@@ -38,6 +38,7 @@ import { useAuth } from '../context/AuthContext';
 import { useOperationalDate } from '../hooks/useOperationalDate';
 import { reportedKpis } from '../lib/financial-presentation';
 import PortfolioRevenue from '../components/revenue/PortfolioRevenue';
+import ReceivablesCurrencyNotice from '../components/revenue/ReceivablesCurrencyNotice';
 
 const ROOM_STATUS_COLORS: Record<string, string> = {
   occupied: '#06bdb4',
@@ -360,6 +361,7 @@ function PropertyDashboard() {
       </nav>
       {widgets.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-telivity-mid-grey">{t('workspace.empty')}</p>}
       {fin.actual && <p role="status" className="mb-3 text-xs">{fin.date ?? managementData?.date ?? businessDate.data?.date} · {fin.actual.status} · {fin.actual.closedDays}/{fin.actual.expectedDays} · charges.serviceDate · Signed earned revenue; cash, deposits and separately posted tax are not actual revenue.</p>}
+      <ReceivablesCurrencyNotice balances={fin.outstandingBalances} />
       <WorkspaceCanvas layout={layout} pageId={pageId} onChange={saveLayout} queryStates={{ metrics: [financialQuery, occupancyQuery], rooms: [roomSummaryQuery, arrivalsQuery, departuresQuery, inHouseQuery], drr: [managementQuery], operations: [attentionQuery], revenue: [agentStatusesQuery] }}>
       {drr && (
         <section className="bg-white rounded-xl shadow-sm p-5 mb-6" data-widget="drr">

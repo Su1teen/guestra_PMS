@@ -329,7 +329,7 @@ export class ReportsService {
         .groupBy(arLedgers.currencyCode),
     ]);
     this.assertCurrency(balances, daily.currencyCode, 'folios'); this.assertCurrency(deposits, daily.currencyCode, 'deposits');
-    this.assertCurrency(receivables, daily.currencyCode, 'accounts_receivable');
+    const receivablesMatch = receivables.every((row: any) => row.currencyCode === daily.currencyCode);
     const balance = balances[0];
     const byStatus = Object.fromEntries(deposits.map((row: any) => [row.status, Number(row.total)]));
     const adr = ratio(daily.netRevenueByCategory.room, occupancy.occupiedRooms);
@@ -349,7 +349,11 @@ export class ReportsService {
       cash: daily.cash, deposits: { held: Number(byStatus['held'] ?? 0), byStatus, asOf: 'CURRENT_SNAPSHOT' },
       outstandingBalances: { totalFoliosOpen: Number(balance?.count ?? 0),
         totalBalanceDue: Number(balance?.totalBalance ?? 0), creditBalances: Number(balance?.credits ?? 0),
-        accountsReceivableDue: Number(receivables[0]?.due ?? 0), accountsReceivableCredits: Number(receivables[0]?.credits ?? 0),
+        accountsReceivableDue: receivablesMatch ? Number(receivables[0]?.due ?? 0) : null,
+        accountsReceivableCredits: receivablesMatch ? Number(receivables[0]?.credits ?? 0) : null,
+        accountsReceivableCurrencyStatus: receivablesMatch ? 'MATCHED' : 'CURRENCY_MISMATCH',
+        accountsReceivableByCurrency: receivables.map((row: any) => ({ currencyCode: row.currencyCode,
+          due: Number(row.due), credits: Number(row.credits) })),
         asOf: 'CURRENT_SNAPSHOT' },
       auditStatus: { lastAuditDate: lastAudit[0]?.businessDate ?? null,
         lastAuditStatus: lastAudit[0]?.status ?? null, errorsInLastAudit: lastAudit[0]?.errors?.length ?? 0 } };
