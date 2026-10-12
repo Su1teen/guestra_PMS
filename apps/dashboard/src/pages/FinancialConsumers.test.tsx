@@ -17,7 +17,7 @@ beforeEach(() => {
   state.get.mockImplementation((path, options) => {
     if (path.endsWith('business-date')) return Promise.resolve({ data: { date: options.params.propertyId === PROPERTY ? '2027-05-01' : '2027-05-02' } });
     if (path.includes('preferences')) return Promise.resolve({ data: {} });
-    if (path.endsWith('management-summary')) return Promise.resolve({ data: summary });
+    if (path.endsWith('management-summary') || path.endsWith('revenue-overview')) return Promise.resolve({ data: summary });
     return Promise.resolve({ data: { date: options.params.date, currencyCode: 'KZT', actual: { ...summary.financial.actual, value: state.missing ? null : 115, status: state.missing ? 'NO_POSTINGS' : 'PARTIAL' }, revenue: { total: 140, room: 100 }, netRevenueByCategory: { room: 75, foodBeverage: 25, other: 15, tax: 9 }, adjustments: 16 } });
   });
 });
@@ -63,7 +63,7 @@ describe('Live shared financial consumer boundary', () => {
     expect(screen.queryByText('ДЕМО · MOCK DATA')).not.toBeInTheDocument();
     const date = view.container.querySelector('input[type="date"]')!;
     fireEvent.change(date, { target: { value: '2027-05-01' } });
-    await waitFor(() => expect(state.get).toHaveBeenCalledWith('/v1/reports/management-summary', expect.objectContaining({ params: { propertyId: PROPERTY, date: '2027-05-01' } })));
+    await waitFor(() => expect(state.get).toHaveBeenCalledWith('/v1/reports/revenue-overview', expect.objectContaining({ params: { propertyId: PROPERTY, date: '2027-05-01' } })));
     state.propertyId = 'aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa'; view.rerender(shell(<ManagementReport />, client, '/management'));
     expect(view.container.querySelector('input[type="date"]')).toHaveValue('');
     fireEvent.click(screen.getByRole('tab', { name: 'Демонстрация · MOCK DATA' }));

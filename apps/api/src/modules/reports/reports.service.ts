@@ -428,6 +428,18 @@ export class ReportsService {
       gop: { value: null, status: 'UNAVAILABLE', reason: 'No confirmed operating expense source' } };
   }
 
+  async getRevenueOverview(propertyId: string, requestedDate?: string) {
+    return this.inSnapshot ? this.readRevenueOverview(propertyId, requestedDate) : this.snapshot(service => service.readRevenueOverview(propertyId, requestedDate));
+  }
+
+  private async readRevenueOverview(propertyId: string, requestedDate?: string) {
+    const { date } = await this.context(propertyId, requestedDate);
+    const [financial, periods] = await Promise.all([
+      this.getFinancialSummary(propertyId, date), this.getRevenuePeriods(propertyId, date),
+    ]);
+    return { ...periods, financial };
+  }
+
   /** Management/DRR and Dashboard share the exact ledger and financial KPI contracts. */
   async getManagementSummary(propertyId: string, requestedDate?: string) {
     return this.inSnapshot ? this.readManagementSummary(propertyId, requestedDate) : this.snapshot(service => service.readManagementSummary(propertyId, requestedDate));

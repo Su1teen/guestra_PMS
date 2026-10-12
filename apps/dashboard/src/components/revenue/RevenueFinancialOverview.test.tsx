@@ -21,7 +21,7 @@ describe('ReportsService financial overview', () => {
     expect(screen.getByText(/Forecast · INSUFFICIENT_HISTORY/)).toBeInTheDocument();
     expect(screen.getByText('Plan to Date · NO_PLAN')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open DRR & reconciliation' })).toHaveAttribute('href', `/reports?report=daily-revenue&propertyId=${PROPERTY}`);
-    expect(api.get).toHaveBeenCalledWith('/v1/reports/management-summary', expect.objectContaining({ params: { propertyId: PROPERTY } }));
+    expect(api.get).toHaveBeenCalledWith('/v1/reports/revenue-overview', expect.objectContaining({ params: { propertyId: PROPERTY } }));
     for (const label of ['MTD', 'YTD', 'LY', 'LYTD', 'Room Revenue', 'F&B Revenue', 'Ancillary Revenue', 'ALOS']) expect(screen.getByText(label)).toBeInTheDocument();
   });
   it('renders missing actuals as unavailable and partial coverage honestly', async () => {

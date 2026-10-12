@@ -11,8 +11,8 @@ export default function RevenueFinancialOverview({ propertyId, canRead, date }: 
   const ru = i18n.language.startsWith('ru');
   const text = (r: string, e: string) => ru ? r : e;
   const summary = useQuery<ManagementSummary>({
-    queryKey: ['reports', 'management-summary', propertyId, date || 'operational'],
-    queryFn: ({ signal }) => api.get('/v1/reports/management-summary', { params: { propertyId, date: date || undefined }, signal }).then(r => unwrap(r.data)),
+    queryKey: ['reports', 'revenue-overview', propertyId, date || 'operational'],
+    queryFn: ({ signal }) => api.get('/v1/reports/revenue-overview', { params: { propertyId, date: date || undefined }, signal }).then(r => unwrap(r.data)),
     enabled: canRead,
   });
   if (!canRead) return <p>{text('Для KPI требуется reports.view.', 'KPIs require reports.view.')}</p>;

@@ -172,8 +172,11 @@ export class RevenuePeriodsResponseDto {
   @ApiProperty({ type: UnavailableMetricDto }) gop!: UnavailableMetricDto;
 }
 
-export class ManagementSummaryResponseDto extends RevenuePeriodsResponseDto {
+export class RevenueOverviewResponseDto extends RevenuePeriodsResponseDto {
   @ApiProperty({ type: FinancialSummaryResponseDto }) financial!: FinancialSummaryResponseDto;
+}
+
+export class ManagementSummaryResponseDto extends RevenueOverviewResponseDto {
   @ApiProperty({ type: 'object', description: 'Daily shared KPIs and operational activity; money uses net earned revenue' }) today!: Record<string, unknown>;
   @ApiProperty({ type: 'object', description: 'Daily Revenue Report (not a ratio); same KPIs plus pickup/pace/channelMix/MTD/comparisons. forecastRevenue is nullable and never a quote.' }) drr!: Record<string, unknown>;
 }

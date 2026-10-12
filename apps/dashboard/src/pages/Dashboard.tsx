@@ -298,7 +298,8 @@ function PropertyDashboard() {
   }
 
   const occ = occupancy?.data ?? occupancy ?? {};
-  const fin = financial?.data ?? financial ?? {};
+  const managementData = management?.data ?? management;
+  const fin = financial?.data ?? financial ?? managementData?.financial ?? {};
   const kpis = reportedKpis(fin);
   const arrList = arrivals?.data ?? arrivals ?? [];
   const depList = departures?.data ?? departures ?? [];
@@ -316,7 +317,6 @@ function PropertyDashboard() {
 
   const totalRooms = chartData.reduce((sum: number, d: { value: number }) => sum + d.value, 0);
   const occupiedCount = chartData.find((d: { status: string }) => d.status === 'occupied')?.value ?? 0;
-  const managementData = management?.data ?? management;
   const drr = managementData?.drr;
   const todayOps = managementData?.today;
   const attentionItems = (attention?.data ?? attention)?.items ?? [];
@@ -359,7 +359,7 @@ function PropertyDashboard() {
         {hasPermission('reservations.read') && <button className="rounded-lg border bg-white px-4 py-2 text-sm font-semibold text-telivity-slate" onClick={() => navigate('/reservations/calendar')}>{t('workspace.calendar')}</button>}
       </nav>
       {widgets.length === 0 && <p className="rounded-xl border border-dashed p-8 text-center text-telivity-mid-grey">{t('workspace.empty')}</p>}
-      <p role="status" className="mb-3 text-xs">{fin.date ?? businessDate.data?.date} · {fin.actual?.status ?? 'UNKNOWN'} · {fin.actual?.closedDays}/{fin.actual?.expectedDays} · charges.serviceDate · Signed earned revenue; cash, deposits and separately posted tax are not actual revenue.</p>
+      {fin.actual && <p role="status" className="mb-3 text-xs">{fin.date ?? managementData?.date ?? businessDate.data?.date} · {fin.actual.status} · {fin.actual.closedDays}/{fin.actual.expectedDays} · charges.serviceDate · Signed earned revenue; cash, deposits and separately posted tax are not actual revenue.</p>}
       <WorkspaceCanvas layout={layout} pageId={pageId} onChange={saveLayout} queryStates={{ metrics: [financialQuery, occupancyQuery], rooms: [roomSummaryQuery, arrivalsQuery, departuresQuery, inHouseQuery], drr: [managementQuery], operations: [attentionQuery], revenue: [agentStatusesQuery] }}>
       {drr && (
         <section className="bg-white rounded-xl shadow-sm p-5 mb-6" data-widget="drr">

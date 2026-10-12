@@ -12,7 +12,7 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
 import { ReportQueryDto } from './dto/report-query.dto';
 import { BusinessDateResponseDto, DailyRevenueResponseDto, FinancialSummaryResponseDto, ManagementSummaryResponseDto,
-  RevenuePeriodsResponseDto, RevenueTrendResponseDto, ReportRangeDto, PortfolioFinancialResponseDto } from './dto/financial-report.dto';
+  RevenuePeriodsResponseDto, RevenueOverviewResponseDto, RevenueTrendResponseDto, ReportRangeDto, PortfolioFinancialResponseDto } from './dto/financial-report.dto';
 
 @ApiTags('reports')
 @Controller('reports')
@@ -49,6 +49,7 @@ export class ReportsController {
         'occupancy-trend',
         'revenue-trend',
         'revenue-periods',
+        'revenue-overview',
         'pickup',
         'booking-pace',
       ],
@@ -72,6 +73,13 @@ export class ReportsController {
   @ApiOkResponse({ type: BusinessDateResponseDto })
   async getBusinessDate(@Query() query: ReportQueryDto) {
     return this.reportsService.getBusinessDate(query.propertyId);
+  }
+
+  @Get('/revenue-overview')
+  @ApiOperation({ summary: 'Revenue workspace financial overview using shared reporting contracts' })
+  @ApiOkResponse({ type: RevenueOverviewResponseDto })
+  async getRevenueOverview(@Query() query: ReportQueryDto) {
+    return this.reportsService.getRevenueOverview(query.propertyId, query.date);
   }
 
   @Get('/management-summary')

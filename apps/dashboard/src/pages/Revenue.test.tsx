@@ -11,7 +11,7 @@ vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ user: { sub: 'actor
 vi.mock('./RevenueAdvanced', () => ({ default: () => <div>Preserved Advanced Tools</div> }));
 beforeEach(() => {
   state.propertyId = PROPERTY; state.allowed = true; sessionStorage.clear(); state.get.mockReset();
-  state.get.mockImplementation((path: string) => Promise.resolve({ data: path.endsWith('management-summary') ? summary : path.endsWith('live-calendar') ? calendar : path === '/v1/rate-plans' ? [plan] : [] }));
+  state.get.mockImplementation((path: string) => Promise.resolve({ data: path.endsWith('revenue-overview') ? summary : path.endsWith('live-calendar') ? calendar : path === '/v1/rate-plans' ? [plan] : [] }));
 });
 function mount(path = '/revenue') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
