@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import Reports from './Reports';
 import ManagementReport from './ManagementReport';
+import PortfolioRevenue from '../components/revenue/PortfolioRevenue';
 import { summary, PROPERTY } from '../test/revenue-fixtures';
 import { formatMoney } from '../lib/money';
 const state = vi.hoisted(() => ({ get: vi.fn(), propertyId: 'bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb', portfolio: false, missing: false }));
@@ -11,6 +12,7 @@ vi.mock('../lib/api', () => ({ api: { get: state.get, patch: vi.fn() } }));
 vi.mock('../context/AuthContext', () => ({ useAuth: () => ({ hasPermission: () => true }) }));
 vi.mock('../context/PropertyContext', () => ({ useProperty: () => ({ propertyId: state.propertyId, currencyCode: state.portfolio ? null : 'KZT', isPortfolioMode: state.portfolio, properties: [{ id: PROPERTY, name: 'Hotel A' }] }) }));
 beforeEach(() => {
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
   state.propertyId = PROPERTY; state.portfolio = false; state.missing = false; state.get.mockReset();
   state.get.mockImplementation((path, options) => {
     if (path.endsWith('business-date')) return Promise.resolve({ data: { date: options.params.propertyId === PROPERTY ? '2027-05-01' : '2027-05-02' } });
@@ -23,6 +25,20 @@ function shell(children: React.ReactNode, client = new QueryClient({ defaultOpti
   return <QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}>{children}</MemoryRouter></QueryClientProvider>;
 }
 describe('Live shared financial consumer boundary', () => {
+  it('renders mixed USD/KZT portfolios as separate currency groups and keeps missing property actuals unavailable', () => {
+    const actual = { value: 115, status: 'PARTIAL', closedDays: 0, expectedDays: 1 };
+    const row = { totalRevenue: 115, roomRevenue: 75, roomsSold: 1, availableRooms: 2, adr: 75, revpar: 37.5, trevpar: 57.5, occupancyRate: 50, actual };
+    const data = { currencyStatus: 'MIXED_CURRENCIES', actual: { value: null, status: 'MIXED_CURRENCIES' },
+      byCurrency: [{ ...row, currencyCode: 'KZT' }, { ...row, currencyCode: 'USD', totalRevenue: 50, actual: { ...actual, value: 50 } }],
+      byProperty: [{ ...row, propertyId: PROPERTY, currencyCode: 'KZT', date: '2027-05-01' }, { ...row, propertyId: 'other', currencyCode: 'USD', date: '2027-05-02', actual: { ...actual, value: null, status: 'NO_POSTINGS' } }] };
+    render(shell(<PortfolioRevenue data={data} names={new Map([[PROPERTY, 'Hotel A']])} />));
+    expect(screen.getByText(/MIXED_CURRENCIES/)).toBeInTheDocument();
+    expect(screen.getByText(/\$50\.00/)).toBeInTheDocument();
+    expect(screen.getAllByText(/KZT 115\.00/)).toHaveLength(2);
+    expect(screen.getByText(/2027-05-02 · NO_POSTINGS/)).toBeInTheDocument();
+    expect(screen.getByText(/— · USD/)).toBeInTheDocument();
+    expect(screen.queryByText(/165\.00/)).not.toBeInTheDocument();
+  });
   it('renders signed earned daily actuals/taxes/status and requests the operational date, resetting on property switch', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const view = render(shell(<Reports />, client));

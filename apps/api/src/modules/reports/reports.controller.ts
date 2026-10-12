@@ -12,7 +12,7 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { CurrentUser, type AuthUser } from '../auth/current-user.decorator';
 import { ReportQueryDto } from './dto/report-query.dto';
 import { BusinessDateResponseDto, DailyRevenueResponseDto, FinancialSummaryResponseDto, ManagementSummaryResponseDto,
-  RevenuePeriodsResponseDto, RevenueTrendResponseDto, ReportRangeDto } from './dto/financial-report.dto';
+  RevenuePeriodsResponseDto, RevenueTrendResponseDto, ReportRangeDto, PortfolioFinancialResponseDto } from './dto/financial-report.dto';
 
 @ApiTags('reports')
 @Controller('reports')
@@ -179,6 +179,7 @@ export class ReportsController {
 
   @Get('/portfolio/financial-summary')
   @ApiOperation({ summary: 'Portfolio financial summary across properties' })
+  @ApiOkResponse({ type: PortfolioFinancialResponseDto })
   @ApiQuery({ name: 'date', required: false, description: 'Omit for each property operational business date' })
   @ApiQuery({ name: 'organizationId', required: false })
   @ApiQuery({ name: 'propertyIds', required: false, description: 'Comma-separated property UUIDs' })

@@ -32,6 +32,53 @@ export class ActualRevenueDto {
   @ApiProperty() expectedDays!: number;
 }
 
+export class PortfolioActualDto {
+  @ApiProperty({ type: Number, nullable: true }) value!: number | null;
+  @ApiProperty({ enum: ['COMPLETE', 'PARTIAL', 'NO_POSTINGS', 'MIXED_CURRENCIES'] }) status!: string;
+  @ApiProperty() source!: string;
+  @ApiProperty() closedDays!: number;
+  @ApiProperty() expectedDays!: number;
+  @ApiProperty() propertiesWithActual!: number;
+  @ApiProperty() missingProperties!: number;
+}
+
+export class PortfolioFinancialKpisDto {
+  @ApiProperty({ type: Number, nullable: true }) totalRevenue!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) roomRevenue!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) adr!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) revpar!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) trevpar!: number | null;
+  @ApiProperty({ type: Number, nullable: true }) occupancyRate!: number | null;
+  @ApiProperty() roomsSold!: number;
+  @ApiProperty() availableRooms!: number;
+  @ApiProperty({ type: 'object', additionalProperties: { type: 'string' } }) ratioStatus!: Record<string, string>;
+}
+
+export class PortfolioCurrencyFinancialDto extends PortfolioFinancialKpisDto {
+  @ApiProperty() currencyCode!: string;
+  @ApiProperty({ type: PortfolioActualDto }) actual!: PortfolioActualDto;
+}
+
+export class PortfolioPropertyFinancialDto extends PortfolioFinancialKpisDto {
+  @ApiProperty({ format: 'uuid' }) propertyId!: string;
+  @ApiProperty() date!: string;
+  @ApiProperty() currencyCode!: string;
+  @ApiProperty({ type: ActualRevenueDto }) actual!: ActualRevenueDto;
+}
+
+export class PortfolioFinancialResponseDto {
+  @ApiProperty({ type: String, nullable: true }) date!: string | null;
+  @ApiProperty({ enum: ['EXPLICIT', 'PROPERTY_OPERATIONAL_DATE'] }) dateMode!: string;
+  @ApiProperty() propertyCount!: number;
+  @ApiProperty({ type: [String] }) propertyIds!: string[];
+  @ApiProperty({ type: String, nullable: true }) currencyCode!: string | null;
+  @ApiProperty({ enum: ['SINGLE_CURRENCY', 'MIXED_CURRENCIES'] }) currencyStatus!: string;
+  @ApiProperty({ type: PortfolioFinancialKpisDto }) kpis!: PortfolioFinancialKpisDto;
+  @ApiProperty({ type: PortfolioActualDto }) actual!: PortfolioActualDto;
+  @ApiProperty({ type: [PortfolioCurrencyFinancialDto] }) byCurrency!: PortfolioCurrencyFinancialDto[];
+  @ApiProperty({ type: [PortfolioPropertyFinancialDto] }) byProperty!: PortfolioPropertyFinancialDto[];
+}
+
 export class CashSummaryDto {
   @ApiProperty({ type: 'object', additionalProperties: { type: 'number' } }) byMethod!: Record<string, number>;
   @ApiProperty({ description: 'Net tenders including non-cash city-ledger transfers (legacy payment total)' }) ledgerNet!: number;
