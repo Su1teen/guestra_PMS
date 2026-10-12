@@ -242,6 +242,7 @@ describe('RatePlanService', () => {
       }).compile();
       const service = module.get<RatePlanService>(RatePlanService);
       vi.spyOn(service, 'getStayOccupancyPct').mockResolvedValue(80);
+      vi.spyOn(service, 'findRestrictions').mockResolvedValue([]);
 
       const result = await service.calculateDerivedRate('rp-bar-001', 'prop-001', {
         stayDate: '2026-08-15',

@@ -14,6 +14,7 @@ import {
   arLedgers,
   arTransactions,
   roomInventoryBlocks,
+  roomTypes,
 } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { reportPaymentSumWhere } from '../payment/payment-ledger';
@@ -156,9 +157,9 @@ export class ReportsService {
       netRevenueByCategory: ledger.net, separatelyPostedTax: ledger.net.tax, actual: ledger.actual };
   }
 
-  private async inventory(propertyId: string, endDate: string, timezone: string) {
+  private async inventory(propertyId: string, endDate: string, timezone: string, roomTypeId?: string) {
     const [physical, blocks] = await Promise.all([
-      this.db.select().from(rooms).where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true))),
+      this.db.select().from(rooms).where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true), roomTypeId ? eq(rooms.roomTypeId, roomTypeId) : undefined)),
       this.db.select().from(roomInventoryBlocks).where(or(
         activeInventoryBlockConditions(propertyId, dayAfter(endDate)),
         and(eq(roomInventoryBlocks.propertyId, propertyId), eq(roomInventoryBlocks.status, 'released'),
@@ -190,6 +191,67 @@ export class ReportsService {
 
   async getOccupancy(propertyId: string, requestedDate?: string) {
     return this.inSnapshot ? this.readOccupancy(propertyId, requestedDate) : this.snapshot(service => service.readOccupancy(propertyId, requestedDate));
+  }
+
+  /** Commercial on-books signals are not realised occupancy or earned revenue. */
+  async getOnBooksOccupancy(propertyId: string, date: string, db?: any) {
+    const read = async (service: ReportsService) => {
+      const { property } = await service.context(propertyId, date);
+      const inventory = await service.inventory(propertyId, date, property.timezone);
+      const stock = inventory(date);
+      const [row] = await service.db.select({ count: sql<number>`count(*)::int` }).from(reservations).where(and(
+        eq(reservations.propertyId, propertyId), lte(reservations.arrivalDate, date), sql`${reservations.departureDate} > ${date}`,
+        inArray(reservations.status, ['pending','confirmed','assigned','checked_in','stayover','due_out','checked_out'] as any),
+      ));
+      return { ...stock, roomsOnBooks: Number(row?.count ?? 0), occ: ratio(Number(row?.count ?? 0), stock.availableRooms, 4) };
+    };
+    if (db) { const service = new ReportsService(db); service.inSnapshot = true; return read(service); }
+    return this.inSnapshot ? read(this) : this.snapshot(read);
+  }
+
+  async getRevenueSignals(propertyId: string, startDate: string, endDate: string, roomTypeId?: string, db?: any) {
+    if (db) {
+      const service = new ReportsService(db);
+      service.inSnapshot = true;
+      return service.readRevenueSignals(propertyId, startDate, endDate, roomTypeId);
+    }
+    return this.inSnapshot ? this.readRevenueSignals(propertyId, startDate, endDate, roomTypeId) :
+      this.snapshot(service => service.readRevenueSignals(propertyId, startDate, endDate, roomTypeId));
+  }
+
+  private async readRevenueSignals(propertyId: string, startDate: string, endDate: string, roomTypeId?: string) {
+    const dates = reportDates(startDate, endDate);
+    if (dates.length > 93) throw new BadRequestException('Live calendar supports at most 93 days');
+    const { property, operationalDate } = await this.context(propertyId);
+    if (roomTypeId) {
+      const [category] = await this.db.select().from(roomTypes).where(and(eq(roomTypes.id, roomTypeId), eq(roomTypes.propertyId, propertyId)));
+      if (!category) throw new NotFoundException('Room category not found in this property');
+    }
+    const inventory = await this.inventory(propertyId, endDate, property.timezone, roomTypeId);
+    const pace = await this.readBookingPace(propertyId, startDate, endDate, roomTypeId);
+    const pickupFrom = new Date(Date.parse(operationalDate + 'T00:00:00Z') - 6 * 86400000).toISOString().slice(0, 10);
+    const daily = [];
+    for (const date of dates) {
+      const stock = inventory(date);
+      const roomsOnBooks = pace.daily.find((day: any) => day.date === date)?.roomsOnBooks ?? 0;
+      const pickup = await this.readPickup(propertyId, date, pickupFrom, operationalDate, roomTypeId);
+      const [realised] = await this.db.select({ count: sql<number>`count(*)::int` }).from(reservations).where(and(
+        eq(reservations.propertyId, propertyId), roomTypeId ? eq(reservations.roomTypeId, roomTypeId) : undefined,
+        lte(reservations.arrivalDate, date), sql`${reservations.departureDate} > ${date}`,
+        inArray(reservations.status, ['checked_in', 'stayover', 'due_out', 'checked_out'] as any),
+      ));
+      daily.push({ date, ...stock, roomsOnBooks, onBooksOccupancy: ratio(roomsOnBooks, stock.availableRooms, 4),
+        realisedRooms: Number(realised?.count ?? 0), realisedOccupancy: ratio(Number(realised?.count ?? 0), stock.availableRooms, 4),
+        pickup: pickup.pickup, pickupPeriod: pickup.period, pickupBaseline: pickup.baseline,
+        pickupSource: pickup.source, historicalAmendmentsReconstructed: false });
+    }
+    const financial = await this.getFinancialSummary(propertyId, operationalDate);
+    return { propertyId, roomTypeId: roomTypeId ?? null, currencyCode: property.currencyCode, timezone: property.timezone,
+      operationalDate, startDate, endDate, source: 'ReportsService', synthetic: false,
+      kpiScope: 'property_operational_date', kpis: financial.kpis, actual: financial.actual,
+      daily, pace: { ...pace, historicalAmendmentsReconstructed: false },
+      forecast: { status: 'INSUFFICIENT_HISTORY', value: null, source: null,
+        reason: 'No validated non-synthetic commercial forecast in the reporting domain' } };
   }
 
   private async readOccupancy(propertyId: string, requestedDate?: string) {
@@ -684,7 +746,7 @@ export class ReportsService {
       this.snapshot(service => service.readPickup(propertyId, stayDate, from, to));
   }
 
-  private async readPickup(propertyId: string, stayDate: string, from: string, to: string) {
+  private async readPickup(propertyId: string, stayDate: string, from: string, to: string, roomTypeId?: string) {
     reportDate(stayDate);
     const { property } = await this.context(propertyId, stayDate);
     from = this.bookingDate(from, property.timezone);
@@ -692,6 +754,7 @@ export class ReportsService {
     reportDates(from, to);
     const coversStayDate = and(
       eq(reservations.propertyId, propertyId),
+      roomTypeId ? eq(reservations.roomTypeId, roomTypeId) : undefined,
       lte(reservations.arrivalDate, stayDate),
       sql`${reservations.departureDate} > ${stayDate}`,
     );
@@ -801,7 +864,7 @@ export class ReportsService {
       this.snapshot(service => service.readBookingPace(propertyId, startDate, endDate));
   }
 
-  private async readBookingPace(propertyId: string, startDate: string, endDate: string) {
+  private async readBookingPace(propertyId: string, startDate: string, endDate: string, roomTypeId?: string) {
     reportDates(startDate, endDate);
     const { property } = await this.context(propertyId, endDate);
     const bookedStatuses = [
@@ -826,6 +889,7 @@ export class ReportsService {
         and(
           eq(reservations.propertyId, propertyId),
           inArray(reservations.status, bookedStatuses as any),
+          roomTypeId ? eq(reservations.roomTypeId, roomTypeId) : undefined,
           lte(reservations.arrivalDate, sql`d.d::date`),
           sql`${reservations.departureDate} > d.d::date`,
         ),
@@ -842,6 +906,7 @@ export class ReportsService {
       .where(
         and(
           eq(reservations.propertyId, propertyId),
+          roomTypeId ? eq(reservations.roomTypeId, roomTypeId) : undefined,
           sql`${this.localDay(reservations.createdAt, property.timezone)} >= ${startDate}`,
           sql`${this.localDay(reservations.createdAt, property.timezone)} <= ${endDate}`,
         ),

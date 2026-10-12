@@ -59,6 +59,7 @@ export const properties = pgTable('properties', {
 
   // Property settings (flexible JSONB for operational config)
   settings: jsonb('settings').$type<{
+    pricingApprovalRequired?: boolean;
     earlyCheckInFee?: number;
     lateCheckoutFee?: number;
     earlyCheckInMinHours?: number;
