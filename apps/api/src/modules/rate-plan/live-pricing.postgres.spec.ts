@@ -372,9 +372,16 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Live pricing real PostgreSQL tr
   });
 
   it('serializes canonical pricing against live rate updates without deadlocking accepted-pricing/FK locks', async () => {
-    let locked!: () => void, release!: () => void;
+    let locked!: () => void, release!: () => void, propertyLocked!: () => void;
     const ready = new Promise<void>(resolve => { locked = resolve; });
     const finish = new Promise<void>(resolve => { release = resolve; });
+    const pricingMutex = new Promise<void>(resolve => { propertyLocked = resolve; });
+    const originalProperty = (svc as any).property.bind(svc);
+    const mutexSpy = vi.spyOn(svc as any, 'property').mockImplementation(async (...args) => {
+      const result = await originalProperty(...args);
+      if (args[2]) propertyLocked();
+      return result;
+    });
     const acceptance = withAcceptedPricingLock(db, ids.a, ids.reservation, async tx => {
       const quote = await calculateCanonicalRoomPricing({ propertyId: ids.a, ratePlanId: ids.rate, checkIn: date, checkOut: '2027-05-03', nights: 2,
         isTaxInclusive: false, ratePlanService: svc, taxService: taxes, db: tx, lockForUpdate: true });
@@ -386,11 +393,17 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Live pricing real PostgreSQL tr
     });
     await ready;
     const mutation = svc.update(ids.rate, ids.a, { ...guard(), baseAmount: '150.00' }, actor);
-    release();
-    const [quote, updated] = await Promise.all([acceptance, mutation]);
-    expect(quote.totalAmount).toBe('220.00');
-    expect(updated.record).toMatchObject({ baseAmount: '150.00', revision: 2 });
-    expect((await scopedRows(reservations))[0]!.acceptedPricingSnapshot).toEqual(accepted);
+    try {
+      await pricingMutex;
+      release();
+      const [quote, updated] = await Promise.all([acceptance, mutation]);
+      expect(quote.totalAmount).toBe('220.00');
+      expect(updated.record).toMatchObject({ baseAmount: '150.00', revision: 2 });
+      expect((await scopedRows(reservations))[0]!.acceptedPricingSnapshot).toEqual(accepted);
+    } finally {
+      release();
+      mutexSpy.mockRestore();
+    }
   });
 
   it('HTTP verifies JWT, property membership and real PostgreSQL permissions before financial writes', async () => {
@@ -410,6 +423,9 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Live pricing real PostgreSQL tr
     await auth('patch', ids.rate + '/restrictions/' + randomUUID() + '?propertyId=' + ids.a).send({ isClosed: true }).expect(400);
     await auth('delete', ids.rate + '/restrictions/' + randomUUID() + '?propertyId=' + ids.a).expect(400);
     await auth('post', 'live-preview').send({ ...patch(), plan: { baseAmount: '120.00', propertyId: ids.b } }).expect(400);
+    await auth('post', 'live-preview').send({ ...patch(), plan: { isTaxInclusive: null } }).expect(400);
+    await auth('post', 'live-preview').send({ ...patch(), kind: 'restriction_create', plan: undefined,
+      restriction: { startDate: date, endDate: date, isClosed: null } }).expect(400);
     expect((await plan()).revision).toBe(1);
     expect(await scopedRows(auditLogs)).toHaveLength(0);
   });

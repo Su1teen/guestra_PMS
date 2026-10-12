@@ -21,7 +21,7 @@ import { EffectiveRateQueryDto } from './dto/effective-rate-query.dto';
 import { resolvePropertyId } from '../../common/property-id';
 import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
 import { PricingMutationDto } from './dto/pricing-mutation.dto';
-import { LiveCalendarQueryDto, LiveCalendarResponseDto, LiveRateChangeDto, LiveRatePreviewDto, LiveRateDecisionDto, PricingMutationResponseDto, RateChangeRecordDto, PricingRequestStateDto } from './dto/live-rate.dto';
+import { LiveCalendarQueryDto, LiveCalendarResponseDto, LiveRateChangeDto, LiveRatePreviewDto, LiveRateDecisionDto, PricingMutationResponseDto, RateChangeRecordDto, PricingRequestStateDto, RateChangeMutationResponseDto } from './dto/live-rate.dto';
 
 @ApiTags('rate-plans')
 @Controller('rate-plans')
@@ -46,7 +46,7 @@ export class RatePlanController {
   @Post('rate-changes')
   @RequirePermissions('rateplans.manage')
   @ApiOperation({ summary: 'Submit validated live preview to approval queue' })
-  @ApiResponse({ status: 201, type: PricingMutationResponseDto })
+  @ApiResponse({ status: 201, type: RateChangeMutationResponseDto })
   submitLiveChange(@Body() dto: LiveRateChangeDto, @AuditActorCtx() actor: AuditActor,
     @Query('propertyId', new ParseUUIDPipe({ optional: true })) propertyId?: string) {
     if (propertyId && propertyId !== dto.propertyId) throw new BadRequestException('Body/query propertyId mismatch');
@@ -68,21 +68,21 @@ export class RatePlanController {
   @Post('rate-changes/:changeId/approve')
   @RequirePermissions('rateplans.manage', 'revenue.manage')
   @ApiOperation({ summary: 'Approve an unchanged live pricing proposal' })
-  @ApiResponse({ status: 201, type: PricingMutationResponseDto })
+  @ApiResponse({ status: 201, type: RateChangeMutationResponseDto })
   approveLiveChange(@Param('changeId', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
     @Body() dto: LiveRateDecisionDto, @AuditActorCtx() actor: AuditActor) { return this.ratePlanService.decideLiveChange(id, propertyId, 'approve', dto, actor); }
 
   @Post('rate-changes/:changeId/apply')
   @RequirePermissions('rateplans.manage')
   @ApiOperation({ summary: 'Apply eligible unchanged proposal to canonical rates; preserve accepted pricing' })
-  @ApiResponse({ status: 201, type: PricingMutationResponseDto })
+  @ApiResponse({ status: 201, type: RateChangeMutationResponseDto })
   applyLiveChange(@Param('changeId', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
     @Body() dto: LiveRateDecisionDto, @AuditActorCtx() actor: AuditActor) { return this.ratePlanService.decideLiveChange(id, propertyId, 'apply', dto, actor); }
 
   @Post('rate-changes/:changeId/reject')
   @RequirePermissions('rateplans.manage', 'revenue.manage')
   @ApiOperation({ summary: 'Reject pending or approved proposal without changing live rates' })
-  @ApiResponse({ status: 201, type: PricingMutationResponseDto })
+  @ApiResponse({ status: 201, type: RateChangeMutationResponseDto })
   rejectLiveChange(@Param('changeId', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
     @Body() dto: LiveRateDecisionDto, @AuditActorCtx() actor: AuditActor) { return this.ratePlanService.decideLiveChange(id, propertyId, 'reject', dto, actor); }
 

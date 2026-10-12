@@ -226,3 +226,8 @@ export class PricingRequestStateDto {
   @ApiProperty({ enum: ['unconfirmed', 'running', 'committed', 'closed'] }) state!: string;
   @ApiPropertyOptional({ type: 'object', description: 'Present only for committed requests; immutable original mutation record.' }) record?: Record<string, unknown>;
 }
+
+export class RateChangeMutationResponseDto {
+  @ApiProperty({ type: RateChangeRecordDto }) record!: RateChangeRecordDto;
+  @ApiProperty() replayed!: boolean;
+}

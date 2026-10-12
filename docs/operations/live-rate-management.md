@@ -77,7 +77,7 @@ Plan changes are **global plan configuration changes**, not confined to the prev
 
 ## Response types
 
-Swagger defines concrete `CanonicalRateDto`, `CanonicalQuoteDto`, `LivePreviewDayDto`, `LiveSignalDayDto`, `LiveBookingPaceDto`, `LiveRevenueSignalsDto`, `LiveRateRecommendationDto`, `LiveCalendarRateDto` and the top-level DTOs. It reuses existing `FinancialKpisDto`, `ActualRevenueDto`, `UnavailableMetricDto`, LOS and occupancy-rule DTOs.
+Swagger defines concrete `CanonicalRateDto`, `CanonicalQuoteDto`, `LivePreviewDayDto`, `LiveSignalDayDto`, `LiveBookingPaceDto`, `LiveRevenueSignalsDto`, `LiveRateRecommendationDto`, `LiveCalendarRateDto` and the top-level DTOs. Proposal submission/decisions use `RateChangeMutationResponseDto`, the concrete form of `MutationResponse<RateChangeRecordDto>`. It reuses existing `FinancialKpisDto`, `ActualRevenueDto`, `UnavailableMetricDto`, LOS and occupancy-rule DTOs.
 
 ```ts
 type MutationResponse<T> = { record: T; replayed: boolean };

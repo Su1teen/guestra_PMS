@@ -582,6 +582,9 @@ export class RatePlanService {
 
   private async validatePlan(plan: any, propertyId: string, tx: any, id?: string) {
     const property = await this.property(propertyId, tx);
+    for (const key of ['name', 'code', 'type', 'currencyCode', 'isTaxInclusive', 'isActive', 'sortOrder']) {
+      if (plan[key] === null) throw new BadRequestException(key + ' cannot be null');
+    }
     if (!/^\d+(\.\d{1,2})?$/.test(String(plan.baseAmount)) || new Decimal(plan.baseAmount).gt('9999999999.99')) throw new BadRequestException('Invalid base amount');
     if (plan.currencyCode !== property.currencyCode) throw new BadRequestException('CURRENCY_MISMATCH');
     if (plan.validFrom) reportDate(plan.validFrom);
@@ -608,6 +611,9 @@ export class RatePlanService {
   }
 
   private validateRestriction(row: any) {
+    for (const key of ['closedToArrival', 'closedToDeparture', 'isClosed']) {
+      if (row[key] === null) throw new BadRequestException(key + ' cannot be null');
+    }
     reportDates(row.startDate, row.endDate);
     if (row.minLos != null && (!Number.isInteger(row.minLos) || row.minLos < 1)) throw new BadRequestException('Invalid minLos');
     if (row.maxLos != null && (!Number.isInteger(row.maxLos) || row.maxLos < 1)) throw new BadRequestException('Invalid maxLos');
