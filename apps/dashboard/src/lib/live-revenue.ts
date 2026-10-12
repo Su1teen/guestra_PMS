@@ -2,7 +2,7 @@ import { formatMoney } from './money';
 
 export interface ActualRevenue { value: number | null; status: string; source: string; closedDays: number; expectedDays: number }
 export interface FinancialKpis {
-  occ: number | null; adr: number; revpar: number; trevpar: number | null;
+  occ: number | null; adr: number | null; revpar: number | null; trevpar: number | null;
   totalRevenue: number; roomRevenue: number; foodBeverageRevenue: number; ancillaryRevenue: number;
   separatelyPostedTax: number; roomsSold: number; availableRooms: number; ratioStatus: Record<string, string>;
 }
