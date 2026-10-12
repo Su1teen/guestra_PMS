@@ -6,6 +6,9 @@ import {
   type DemoPropertyId, type ReportFilters, type ReportRow,
 } from '../lib/management-demo';
 import './management-report.css';
+import { useProperty } from '../context/PropertyContext';
+import { useAuth } from '../context/AuthContext';
+import RevenueFinancialOverview from '../components/revenue/RevenueFinancialOverview';
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 const SHORT_MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
@@ -112,7 +115,26 @@ function HierarchyTable({ rows, kind }: { rows: ReportRow[]; kind: 'revenue' | '
   </div>;
 }
 
-export default function ManagementReport({ initialPropertyId = 'all' }: { initialPropertyId?: DemoPropertyId | 'all' }) {
+export default function ManagementReport({ initialPropertyId }: { initialPropertyId?: DemoPropertyId | 'all' }) {
+  const { propertyId, isPortfolioMode } = useProperty();
+  const { hasPermission } = useAuth();
+  const [mode, setMode] = useState<'live' | 'demo'>(initialPropertyId ? 'demo' : 'live');
+  const [selection, setSelection] = useState<{ propertyId: string | null; date: string }>({ propertyId, date: '' });
+  const date = selection.propertyId === propertyId ? selection.date : '';
+  return <div className="mrr">
+    <div className="mrr-tabs" role="tablist" aria-label="Источник данных">
+      <button role="tab" aria-selected={mode === 'live'} onClick={() => setMode('live')}>Факт PMS · Live</button>
+      <button role="tab" aria-selected={mode === 'demo'} onClick={() => setMode('demo')}>Демонстрация · MOCK DATA</button>
+    </div>
+    {mode === 'demo' ? <DemoManagementReport initialPropertyId={initialPropertyId} /> : <>
+      <header className="mrr-hero"><div><p className="mrr-eyebrow">GUESTRA / MANAGEMENT</p><h1>Управленческий отчёт · факт</h1><p>Единый источник Revenue, DRR и Dashboard: ReportsService, подписанные проводки по дате услуги.</p></div></header>
+      <div className="mrr-card p-4 mb-4"><label>Дата среза <input type="date" value={date} onChange={event => setSelection({ propertyId, date: event.target.value })} /></label><button className="ml-3" onClick={() => setSelection({ propertyId, date: '' })}>Операционная дата</button><p className="text-xs mt-2">Пустая дата — следующий день после закрытого аудита, иначе локальная дата отеля. Смена объекта сбрасывает срез. План, прогноз и GOP не заменяются демо-значениями. Полная Management BI, иерархия бюджета и экспорт относятся к M3.</p></div>
+      {!propertyId || isPortfolioMode ? <p role="status">Выберите объект для авторитетной сверки факта. Сводка сети по валютам доступна в Reports и Dashboard; демонстрация отделена от данных PMS.</p> : <RevenueFinancialOverview key={propertyId} propertyId={propertyId} date={date || undefined} canRead={hasPermission('reports.view')} />}
+    </>}
+  </div>;
+}
+
+export function DemoManagementReport({ initialPropertyId = 'all' }: { initialPropertyId?: DemoPropertyId | 'all' }) {
   const [filters, setFilters] = useState<ReportFilters>({ year: 2026, month: 9, day: 18, propertyId: initialPropertyId });
   const [view, setView] = useState<'revenue' | 'expense'>('revenue');
   const [exportError, setExportError] = useState('');

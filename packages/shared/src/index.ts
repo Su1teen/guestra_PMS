@@ -224,6 +224,12 @@ export const WEBHOOK_EVENTS = {
 
   // Rate / restriction changes (drive channel ARI delta pushes)
   'rate_plan.updated': 'rate_plan.updated',
+  'rate_plan.created': 'rate_plan.created',
+  'rate_change.submitted': 'rate_change.submitted',
+  'rate_change.approved': 'rate_change.approved',
+  'rate_change.rejected': 'rate_change.rejected',
+  'rate_change.applied': 'rate_change.applied',
+  'rate_request.closed': 'rate_request.closed',
   'rate_restriction.created': 'rate_restriction.created',
   'rate_restriction.updated': 'rate_restriction.updated',
   'rate_restriction.deleted': 'rate_restriction.deleted',

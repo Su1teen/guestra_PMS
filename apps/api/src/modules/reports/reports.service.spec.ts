@@ -1,554 +1,223 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Test, type TestingModule } from '@nestjs/testing';
+import { describe, it, expect, vi } from 'vitest';
+import { charges, payments, properties, rooms, reservations, roomInventoryBlocks, auditRuns, folios, depositLedgerEntries } from '@telivityhaip/database';
 import { ReportsService } from './reports.service';
-import { DRIZZLE } from '../../database/database.module';
+import { priorYearDate, ratio, reportDate, reportDates } from './reporting-policy';
 
-function createMockDb(selectResults: any[][] = [[]]) {
-  let selectCallCount = 0;
+const DATE = '2027-05-01';
+const PROP = 'a0000001-0000-4000-a000-000000000001';
+const roomFixtures = (count: number) => Array.from({ length: count }, (_, i) => ({ id: String(i), status: 'guest_ready' }));
+const charge = (type: string, total: string, isReversal = false) => ({ type, total, isReversal, currencyCode: 'KZT', count: 1 });
 
-  return {
-    select: vi.fn().mockImplementation(() => ({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          then: (resolve: any) => {
-            const result = selectResults[selectCallCount] ?? selectResults[selectResults.length - 1]!;
-            selectCallCount++;
-            resolve(result);
-          },
-          groupBy: vi.fn().mockReturnValue({
-            then: (resolve: any) => {
-              const result = selectResults[selectCallCount] ?? selectResults[selectResults.length - 1]!;
-              selectCallCount++;
-              resolve(result);
-            },
-            orderBy: vi.fn().mockReturnValue({
-              then: (resolve: any) => {
-                const result = selectResults[selectCallCount] ?? selectResults[selectResults.length - 1]!;
-                selectCallCount++;
-                resolve(result);
-              },
-            }),
-          }),
-          orderBy: vi.fn().mockReturnValue({
-            limit: vi.fn().mockReturnValue({
-              then: (resolve: any) => {
-                const result = selectResults[selectCallCount] ?? selectResults[selectResults.length - 1]!;
-                selectCallCount++;
-                resolve(result);
-              },
-            }),
-            then: (resolve: any) => {
-              const result = selectResults[selectCallCount] ?? selectResults[selectResults.length - 1]!;
-              selectCallCount++;
-              resolve(result);
-            },
-          }),
-        }),
-        leftJoin: vi.fn().mockImplementation(() => {
-          const groupByFn = vi.fn().mockReturnValue({
-            orderBy: vi.fn().mockReturnValue({
-              then: (resolve: any) => {
-                const result = selectResults[selectCallCount] ?? selectResults[selectResults.length - 1]!;
-                selectCallCount++;
-                resolve(result);
-              },
-            }),
-            then: (resolve: any) => {
-              const result = selectResults[selectCallCount] ?? selectResults[selectResults.length - 1]!;
-              selectCallCount++;
-              resolve(result);
-            },
-          });
-          return {
-            groupBy: groupByFn,
-            where: vi.fn().mockReturnValue({
-              groupBy: groupByFn,
-            }),
-          };
-        }),
-      }),
+/** Table-aware query double; PostgreSQL tests cover predicates and real financial invariants. */
+function fixture(options: Record<string, any> = {}) {
+  const data = new Map<any, any[]>([
+    [properties, [{ id: PROP, currencyCode: 'KZT', timezone: 'Asia/Almaty', totalRooms: 999 }]],
+    [charges, options.charges ?? []], [payments, options.payments ?? []],
+    [rooms, options.rooms ?? roomFixtures(50)], [roomInventoryBlocks, options.blocks ?? []],
+    [folios, options.balances ?? []], [depositLedgerEntries, options.deposits ?? []],
+  ]);
+  const db: any = {
+    transaction: vi.fn(async (read: any) => read(db)),
+    select: vi.fn((projection: any) => ({
+      from: (table: any) => {
+        let result: any[];
+        if (table === auditRuns) result = projection?.count ? [{ count: options.closedDays ?? 0 }] : options.audits ?? [];
+        else if (table === reservations) result = projection?.date ? [] : projection?.count ? [{ count: options.sold ?? 0 }] : options.stays ?? [];
+        else result = data.get(table) ?? options.pace ?? [];
+        const chain: any = { then: (resolve: any) => Promise.resolve(result).then(resolve) };
+        for (const method of ['where', 'groupBy', 'orderBy', 'limit', 'innerJoin', 'leftJoin']) chain[method] = () => chain;
+        return chain;
+      },
     })),
   };
+  return { service: new ReportsService(db), db };
 }
 
-describe('ReportsService', () => {
-  let service: ReportsService;
-
-  beforeEach(async () => {
-    vi.clearAllMocks();
+describe('ReportsService shared foundation', () => {
+  it('resolves omitted daily / financial / portfolio dates from the same completed audit boundary', async () => {
+    const { service } = fixture({ audits: [{ businessDate: '2027-04-30' }] });
+    expect(await service.getBusinessDate(PROP)).toMatchObject({ date: DATE, timezone: 'Asia/Almaty', currencyCode: 'KZT' });
+    expect((await service.getDailyRevenue(PROP)).date).toBe(DATE);
+    expect((await service.getFinancialSummary(PROP)).date).toBe(DATE);
+    expect((await service.getPortfolioFinancialSummary([PROP])).byProperty[0]?.date).toBe(DATE);
   });
-
-  // --- Daily Revenue ---
-
-  it('should sum charges by type for daily revenue', async () => {
-    const db = createMockDb([
-      // revenue by type
-      [
-        { type: 'room', total: '3000.00' },
-        { type: 'tax', total: '300.00' },
-        { type: 'food_beverage', total: '500.00' },
-      ],
-      // adjustments (reversals)
-      [{ total: '-50.00' }],
-      // payments by method
-      [
-        { method: 'credit_card', total: '3500.00' },
-        { method: 'cash', total: '250.00' },
-      ],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getDailyRevenue('prop-001', '2026-04-06');
-    expect(result.revenue.room).toBe(3000);
-    expect(result.revenue.tax).toBe(300);
-    expect(result.revenue.foodBeverage).toBe(500);
-    expect(result.revenue.total).toBe(3800);
-    expect(result.adjustments).toBe(50);
-    expect(result.netRevenue).toBe(3750);
+  it('resolves property-local midnight without using the browser timezone', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date('2027-04-30T20:30:00Z'));
+    try { expect((await fixture().service.getBusinessDate(PROP)).date).toBe(DATE); } finally { vi.useRealTimers(); }
+  });
+  it('preserves nullable portfolio Actual and ratios, with confirmed zero and partial coverage distinct', async () => {
+    const missing = await fixture().service.getPortfolioFinancialSummary([PROP], DATE);
+    expect(missing.actual).toMatchObject({ value: null, status: 'NO_POSTINGS', missingProperties: 1 });
+    expect(missing.kpis).toMatchObject({ totalRevenue: null, adr: null, revpar: null });
+    const complete = await fixture({ closedDays: 1 }).service.getPortfolioFinancialSummary([PROP], DATE);
+    expect(complete.actual).toMatchObject({ value: 0, status: 'COMPLETE', missingProperties: 0 });
+    const { service } = fixture(); const original = await service.getFinancialSummary(PROP, DATE);
+    (service as any).inSnapshot = true;
+    vi.spyOn(service, 'getFinancialSummary').mockImplementation(async (id) => id === PROP ? { ...original, actual: { ...original.actual, value: 115, status: 'COMPLETE' as const }, kpis: { ...original.kpis, roomRevenue: 75 } } : original);
+    const partial = await service.getPortfolioFinancialSummary([PROP, 'another'], DATE);
+    expect(partial.actual).toMatchObject({ value: 115, status: 'PARTIAL', propertiesWithActual: 1, missingProperties: 1 });
+  });
+  it('sums signed charges by type without treating separately posted tax as earned revenue', async () => {
+    const { service } = fixture({ charges: [charge('room', '3000'), charge('tax', '300'), charge('food_beverage', '500'), charge('room', '-50', true)] });
+    const r = await service.getDailyRevenue(PROP, DATE);
+    expect(r.revenue.total).toBe(3800);
+    expect(r.adjustments).toBe(50);
+    expect(r.netRevenue).toBe(3750);
+    expect(r.netEarnedRevenue).toBe(3450);
+    expect(r.netRevenueByCategory.room).toBe(2950);
   });
 
   it('nets a fully reversed signed accepted-pricing group to zero revenue', async () => {
-    const db = createMockDb([
-      // Original 100 plus a -20 amendment correction remain immutable revenue.
-      [{ type: 'room', total: '80.00' }],
-      // Drizzle returns the signed sum: -100 plus +20.
-      [{ total: '-80.00' }],
-      [],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-
-    const result = await module.get(ReportsService)
-      .getDailyRevenue('prop-001', '2026-04-06');
-
-    expect(result.revenue.room).toBe(80);
-    expect(result.adjustments).toBe(80);
-    expect(result.netRevenue).toBe(0);
+    const { service } = fixture({ charges: [charge('room', '80'), charge('room', '-80', true)] });
+    const r = await service.getDailyRevenue(PROP, DATE);
+    expect(r.revenue.room).toBe(80);
+    expect(r.adjustments).toBe(80);
+    expect(r.netEarnedRevenue).toBe(0);
   });
 
-  it('should sum payments by method', async () => {
-    const db = createMockDb([
-      [],               // no charges
-      [{ total: '0' }], // no adjustments
-      [
-        { method: 'credit_card', total: '1000.00' },
-        { method: 'cash', total: '200.00' },
-        { method: 'city_ledger', total: '500.00' },
-      ],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getDailyRevenue('prop-001', '2026-04-06');
-    expect(result.payments['credit_card']).toBe(1000);
-    expect(result.payments['cash']).toBe(200);
-    expect(result.payments['city_ledger']).toBe(500);
-    expect(result.payments['total']).toBe(1700);
+  it('sums payment methods while separating refunds and non-cash A/R transfers', async () => {
+    const { service } = fixture({ payments: [
+      { method: 'credit_card', total: '750', received: '1000', refunded: '250', currencyCode: 'KZT' },
+      { method: 'cash', total: '200', received: '200', refunded: '0', currencyCode: 'KZT' },
+      { method: 'city_ledger', total: '500', received: '500', refunded: '0', currencyCode: 'KZT' },
+    ] });
+    const r = await service.getDailyRevenue(PROP, DATE);
+    expect(r.payments.total).toBe(1450);
+    expect(r.cash).toMatchObject({ received: 1200, refunds: 250, net: 950, arTransfers: 500 });
+    expect(r.netEarnedRevenue).toBe(0);
   });
 
-  // --- Occupancy ---
-
-  it('should calculate occupancy rate correctly', async () => {
-    const db = createMockDb([
-      // property
-      [{ totalRooms: 100 }],
-      // room status counts
-      [
-        { status: 'occupied', count: 60 },
-        { status: 'vacant_clean', count: 30 },
-        { status: 'out_of_order', count: 5 },
-        { status: 'out_of_service', count: 5 },
-      ],
-      // occupied stay-window count (departure exclusive)
-      [{ count: 60 }],
-      // arrivals
-      [{ count: 8 }],
-      // departures
-      [{ count: 5 }],
-      // stayovers
-      [{ count: 55 }],
-      // no-shows
-      [{ count: 2 }],
-      // cancellations
-      [{ count: 1 }],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getOccupancy('prop-001', '2026-04-06');
-    expect(result.totalRooms).toBe(100);
-    expect(result.outOfOrder).toBe(5);
-    expect(result.outOfService).toBe(5);
-    expect(result.availableRooms).toBe(90); // 100 - 5 - 5
-    expect(result.occupiedRooms).toBe(60);
-    // 60 / 90 = 0.6667
-    expect(result.occupancyRate).toBeCloseTo(0.6667, 3);
-    expect(result.arrivals).toBe(8);
-    expect(result.departures).toBe(5);
-    expect(result.noShows).toBe(2);
+  it('uses physical inventory rather than configured property totals for occupancy', async () => {
+    const { service } = fixture({ sold: 20, rooms: roomFixtures(40) });
+    const r = await service.getOccupancy(PROP, DATE);
+    expect(r.totalRooms).toBe(40);
+    expect(r.occupiedRooms).toBe(20);
+    expect(r.occupancyRate).toBe(0.5);
   });
 
-  it('should exclude OOO/OOS from available rooms', async () => {
-    const db = createMockDb([
-      [{ totalRooms: 50 }],
-      [
-        { status: 'occupied', count: 20 },
-        { status: 'out_of_order', count: 10 },
-        { status: 'out_of_service', count: 5 },
-      ],
-      [{ count: 20 }], // occupied stay-window
-      [{ count: 0 }], [{ count: 0 }], [{ count: 0 }], [{ count: 0 }], [{ count: 0 }],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getOccupancy('prop-001', '2026-04-06');
-    expect(result.availableRooms).toBe(35); // 50 - 10 - 5
-    // 20 / 35 = 0.5714
-    expect(result.occupancyRate).toBeCloseTo(0.5714, 3);
+  it('excludes OOO/OOS and avoids double subtraction of status and date block', async () => {
+    const rows = roomFixtures(5);
+    rows[0]!.status = 'out_of_order';
+    rows[1]!.status = 'out_of_service';
+    const { service } = fixture({ rooms: rows, sold: 1, blocks: [
+      { roomId: '0', kind: 'OOO', startDate: DATE, status: 'active' },
+      { roomId: '2', kind: 'OOS', startDate: DATE, status: 'active' },
+    ] });
+    const r = await service.getOccupancy(PROP, DATE);
+    expect(r).toMatchObject({ totalRooms: 5, outOfOrder: 1, outOfService: 2, availableRooms: 2, occupancyRate: 0.5 });
   });
 
-  it('should ignore sticky room.status when stay window has no guests', async () => {
-    const db = createMockDb([
-      [{ totalRooms: 10 }],
-      [
-        { status: 'occupied', count: 7 },
-        { status: 'out_of_order', count: 1 },
-        { status: 'vacant_clean', count: 2 },
-      ],
-      [{ count: 0 }], // stay-window occupied = 0 (stale stayovers past departure)
-      [{ count: 0 }],
-      [{ count: 0 }],
-      [{ count: 0 }],
-      [{ count: 0 }],
-      [{ count: 0 }],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getOccupancy('prop-001', '2026-08-20');
-    expect(result.occupiedRooms).toBe(0);
-    expect(result.availableRooms).toBe(9);
-    expect(result.occupancyRate).toBe(0);
-    expect(result.stayovers).toBe(0);
+  it('ignores sticky occupied room statuses when no stay covers the report night', async () => {
+    const { service } = fixture({ rooms: [{ id: '1', status: 'occupied' }] });
+    expect((await service.getOccupancy(PROP, DATE)).occupiedRooms).toBe(0);
   });
 
-  // --- Financial Summary ---
-
-  it('should calculate ADR correctly (revenue / rooms sold)', async () => {
-    const db = createMockDb([
-      // room revenue
-      [{ total: '3000.00' }],
-      // total revenue
-      [{ total: '3500.00' }],
-      // revenue by type
-      [{ type: 'room', total: '3000.00' }, { type: 'tax', total: '500.00' }],
-      // payments by method
-      [{ method: 'credit_card', total: '3500.00' }],
-      // rooms sold
-      [{ count: 20 }],
-      // property
-      [{ totalRooms: 50 }],
-      // room status counts
-      [
-        { status: 'occupied', count: 20 },
-        { status: 'out_of_order', count: 5 },
-      ],
-      // outstanding balances
-      [{ count: 3, totalBalance: '450.00' }],
-      // last audit
-      [{ businessDate: '2026-04-05', status: 'completed', errors: null }],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getFinancialSummary('prop-001', '2026-04-06');
-    // ADR = 3000 / 20 = 150
-    expect(result.kpis.adr).toBe(150);
-    // available = 50 - 5 = 45, occupancy = 20/45 = 0.4444
-    expect(result.kpis.occupancyRate).toBeCloseTo(0.4444, 3);
-    // RevPAR = 150 * 0.4444 = 66.67
-    expect(result.kpis.revpar).toBeCloseTo(66.67, 0);
-    expect(result.outstandingBalances.totalFoliosOpen).toBe(3);
-    expect(result.outstandingBalances.totalBalanceDue).toBe(450);
-    expect(result.auditStatus.lastAuditDate).toBe('2026-04-05');
+  it('calculates ADR using signed room revenue, excluding taxes and services', async () => {
+    const { service } = fixture({ sold: 20, charges: [charge('room', '3200'), charge('room', '-200', true), charge('tax', '500'), charge('spa', '100')] });
+    const r = await service.getFinancialSummary(PROP, DATE);
+    expect(r.kpis).toMatchObject({ adr: 150, totalRevenue: 3100, roomRevenue: 3000, separatelyPostedTax: 500 });
   });
 
-  it('should calculate RevPAR correctly (ADR x occupancy)', async () => {
-    const db = createMockDb([
-      [{ total: '6000.00' }],       // room revenue
-      [{ total: '7000.00' }],       // total revenue
-      [],                            // revenue by type
-      [],                            // payments
-      [{ count: 30 }],              // rooms sold
-      [{ totalRooms: 50 }],         // property
-      [{ status: 'out_of_order', count: 0 }], // room status
-      [{ count: 0, totalBalance: '0' }],
-      [],                            // no last audit
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getFinancialSummary('prop-001', '2026-04-06');
-    // ADR = 6000 / 30 = 200
-    expect(result.kpis.adr).toBe(200);
-    // occupancy = 30 / 50 = 0.6
-    // RevPAR = 200 * 0.6 = 120
-    expect(result.kpis.revpar).toBe(120);
+  it('calculates RevPAR directly from room revenue / available inventory', async () => {
+    const { service } = fixture({ sold: 30, charges: [charge('room', '6000'), charge('spa', '1000')] });
+    const r = await service.getFinancialSummary(PROP, DATE);
+    expect(r.kpis).toMatchObject({ adr: 200, revpar: 120, trevpar: 140, occupancyRate: 0.6 });
   });
 
-  it('should return 0 for ADR when no rooms sold (division by zero)', async () => {
-    const db = createMockDb([
-      [{ total: '0' }],
-      [{ total: '0' }],
-      [],
-      [],
-      [{ count: 0 }],         // 0 rooms sold
-      [{ totalRooms: 50 }],
-      [],
-      [{ count: 0, totalBalance: '0' }],
-      [],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getFinancialSummary('prop-001', '2026-04-06');
-    expect(result.kpis.adr).toBe(0);
-    expect(result.kpis.revpar).toBe(0);
+  it('preserves zero legacy ratio aliases while exposing missing denominators', async () => {
+    const { service } = fixture({ rooms: [] });
+    const r = await service.getFinancialSummary(PROP, DATE);
+    expect(r.kpis.adr).toBe(0);
+    expect(r.kpis.revpar).toBe(0);
+    expect(r.kpis.occ).toBeNull();
+    expect(r.kpis.trevpar).toBeNull();
+    expect(r.kpis.ratioStatus.adr).toBe('NO_ROOMS_SOLD');
   });
 
-  // --- Zero data ---
-
-  it('should return zeros when no data exists (not errors)', async () => {
-    const db = createMockDb([
-      [],               // no charges
-      [{ total: '0' }], // no adjustments
-      [],               // no payments
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getDailyRevenue('prop-001', '2026-04-06');
-    expect(result.revenue.room).toBe(0);
-    expect(result.revenue.tax).toBe(0);
-    expect(result.revenue.total).toBe(0);
-    expect(result.adjustments).toBe(0);
-    expect(result.netRevenue).toBe(0);
+  it('keeps empty legacy revenue numbers but does not claim a confirmed zero actual', async () => {
+    const { service } = fixture();
+    const r = await service.getDailyRevenue(PROP, DATE);
+    expect(r.netRevenue).toBe(0);
+    expect(r.actual).toMatchObject({ value: null, status: 'NO_POSTINGS' });
   });
 
-  // --- Occupancy Trend ---
-
-  it('should return daily breakdown for occupancy trend', async () => {
-    const db = createMockDb([
-      // property
-      [{ totalRooms: 50 }],
-      // room status counts
-      [{ status: 'out_of_order', count: 5 }],
-      // daily revenue
-      [
-        { date: '2026-04-04', revenue: '3000.00' },
-        { date: '2026-04-05', revenue: '3500.00' },
-        { date: '2026-04-06', revenue: '2500.00' },
-      ],
-      // daily rooms sold
-      [
-        { date: '2026-04-04', count: 20 },
-        { date: '2026-04-05', count: 25 },
-        { date: '2026-04-06', count: 18 },
-      ],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getOccupancyTrend('prop-001', '2026-04-04', '2026-04-06');
-    expect(result.period.start).toBe('2026-04-04');
-    expect(result.period.end).toBe('2026-04-06');
-    expect(result.daily).toHaveLength(3);
-    expect(result.daily[0]!.date).toBe('2026-04-04');
-    expect(result.daily[0]!.roomsSold).toBe(20);
-    expect(result.daily[0]!.revenue).toBe(3000);
-    expect(result.summary.totalRoomNights).toBe(63); // 20+25+18
-    expect(result.summary.totalRevenue).toBe(9000);
+  it('returns signed daily room and total-earned trend breakdowns', async () => {
+    const { service } = fixture({ charges: [
+      { ...charge('room', '3000'), date: DATE }, { ...charge('spa', '100'), date: DATE },
+    ], stays: [{ arrivalDate: DATE, departureDate: '2027-05-03' }] });
+    const r = await service.getOccupancyTrend(PROP, DATE, '2027-05-02');
+    expect(r.daily).toHaveLength(2);
+    expect(r.daily[0]).toMatchObject({ revenue: 3000, totalRevenue: 3100, roomsSold: 1 });
+    expect(r.summary).toMatchObject({ totalRevenue: 3000, netEarnedRevenue: 3100, totalRoomNights: 2 });
   });
 
-  it('should calculate period summary averages for trend', async () => {
-    const db = createMockDb([
-      [{ totalRooms: 100 }],
-      [],
-      [
-        { date: '2026-04-04', revenue: '5000.00' },
-        { date: '2026-04-05', revenue: '5000.00' },
-      ],
-      [
-        { date: '2026-04-04', count: 50 },
-        { date: '2026-04-05', count: 50 },
-      ],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getOccupancyTrend('prop-001', '2026-04-04', '2026-04-05');
-    expect(result.daily).toHaveLength(2);
-    // Each day: 50 rooms / 100 available = 0.5 occupancy, ADR = 5000/50 = 100, RevPAR = 100*0.5 = 50
-    expect(result.summary.avgOccupancy).toBeCloseTo(0.5, 2);
-    expect(result.summary.avgAdr).toBe(100);
-    expect(result.summary.avgRevpar).toBe(50);
-    expect(result.summary.totalRevenue).toBe(10000);
-    expect(result.summary.totalRoomNights).toBe(100);
+  it('uses weighted period ratios, not the mean of daily ADRs', async () => {
+    const { service } = fixture({ rooms: roomFixtures(10), charges: [
+      { ...charge('room', '100'), date: DATE }, { ...charge('room', '900'), date: '2027-05-02' },
+    ], stays: [{ arrivalDate: DATE, departureDate: '2027-05-03' },
+      { arrivalDate: '2027-05-02', departureDate: '2027-05-03' }] });
+    const r = await service.getOccupancyTrend(PROP, DATE, '2027-05-02');
+    expect(r.summary.avgAdr).toBe(333.33);
+    expect(r.summary.avgRevpar).toBe(50);
+    expect(r.summary.avgOccupancy).toBe(0.15);
   });
 
-  it('should compute pickup baseline, current, and daily net', async () => {
-    const db = createMockDb([
-      [{ count: 40 }],
-      [{ count: 47 }],
-      [
-        { date: '2026-07-01', roomNights: 5 },
-        { date: '2026-07-02', roomNights: 3 },
-      ],
-      [{ date: '2026-07-02', roomNights: 1 }],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getPickup(
-      'prop-001',
-      '2026-08-15',
-      '2026-07-01',
-      '2026-07-07',
-    );
-
-    expect(result.stayDate).toBe('2026-08-15');
-    expect(result.baseline.roomNights).toBe(40);
-    expect(result.current.roomNights).toBe(47);
-    expect(result.pickup.roomNights).toBe(7);
-    expect(result.daily).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ date: '2026-07-01', roomNightsAdded: 5, netPickup: 5 }),
-        expect.objectContaining({ date: '2026-07-02', roomNightsAdded: 3, roomNightsLost: 1, netPickup: 2 }),
-      ]),
-    );
-  });
-  // --- Booking Pace ---
-
-  it('should return rooms on books and new bookings per day', async () => {
-    const db = createMockDb([
-      // daily on-books (generate_series join)
-      [
-        { date: '2026-04-04', count: 42 },
-        { date: '2026-04-05', count: 45 },
-        { date: '2026-04-06', count: 40 },
-      ],
-      // daily new bookings
-      [
-        { date: '2026-04-04', count: 3 },
-        { date: '2026-04-05', count: 5 },
-        { date: '2026-04-06', count: 2 },
-      ],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getBookingPace('prop-001', '2026-04-04', '2026-04-06');
-    expect(result.period.start).toBe('2026-04-04');
-    expect(result.period.end).toBe('2026-04-06');
-    expect(result.daily).toHaveLength(3);
-    expect(result.daily[0]).toEqual({
-      date: '2026-04-04',
-      roomsOnBooks: 42,
-      newBookings: 3,
-    });
-    expect(result.daily[1]!.newBookings).toBe(5);
-    expect(result.summary.totalNewBookings).toBe(10);
-    expect(result.summary.avgRoomsOnBooks).toBeCloseTo(42.33, 1);
+  it('reports pickup and explicitly flags unavailable historical amendment reconstruction', async () => {
+    const { service } = fixture();
+    const r = await service.getPickup(PROP, DATE, '2027-04-01', DATE);
+    expect(r.pickup.roomNights).toBe(0);
+    expect(r.historicalAmendmentsReconstructed).toBe(false);
   });
 
-  it('should default new bookings to zero when none created that day', async () => {
-    const db = createMockDb([
-      [{ date: '2026-04-06', count: 30 }],
-      [],
-    ]);
-    const module = await Test.createTestingModule({
-      providers: [
-        ReportsService,
-        { provide: DRIZZLE, useValue: db },
-      ],
-    }).compile();
-    service = module.get(ReportsService);
-
-    const result = await service.getBookingPace('prop-001', '2026-04-06', '2026-04-06');
-    expect(result.daily[0]!.roomsOnBooks).toBe(30);
-    expect(result.daily[0]!.newBookings).toBe(0);
-    expect(result.summary.totalNewBookings).toBe(0);
+  it('returns booking pace rows and daily new bookings', async () => {
+    const { service } = fixture({ pace: [{ date: DATE, count: 42 }] });
+    const r = await service.getBookingPace(PROP, DATE, DATE);
+    expect(r.daily[0]).toEqual({ date: DATE, roomsOnBooks: 42, newBookings: 0 });
+    expect(r.summary.avgRoomsOnBooks).toBe(42);
   });
 
+  it('defaults missing new bookings to zero without using them as revenue', async () => {
+    const { service } = fixture({ pace: [{ date: DATE, count: 30 }] });
+    const r = await service.getBookingPace(PROP, DATE, DATE);
+    expect(r.summary.totalNewBookings).toBe(0);
+    expect(r.daily[0]!.roomsOnBooks).toBe(30);
+  });
+
+  it('fails explicitly on an unconverted ledger currency', async () => {
+    const { service } = fixture({ charges: [{ ...charge('room', '100'), currencyCode: 'USD' }] });
+    await expect(service.getDailyRevenue(PROP, DATE)).rejects.toMatchObject({ status: 400 });
+  });
+
+  it('reads a daily report in a read-only repeatable-read snapshot', async () => {
+    const { service, db } = fixture();
+    await service.getDailyRevenue(PROP, DATE);
+    expect(db.transaction).toHaveBeenCalledWith(expect.any(Function), { isolationLevel: 'repeatable read', readOnly: true });
+  });
+
+  it('separates positive outstanding balances, guest credits and held deposits', async () => {
+    const { service } = fixture({ balances: [{ count: 3, totalBalance: '450', credits: '-100', currencyCode: 'KZT' }],
+      deposits: [{ status: 'held', total: '200', currencyCode: 'KZT' }] });
+    const r = await service.getFinancialSummary(PROP, DATE);
+    expect(r.outstandingBalances).toMatchObject({ totalBalanceDue: 450, creditBalances: -100 });
+    expect(r.deposits.held).toBe(200);
+    expect(r.kpis.totalRevenue).toBe(0);
+  });
+});
+
+describe('Reporting calendar and numeric policy', () => {
+  it('rejects malformed or impossible business dates', () => {
+    for (const date of ['2027-02-30', '2027-2-1', '2027-01-01T00:00Z', 'bad']) expect(() => reportDate(date)).toThrow();
+  });
+  it('bounds ordered report ranges without dropping leap days', () => {
+    expect(reportDates('2028-02-28', '2028-03-01')).toHaveLength(3);
+    expect(() => reportDates('2027-05-02', DATE)).toThrow();
+    expect(() => reportDates('2025-01-01', '2027-01-01')).toThrow();
+  });
+  it('clamps a LY leap date instead of rolling into March', () => {
+    expect(priorYearDate('2028-02-29')).toBe('2027-02-28');
+  });
+  it('calculates currency ratios with decimal arithmetic and absent denominator as null', () => {
+    expect(ratio(100, 3)).toBe(33.33);
+    expect(ratio(10, 0)).toBeNull();
+  });
 });

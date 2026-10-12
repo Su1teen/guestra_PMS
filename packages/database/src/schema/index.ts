@@ -302,3 +302,4 @@ export {
 
 export * from './domain-event-outbox.js';
 export * from './staff-request-fence.js';
+export * from './rate-change.js';

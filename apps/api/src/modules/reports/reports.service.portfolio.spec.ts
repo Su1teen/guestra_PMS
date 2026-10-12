@@ -3,16 +3,21 @@ import { ReportsService } from './reports.service';
 
 describe('ReportsService portfolio', () => {
   const service = new ReportsService(null as any);
+  (service as any).inSnapshot = true;
 
   it('aggregates financial summary across properties', async () => {
     vi.spyOn(service, 'getFinancialSummary').mockImplementation(async (id: string) => ({
       date: '2026-07-08',
+      currencyCode: 'KZT',
+      actual: { value: id === 'p1' ? 1000 : 2000, status: 'PARTIAL' },
       kpis: {
         adr: 100,
         revpar: 50,
         occupancyRate: 0.5,
         totalRevenue: id === 'p1' ? 1000 : 2000,
         roomRevenue: id === 'p1' ? 800 : 1600,
+        roomsSold: 45,
+        availableRooms: 90,
       },
       revenueByType: {},
       paymentsByMethod: {},

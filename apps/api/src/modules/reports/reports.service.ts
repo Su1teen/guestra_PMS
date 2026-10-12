@@ -1,5 +1,5 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { eq, and, sql, lte, gte, inArray } from 'drizzle-orm';
+import { Injectable, Inject, NotFoundException, BadRequestException } from '@nestjs/common';
+import { eq, and, or, sql, lte, gte, inArray } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import {
   charges,
@@ -13,651 +13,492 @@ import {
   depositLedgerEntries,
   arLedgers,
   arTransactions,
+  roomInventoryBlocks,
+  roomTypes,
 } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { reportPaymentSumWhere } from '../payment/payment-ledger';
-import { resolveReportDate } from './resolve-report-date';
+import { reportDate, reportDates, priorYearDate, ratio } from './reporting-policy';
+import { activeInventoryBlockConditions, dayAfter } from '../room/room-inventory-policy';
 
 @Injectable()
 export class ReportsService {
   constructor(@Inject(DRIZZLE) private readonly db: any) {}
 
-  /** Management/DRR cockpit backed by the same KPI methods as Reports. */
-  async getManagementSummary(propertyId: string, date: string) {
-    const day = new Date(`${date}T00:00:00.000Z`);
-    const previous = new Date(day); previous.setUTCDate(previous.getUTCDate() - 1);
-    const lastWeek = new Date(day); lastWeek.setUTCDate(lastWeek.getUTCDate() - 7);
-    const previousDate = previous.toISOString().slice(0, 10);
-    const lastWeekDate = lastWeek.toISOString().slice(0, 10);
-    const monthStart = `${date.slice(0, 7)}-01`;
-    const pickupFrom = new Date(day); pickupFrom.setUTCDate(pickupFrom.getUTCDate() - 1);
+  private inSnapshot = false;
 
-    const [financial, occupancy, daily, previousFinancial, lastWeekFinancial, pickup, pace] = await Promise.all([
-      this.getFinancialSummary(propertyId, date),
-      this.getOccupancy(propertyId, date),
-      this.getDailyRevenue(propertyId, date),
-      this.getFinancialSummary(propertyId, previousDate),
-      this.getFinancialSummary(propertyId, lastWeekDate),
-      this.getPickup(propertyId, date, pickupFrom.toISOString(), day.toISOString()),
-      this.getBookingPace(propertyId, date, date),
-    ]);
-
-    const [statusRows, depositRow, mtdRow, onBooksRow, forecastRow, channelRows, roomRows] = await Promise.all([
-      this.db.select({ status: reservations.status, count: sql<number>`count(*)::int` })
-        .from(reservations).where(and(
-          eq(reservations.propertyId, propertyId),
-          eq(reservations.arrivalDate, date),
-        )).groupBy(reservations.status),
-      this.db.select({
-        amount: sql<string>`coalesce(sum(${depositLedgerEntries.amount}::numeric), 0)`,
-        count: sql<number>`count(*)::int`,
-      }).from(depositLedgerEntries).where(and(
-        eq(depositLedgerEntries.propertyId, propertyId),
-        sql`${depositLedgerEntries.receivedAt}::date = ${date}`,
-        inArray(depositLedgerEntries.status, ['held', 'applied'] as any),
-      )).then((rows: any[]) => rows[0]),
-      this.db.select({ amount: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)` })
-        .from(charges).where(and(
-          eq(charges.propertyId, propertyId),
-          eq(charges.isReversal, false),
-          sql`${charges.serviceDate}::date between ${monthStart} and ${date}`,
-        )).then((rows: any[]) => rows[0]),
-      this.db.select({ count: sql<number>`count(*)::int` }).from(reservations).where(and(
-        eq(reservations.propertyId, propertyId),
-        inArray(reservations.status, ['pending', 'confirmed', 'assigned', 'checked_in', 'stayover', 'due_out'] as any),
-        sql`${reservations.departureDate} > ${date}`,
-      )).then((rows: any[]) => rows[0]),
-      this.db.select({ amount: sql<string>`coalesce(sum(${reservations.totalAmount}::numeric), 0)` })
-        .from(reservations).where(and(
-          eq(reservations.propertyId, propertyId),
-          inArray(reservations.status, ['pending', 'confirmed', 'assigned'] as any),
-          sql`${reservations.arrivalDate} >= ${date}`,
-        )).then((rows: any[]) => rows[0]),
-      this.db.select({ source: bookings.source, count: sql<number>`count(*)::int` })
-        .from(reservations).innerJoin(bookings, and(
-          eq(bookings.id, reservations.bookingId),
-          eq(bookings.propertyId, propertyId),
-        )).where(and(
-          eq(reservations.propertyId, propertyId),
-          eq(reservations.arrivalDate, date),
-        )).groupBy(bookings.source),
-      this.db.select({ status: rooms.status, count: sql<number>`count(*)::int` })
-        .from(rooms).where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true)))
-        .groupBy(rooms.status),
-    ]);
-
-    const statuses = Object.fromEntries(statusRows.map((r: any) => [r.status, Number(r.count)]));
-    const roomStatus = Object.fromEntries(roomRows.map((r: any) => [r.status, Number(r.count)]));
-    const compare = (current: number, baseline: number) => ({
-      value: baseline,
-      absolute: current - baseline,
-      percent: baseline === 0 ? null : ((current - baseline) / Math.abs(baseline)) * 100,
-    });
-    const currentKpis = financial.kpis;
-    return {
-      date,
-      currencyCode: (await this.db.select({ currencyCode: properties.currencyCode }).from(properties)
-        .where(eq(properties.id, propertyId)).then((r: any[]) => r[0]))?.currencyCode ?? null,
-      today: {
-        revenue: currentKpis.totalRevenue,
-        occupancy: currentKpis.occupancyRate,
-        adr: currentKpis.adr,
-        revpar: currentKpis.revpar,
-        arrivals: Object.values(statuses).reduce((sum: number, value: any) => sum + Number(value), 0),
-        departures: occupancy.departures,
-        inHouse: occupancy.stayovers,
-        confirmed: (statuses['confirmed'] ?? 0) + (statuses['assigned'] ?? 0),
-        cancellations: statuses['cancelled'] ?? occupancy.cancellations,
-        noShows: statuses['no_show'] ?? occupancy.noShows,
-        receivedDeposits: Number(depositRow?.amount ?? 0),
-        receivedDepositCount: Number(depositRow?.count ?? 0),
-        pendingPayments: financial.outstandingBalances.totalBalanceDue,
-        rooms: roomStatus,
-      },
-      drr: {
-        revenue: daily.netRevenue,
-        bookings: Number(onBooksRow?.count ?? 0),
-        occupancy: currentKpis.occupancyRate,
-        adr: currentKpis.adr,
-        revpar: currentKpis.revpar,
-        cancellations: statuses['cancelled'] ?? 0,
-        deposits: Number(depositRow?.amount ?? 0),
-        pickup: pickup.pickup,
-        pace: pace.daily?.[0] ?? { roomsOnBooks: 0, newBookings: 0 },
-        channelMix: channelRows.map((r: any) => ({ source: r.source, bookings: Number(r.count) })),
-        mtdRevenue: Number(mtdRow?.amount ?? 0),
-        onBooks: Number(onBooksRow?.count ?? 0),
-        forecastRevenue: Number(forecastRow?.amount ?? 0),
-        comparisons: {
-          previousDay: {
-            revenue: compare(currentKpis.totalRevenue, previousFinancial.kpis.totalRevenue),
-            occupancy: compare(currentKpis.occupancyRate, previousFinancial.kpis.occupancyRate),
-            adr: compare(currentKpis.adr, previousFinancial.kpis.adr),
-            revpar: compare(currentKpis.revpar, previousFinancial.kpis.revpar),
-          },
-          sameDayLastWeek: {
-            revenue: compare(currentKpis.totalRevenue, lastWeekFinancial.kpis.totalRevenue),
-            occupancy: compare(currentKpis.occupancyRate, lastWeekFinancial.kpis.occupancyRate),
-            adr: compare(currentKpis.adr, lastWeekFinancial.kpis.adr),
-            revpar: compare(currentKpis.revpar, lastWeekFinancial.kpis.revpar),
-          },
-        },
-      },
-    };
+  private async snapshot<T>(read: (service: ReportsService) => Promise<T>): Promise<T> {
+    return this.db.transaction(async (tx: any) => {
+      const service = new ReportsService(tx);
+      service.inSnapshot = true;
+      return read(service);
+    }, { isolationLevel: 'repeatable read', readOnly: true });
   }
 
-  /**
-   * Daily Revenue Report — sums charges by type and payments by method for a date.
-   */
-  async getDailyRevenue(propertyId: string, date: string) {
-    // Revenue by charge type
-    const revenueByType = await this.db
-      .select({
-        type: charges.type,
-        total: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
-      })
-      .from(charges)
-      .where(
-        and(
-          eq(charges.propertyId, propertyId),
-          eq(charges.isReversal, false),
-          sql`${charges.serviceDate}::date = ${date}`,
-        ),
-      )
-      .groupBy(charges.type);
+  private async context(propertyId: string, date?: string) {
+    const [property] = await this.db.select().from(properties).where(eq(properties.id, propertyId));
+    if (!property) throw new NotFoundException('Property not found');
+    const [lastAudit] = await this.db.select().from(auditRuns).where(and(
+      eq(auditRuns.propertyId, propertyId), eq(auditRuns.status, 'completed'),
+    )).orderBy(sql`${auditRuns.businessDate} desc`).limit(1);
+    const localToday = new Intl.DateTimeFormat('en-CA', { timeZone: property.timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+    const operationalDate = lastAudit ? dayAfter(lastAudit.businessDate) : localToday;
+    return { property, date: reportDate(date ?? operationalDate), operationalDate };
+  }
 
-    // Adjustments (reversals)
-    const [adjResult] = await this.db
-      .select({
-        total: sql<string>`coalesce(sum(abs(${charges.amount}::numeric)), 0)`,
-      })
-      .from(charges)
-      .where(
-        and(
-          eq(charges.propertyId, propertyId),
-          eq(charges.isReversal, true),
-          sql`${charges.serviceDate}::date = ${date}`,
-        ),
-      );
+  async getBusinessDate(propertyId: string) {
+    const { property, operationalDate } = await this.context(propertyId);
+    return { propertyId, date: operationalDate, timezone: property.timezone, currencyCode: property.currencyCode,
+      source: 'completed_night_audit_or_property_local_today' };
+  }
 
-    // Payments by method
-    const paymentsByMethod = await this.db
-      .select({
-        method: payments.method,
-        total: sql<string>`coalesce(sum(${payments.amount}::numeric), 0)`,
-      })
-      .from(payments)
-      .where(
-        and(
-          reportPaymentSumWhere(propertyId),
-          sql`${payments.processedAt}::date = ${date}`,
-        ),
-      )
-      .groupBy(payments.method);
+  /** serviceDate is an explicit UTC-encoded business-date label, not posting time. */
+  private serviceDay() { return sql<string>`(${charges.serviceDate} at time zone 'UTC')::date`; }
 
-    // Build revenue object — accumulate as Decimal, expose as number at boundary
-    const revenueDec = {
-      room: new Decimal(0),
-      tax: new Decimal(0),
-      foodBeverage: new Decimal(0),
-      other: new Decimal(0),
-      total: new Decimal(0),
-    };
-    for (const row of revenueByType) {
+  private localDay(column: any, timezone: string) {
+    return sql<string>`(${column} at time zone ${timezone})::date`;
+  }
+
+  private bookingDate(value: string, timezone: string) {
+    if (typeof value !== 'string') throw new BadRequestException('Booking-window date is required');
+    if (!value.includes('T')) return reportDate(value);
+    if (!/(Z|[+-]\d{2}:\d{2})$/.test(value)) throw new BadRequestException('Timestamp must include an explicit timezone');
+    const timestamp = new Date(value);
+    if (!Number.isFinite(timestamp.getTime())) throw new BadRequestException('Invalid booking-window timestamp');
+    return new Intl.DateTimeFormat('en-CA', { timeZone: timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit' }).format(timestamp);
+  }
+
+  private assertCurrency(rows: any[], currencyCode: string) {
+    if (rows.some(row => row.currencyCode !== currencyCode)) {
+      throw new BadRequestException('CURRENCY_MISMATCH: ledger requires explicit currency conversion');
+    }
+  }
+
+  private categories(values: Record<string, Decimal>) {
+    const room = values['room'] ?? new Decimal(0);
+    const tax = values['tax'] ?? new Decimal(0);
+    const foodBeverage = values['food_beverage'] ?? new Decimal(0);
+    const other = Object.entries(values).filter(([type]) => !['room', 'tax', 'food_beverage'].includes(type))
+      .reduce((sum, [, amount]) => sum.plus(amount), new Decimal(0));
+    const earned = room.plus(foodBeverage).plus(other);
+    return { room: room.toNumber(), tax: tax.toNumber(), foodBeverage: foodBeverage.toNumber(),
+      other: other.toNumber(), total: earned.plus(tax).toNumber(), earned: earned.toNumber() };
+  }
+
+  /** One signed charge aggregation for every reporting consumer; tax is not earned revenue. */
+  private async ledger(propertyId: string, start: string, end: string, currencyCode: string) {
+    reportDates(start, end);
+    const rows = await this.db.select({
+      type: charges.type, currencyCode: charges.currencyCode, isReversal: charges.isReversal,
+      total: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
+      count: sql<number>`count(*)::int`,
+    }).from(charges).where(and(eq(charges.propertyId, propertyId),
+      gte(this.serviceDay(), start), lte(this.serviceDay(), end),
+    )).groupBy(charges.type, charges.currencyCode, charges.isReversal);
+    this.assertCurrency(rows, currencyCode);
+    const gross: Record<string, Decimal> = {};
+    const net: Record<string, Decimal> = {};
+    let signedReversals = new Decimal(0);
+    let chargeCount = 0;
+    for (const row of rows) {
       const amount = new Decimal(row.total);
-      if (row.type === 'room') revenueDec.room = revenueDec.room.plus(amount);
-      else if (row.type === 'tax') revenueDec.tax = revenueDec.tax.plus(amount);
-      else if (row.type === 'food_beverage') revenueDec.foodBeverage = revenueDec.foodBeverage.plus(amount);
-      else revenueDec.other = revenueDec.other.plus(amount);
-      revenueDec.total = revenueDec.total.plus(amount);
+      net[row.type] = (net[row.type] ?? new Decimal(0)).plus(amount);
+      chargeCount += Number(row.count);
+      if (row.isReversal) signedReversals = signedReversals.plus(amount);
+      else gross[row.type] = (gross[row.type] ?? new Decimal(0)).plus(amount);
     }
-    const revenue = {
-      room: revenueDec.room.toNumber(),
-      tax: revenueDec.tax.toNumber(),
-      foodBeverage: revenueDec.foodBeverage.toNumber(),
-      other: revenueDec.other.toNumber(),
-      total: revenueDec.total.toNumber(),
-    };
-
-    // Build payments object
-    const paymentsObj: Record<string, number> = {};
-    let paymentsTotalDec = new Decimal(0);
-    for (const row of paymentsByMethod) {
-      const amount = new Decimal(row.total);
-      paymentsObj[row.method] = amount.toNumber();
-      paymentsTotalDec = paymentsTotalDec.plus(amount);
-    }
-
-    const signedReversalTotal = new Decimal(adjResult?.total ?? '0');
-    const adjustmentsDec = signedReversalTotal.isZero()
-      ? new Decimal(0)
-      : signedReversalTotal.negated();
-
-    return {
-      date,
-      revenue,
-      payments: { ...paymentsObj, total: paymentsTotalDec.toNumber() },
-      adjustments: adjustmentsDec.toNumber(),
-      netRevenue: revenueDec.total.minus(adjustmentsDec).toNumber(),
-    };
+    const posted = this.categories(net);
+    const [coverage] = await this.db.select({ count: sql<number>`count(*)::int` }).from(auditRuns)
+      .where(and(eq(auditRuns.propertyId, propertyId), eq(auditRuns.status, 'completed'),
+        gte(auditRuns.businessDate, start), lte(auditRuns.businessDate, end)));
+    const expectedDays = reportDates(start, end).length;
+    const closedDays = Number(coverage?.count ?? 0);
+    const status = closedDays === expectedDays ? 'COMPLETE' : chargeCount > 0 ? 'PARTIAL' : 'NO_POSTINGS';
+    return { revenue: this.categories(gross), net: posted, revenueByType: Object.fromEntries(
+      Object.entries(net).map(([type, amount]) => [type, amount.toNumber()])),
+      signedReversals: signedReversals.toNumber(), chargeCount, closedDays, expectedDays,
+      actual: { value: status === 'NO_POSTINGS' ? null : posted.earned, status,
+        source: 'charges.serviceDate', closedDays, expectedDays } };
   }
 
-  /**
-   * Occupancy Report — room occupancy metrics for a date (KB 5.9).
-   */
-  async getOccupancy(propertyId: string, date?: string) {
-    const reportDate = resolveReportDate(date);
-
-    // Property total rooms
-    const [property] = await this.db
-      .select({ totalRooms: properties.totalRooms })
-      .from(properties)
-      .where(eq(properties.id, propertyId));
-    const totalRooms = property?.totalRooms ?? 0;
-
-    // Room status counts
-    const roomStatusCounts = await this.db
-      .select({
-        status: rooms.status,
-        count: sql<number>`count(*)::int`,
-      })
-      .from(rooms)
-      .where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true)))
-      .groupBy(rooms.status);
-
-    let outOfOrder = 0;
-    let outOfService = 0;
-    let occupiedFromRoomStatus = 0;
-    for (const row of roomStatusCounts) {
-      if (row.status === 'out_of_order') outOfOrder = row.count;
-      else if (row.status === 'out_of_service') outOfService = row.count;
-      else if (row.status === 'occupied') occupiedFromRoomStatus = row.count;
+  private async cash(propertyId: string, date: string, timezone: string, currencyCode: string) {
+    const rows = await this.db.select({
+      method: payments.method, currencyCode: payments.currencyCode,
+      total: sql<string>`coalesce(sum(${payments.amount}::numeric), 0)`,
+      received: sql<string>`coalesce(sum(case when ${payments.amount}::numeric > 0 then ${payments.amount}::numeric else 0 end), 0)`,
+      refunded: sql<string>`coalesce(sum(case when ${payments.amount}::numeric < 0 then -${payments.amount}::numeric else 0 end), 0)`,
+    }).from(payments).where(and(reportPaymentSumWhere(propertyId),
+      eq(this.localDay(payments.processedAt, timezone), date))).groupBy(payments.method, payments.currencyCode);
+    this.assertCurrency(rows, currencyCode);
+    const byMethod: Record<string, number> = {};
+    let received = new Decimal(0), refunds = new Decimal(0), transfers = new Decimal(0);
+    for (const row of rows) {
+      byMethod[row.method] = new Decimal(row.total).toNumber();
+      if (row.method === 'city_ledger') transfers = transfers.plus(row.total);
+      else { received = received.plus(row.received); refunds = refunds.plus(row.refunded); }
     }
-
-    const availableRooms = totalRooms - outOfOrder - outOfService;
-
-    // Room-nights occupied on reportDate (departure exclusive). Prefer stay window
-    // over sticky room.status so stale demo stayovers past departure do not inflate %.
-    const [occupiedStayResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.propertyId, propertyId),
-          sql`${reservations.status} in ('checked_in', 'stayover', 'due_out', 'checked_out')`,
-          lte(reservations.arrivalDate, reportDate),
-          sql`${reservations.departureDate} > ${reportDate}`,
-        ),
-      );
-    const occupiedRooms = occupiedStayResult?.count ?? occupiedFromRoomStatus;
-    const occupancyRate = availableRooms > 0 ? occupiedRooms / availableRooms : 0;
-
-    // Arrivals (checked in today)
-    const [arrivalsResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.propertyId, propertyId),
-          sql`${reservations.checkedInAt}::date = ${reportDate}`,
-        ),
-      );
-
-    // Departures (checked out today)
-    const [departuresResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.propertyId, propertyId),
-          sql`${reservations.checkedOutAt}::date = ${reportDate}`,
-        ),
-      );
-
-    // Stayovers — in-house continuing on reportDate (same stay-window as occupied)
-    const [stayoversResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.propertyId, propertyId),
-          sql`${reservations.status} in ('stayover', 'checked_in', 'due_out')`,
-          lte(reservations.arrivalDate, reportDate),
-          sql`${reservations.departureDate} > ${reportDate}`,
-        ),
-      );
-
-    // No-shows
-    const [noShowsResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.propertyId, propertyId),
-          eq(reservations.status, 'no_show' as any),
-          eq(reservations.arrivalDate, reportDate),
-        ),
-      );
-
-    // Cancellations
-    const [cancelsResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.propertyId, propertyId),
-          eq(reservations.status, 'cancelled' as any),
-          sql`${reservations.cancelledAt}::date = ${reportDate}`,
-        ),
-      );
-
-    return {
-      date: reportDate,
-      totalRooms,
-      outOfOrder,
-      outOfService,
-      availableRooms,
-      occupiedRooms,
-      occupancyRate: Math.round(occupancyRate * 10000) / 10000,
-      occupancyPercent: `${(occupancyRate * 100).toFixed(1)}%`,
-      arrivals: arrivalsResult?.count ?? 0,
-      departures: departuresResult?.count ?? 0,
-      stayovers: stayoversResult?.count ?? 0,
-      noShows: noShowsResult?.count ?? 0,
-      cancellations: cancelsResult?.count ?? 0,
-    };
+    const total = Object.values(byMethod).reduce((sum, value) => sum.plus(value), new Decimal(0));
+    return { byMethod, ledgerNet: total.toNumber(), received: received.toNumber(), refunds: refunds.toNumber(),
+      net: received.minus(refunds).toNumber(), arTransfers: transfers.toNumber() };
   }
 
-  /**
-   * Financial Summary (Manager's Report) — daily KPIs (KB 5.9).
-   * ADR = room revenue / rooms sold
-   * RevPAR = ADR x occupancy rate
-   */
-  async getFinancialSummary(propertyId: string, date: string) {
-    // Room revenue
-    const [roomRevenueResult] = await this.db
-      .select({
-        total: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
-      })
-      .from(charges)
-      .where(
-        and(
-          eq(charges.propertyId, propertyId),
-          eq(charges.type, 'room' as any),
-          eq(charges.isReversal, false),
-          sql`${charges.serviceDate}::date = ${date}`,
-        ),
-      );
-    const roomRevenueDec = new Decimal(roomRevenueResult?.total ?? '0');
-    const roomRevenue = roomRevenueDec.toNumber();
+  async getDailyRevenue(propertyId: string, requestedDate?: string) {
+    if (requestedDate) reportDate(requestedDate);
+    return this.inSnapshot ? this.readDailyRevenue(propertyId, requestedDate) : this.snapshot(service => service.readDailyRevenue(propertyId, requestedDate));
+  }
 
-    // Total revenue
-    const [totalRevenueResult] = await this.db
-      .select({
-        total: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
-      })
-      .from(charges)
-      .where(
-        and(
-          eq(charges.propertyId, propertyId),
-          eq(charges.isReversal, false),
-          sql`${charges.serviceDate}::date = ${date}`,
-        ),
-      );
-    const totalRevenue = new Decimal(totalRevenueResult?.total ?? '0').toNumber();
+  private async readDailyRevenue(propertyId: string, requestedDate?: string) {
+    const { property, date } = await this.context(propertyId, requestedDate);
+    const [ledger, cash] = await Promise.all([
+      this.ledger(propertyId, date, date, property.currencyCode),
+      this.cash(propertyId, date, property.timezone, property.currencyCode),
+    ]);
+    return { date, propertyId, currencyCode: property.currencyCode, timezone: property.timezone,
+      revenue: ledger.revenue, revenueByType: ledger.revenueByType,
+      payments: { ...cash.byMethod, total: cash.ledgerNet }, cash,
+      adjustments: ledger.signedReversals === 0 ? 0 : -ledger.signedReversals,
+      netRevenue: ledger.net.total, netEarnedRevenue: ledger.net.earned,
+      netRevenueByCategory: ledger.net, separatelyPostedTax: ledger.net.tax, actual: ledger.actual };
+  }
 
-    // Revenue by type
-    const revenueByTypeRows = await this.db
-      .select({
-        type: charges.type,
-        total: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
-      })
-      .from(charges)
-      .where(
-        and(
-          eq(charges.propertyId, propertyId),
-          eq(charges.isReversal, false),
-          sql`${charges.serviceDate}::date = ${date}`,
-        ),
-      )
-      .groupBy(charges.type);
-
-    const revenueByType: Record<string, number> = {};
-    for (const row of revenueByTypeRows) {
-      revenueByType[row.type] = new Decimal(row.total).toNumber();
-    }
-
-    // Payments by method
-    const paymentRows = await this.db
-      .select({
-        method: payments.method,
-        total: sql<string>`coalesce(sum(${payments.amount}::numeric), 0)`,
-      })
-      .from(payments)
-      .where(
-        and(
-          reportPaymentSumWhere(propertyId),
-          sql`${payments.processedAt}::date = ${date}`,
-        ),
-      )
-      .groupBy(payments.method);
-
-    const paymentsByMethod: Record<string, number> = {};
-    for (const row of paymentRows) {
-      paymentsByMethod[row.method] = new Decimal(row.total).toNumber();
-    }
-
-    // Rooms sold — room-nights covering `date` (departure exclusive; matches occupancy trend)
-    const [roomsSoldResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.propertyId, propertyId),
-          sql`${reservations.status} in ('checked_in', 'stayover', 'due_out', 'checked_out')`,
-          lte(reservations.arrivalDate, date),
-          sql`${reservations.departureDate} > ${date}`,
-        ),
-      );
-    const roomsSold = roomsSoldResult?.count ?? 0;
-
-    // Property totals + OOO/OOS
-    const [property] = await this.db
-      .select({ totalRooms: properties.totalRooms })
-      .from(properties)
-      .where(eq(properties.id, propertyId));
-    const totalRooms = property?.totalRooms ?? 0;
-
-    const roomStatusCounts = await this.db
-      .select({
-        status: rooms.status,
-        count: sql<number>`count(*)::int`,
-      })
-      .from(rooms)
-      .where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true)))
-      .groupBy(rooms.status);
-
-    let unavailableRooms = 0;
-    for (const row of roomStatusCounts) {
-      if (row.status === 'out_of_order' || row.status === 'out_of_service') {
-        unavailableRooms += row.count;
+  private async inventory(propertyId: string, endDate: string, timezone: string, roomTypeId?: string) {
+    const [physical, blocks] = await Promise.all([
+      this.db.select().from(rooms).where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true), roomTypeId ? eq(rooms.roomTypeId, roomTypeId) : undefined)),
+      this.db.select().from(roomInventoryBlocks).where(or(
+        activeInventoryBlockConditions(propertyId, dayAfter(endDate)),
+        and(eq(roomInventoryBlocks.propertyId, propertyId), eq(roomInventoryBlocks.status, 'released'),
+          lte(roomInventoryBlocks.startDate, endDate)),
+      )),
+    ]);
+    return (date: string) => {
+      const blocked = new Map<string, string>();
+      for (const room of physical) {
+        if (room.status === 'out_of_order') blocked.set(room.id, 'OOO');
+        if (room.status === 'out_of_service') blocked.set(room.id, 'OOS');
       }
-    }
-
-    const availableRooms = totalRooms - unavailableRooms;
-    const occupancyRate = availableRooms > 0 ? roomsSold / availableRooms : 0;
-    // ADR / RevPAR are displayed as currency — compute via Decimal to avoid drift
-    const adrDec = roomsSold > 0 ? roomRevenueDec.div(roomsSold) : new Decimal(0);
-    const revparDec = adrDec.times(occupancyRate);
-    const adr = adrDec.toNumber();
-    const revpar = revparDec.toNumber();
-
-    // Outstanding balances
-    const [outstandingResult] = await this.db
-      .select({
-        count: sql<number>`count(*)::int`,
-        totalBalance: sql<string>`coalesce(sum(${folios.balance}::numeric), 0)`,
-      })
-      .from(folios)
-      .where(
-        and(
-          eq(folios.propertyId, propertyId),
-          eq(folios.status, 'open' as any),
-        ),
-      );
-
-    // Last audit
-    const [lastAudit] = await this.db
-      .select()
-      .from(auditRuns)
-      .where(eq(auditRuns.propertyId, propertyId))
-      .orderBy(sql`${auditRuns.businessDate} desc`)
-      .limit(1);
-
-    return {
-      date,
-      kpis: {
-        adr: Math.round(adr * 100) / 100,
-        revpar: Math.round(revpar * 100) / 100,
-        occupancyRate: Math.round(occupancyRate * 10000) / 10000,
-        totalRevenue,
-        roomRevenue,
-      },
-      revenueByType,
-      paymentsByMethod,
-      outstandingBalances: {
-        totalFoliosOpen: outstandingResult?.count ?? 0,
-        totalBalanceDue: new Decimal(outstandingResult?.totalBalance ?? '0').toNumber(),
-      },
-      auditStatus: {
-        lastAuditDate: lastAudit?.businessDate ?? null,
-        lastAuditStatus: lastAudit?.status ?? null,
-        errorsInLastAudit: lastAudit?.errors?.length ?? 0,
-      },
+      for (const block of blocks) {
+        const releasedDay = block.releasedAt ? new Intl.DateTimeFormat('en-CA', {
+          timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(block.releasedAt) : null;
+        if (block.startDate <= date && (block.status === 'active' || (releasedDay && date < releasedDay)) &&
+          physical.some((room: any) => room.id === block.roomId)) {
+          if (blocked.get(block.roomId) !== 'OOO') blocked.set(block.roomId, block.kind);
+        }
+      }
+      return { totalRooms: physical.length,
+        outOfOrder: [...blocked.values()].filter(kind => kind === 'OOO').length,
+        outOfService: [...blocked.values()].filter(kind => kind === 'OOS').length,
+        availableRooms: physical.length - blocked.size, inventorySource: 'active_rooms_and_inventory_blocks',
+        inventoryHistoryStatus: 'CURRENT_ROOM_ROSTER_WITH_DATED_BLOCKS' };
     };
   }
 
-  /**
-   * Occupancy Trend Report — daily metrics over a date range (KB 5.9).
-   */
+  async getOccupancy(propertyId: string, requestedDate?: string) {
+    return this.inSnapshot ? this.readOccupancy(propertyId, requestedDate) : this.snapshot(service => service.readOccupancy(propertyId, requestedDate));
+  }
+
+  /** Commercial on-books signals are not realised occupancy or earned revenue. */
+  async getOnBooksOccupancy(propertyId: string, date: string, db?: any) {
+    const read = async (service: ReportsService) => {
+      const { property } = await service.context(propertyId, date);
+      const inventory = await service.inventory(propertyId, date, property.timezone);
+      const stock = inventory(date);
+      const [row] = await service.db.select({ count: sql<number>`count(*)::int` }).from(reservations).where(and(
+        eq(reservations.propertyId, propertyId), lte(reservations.arrivalDate, date), sql`${reservations.departureDate} > ${date}`,
+        inArray(reservations.status, ['pending','confirmed','assigned','checked_in','stayover','due_out','checked_out'] as any),
+      ));
+      return { ...stock, roomsOnBooks: Number(row?.count ?? 0), occ: ratio(Number(row?.count ?? 0), stock.availableRooms, 4) };
+    };
+    if (db) { const service = new ReportsService(db); service.inSnapshot = true; return read(service); }
+    return this.inSnapshot ? read(this) : this.snapshot(read);
+  }
+
+  async getRevenueSignals(propertyId: string, startDate: string, endDate: string, roomTypeId?: string, db?: any) {
+    if (db) {
+      const service = new ReportsService(db);
+      service.inSnapshot = true;
+      return service.readRevenueSignals(propertyId, startDate, endDate, roomTypeId);
+    }
+    return this.inSnapshot ? this.readRevenueSignals(propertyId, startDate, endDate, roomTypeId) :
+      this.snapshot(service => service.readRevenueSignals(propertyId, startDate, endDate, roomTypeId));
+  }
+
+  private async readRevenueSignals(propertyId: string, startDate: string, endDate: string, roomTypeId?: string) {
+    const dates = reportDates(startDate, endDate);
+    if (dates.length > 93) throw new BadRequestException('Live calendar supports at most 93 days');
+    const { property, operationalDate } = await this.context(propertyId);
+    if (roomTypeId) {
+      const [category] = await this.db.select().from(roomTypes).where(and(eq(roomTypes.id, roomTypeId), eq(roomTypes.propertyId, propertyId)));
+      if (!category) throw new NotFoundException('Room category not found in this property');
+    }
+    const inventory = await this.inventory(propertyId, endDate, property.timezone, roomTypeId);
+    const pace = await this.readBookingPace(propertyId, startDate, endDate, roomTypeId);
+    const pickupFrom = new Date(Date.parse(operationalDate + 'T00:00:00Z') - 6 * 86400000).toISOString().slice(0, 10);
+    const daily = [];
+    for (const date of dates) {
+      const stock = inventory(date);
+      const roomsOnBooks = pace.daily.find((day: any) => day.date === date)?.roomsOnBooks ?? 0;
+      const pickup = await this.readPickup(propertyId, date, pickupFrom, operationalDate, roomTypeId);
+      const [realised] = await this.db.select({ count: sql<number>`count(*)::int` }).from(reservations).where(and(
+        eq(reservations.propertyId, propertyId), roomTypeId ? eq(reservations.roomTypeId, roomTypeId) : undefined,
+        lte(reservations.arrivalDate, date), sql`${reservations.departureDate} > ${date}`,
+        inArray(reservations.status, ['checked_in', 'stayover', 'due_out', 'checked_out'] as any),
+      ));
+      daily.push({ date, ...stock, roomsOnBooks, onBooksOccupancy: ratio(roomsOnBooks, stock.availableRooms, 4),
+        realisedRooms: Number(realised?.count ?? 0), realisedOccupancy: ratio(Number(realised?.count ?? 0), stock.availableRooms, 4),
+        pickup: pickup.pickup, pickupPeriod: pickup.period, pickupBaseline: pickup.baseline,
+        pickupSource: pickup.source, historicalAmendmentsReconstructed: false });
+    }
+    const financial = await this.getFinancialSummary(propertyId, operationalDate);
+    return { propertyId, roomTypeId: roomTypeId ?? null, currencyCode: property.currencyCode, timezone: property.timezone,
+      operationalDate, startDate, endDate, source: 'ReportsService', synthetic: false,
+      kpiScope: 'property_operational_date', kpis: financial.kpis, actual: financial.actual,
+      daily, pace: { ...pace, historicalAmendmentsReconstructed: false },
+      forecast: { status: 'INSUFFICIENT_HISTORY', value: null, source: null,
+        reason: 'No validated non-synthetic commercial forecast in the reporting domain' } };
+  }
+
+  private async readOccupancy(propertyId: string, requestedDate?: string) {
+    const { property, date } = await this.context(propertyId, requestedDate);
+    const inventory = await this.inventory(propertyId, date, property.timezone);
+    const stock = inventory(date);
+    const count = async (condition: any) => {
+      const [row] = await this.db.select({ count: sql<number>`count(*)::int` }).from(reservations)
+        .where(and(eq(reservations.propertyId, propertyId), condition));
+      return Number(row?.count ?? 0);
+    };
+    const covers = and(lte(reservations.arrivalDate, date), sql`${reservations.departureDate} > ${date}`);
+    const [occupiedRooms, arrivals, departures, stayovers, noShows, cancellations] = await Promise.all([
+      count(and(covers, inArray(reservations.status, ['checked_in','stayover','due_out','checked_out'] as any))),
+      count(eq(this.localDay(reservations.checkedInAt, property.timezone), date)),
+      count(eq(this.localDay(reservations.checkedOutAt, property.timezone), date)),
+      count(and(covers, inArray(reservations.status, ['checked_in','stayover','due_out'] as any))),
+      count(and(eq(reservations.status, 'no_show'), eq(reservations.arrivalDate, date))),
+      count(eq(this.localDay(reservations.cancelledAt, property.timezone), date)),
+    ]);
+    const occ = ratio(occupiedRooms, stock.availableRooms, 4);
+    return { date, ...stock, occupiedRooms, occupancyRate: occ ?? 0,
+      occ, occupancyPercent: occ === null ? 'N/A' : `${(occ * 100).toFixed(1)}%`,
+      arrivals, departures, stayovers, noShows, cancellations };
+  }
+
+  async getFinancialSummary(propertyId: string, date?: string) {
+    if (date) reportDate(date);
+    return this.inSnapshot ? this.readFinancialSummary(propertyId, date) : this.snapshot(service => service.readFinancialSummary(propertyId, date));
+  }
+
+  private async readFinancialSummary(propertyId: string, requestedDate?: string) {
+    const { date } = await this.context(propertyId, requestedDate);
+    const [daily, occupancy] = await Promise.all([this.getDailyRevenue(propertyId, date), this.getOccupancy(propertyId, date)]);
+    const [balances, deposits, lastAudit, receivables] = await Promise.all([
+      this.db.select({ currencyCode: folios.currencyCode, count: sql<number>`count(*)::int`,
+        totalBalance: sql<string>`coalesce(sum(greatest(${folios.balance}::numeric, 0)), 0)`,
+        credits: sql<string>`coalesce(sum(least(${folios.balance}::numeric, 0)), 0)`,
+      }).from(folios).where(and(eq(folios.propertyId, propertyId), eq(folios.status, 'open')))
+        .groupBy(folios.currencyCode),
+      this.db.select({ status: depositLedgerEntries.status, currencyCode: depositLedgerEntries.currencyCode,
+        total: sql<string>`coalesce(sum(${depositLedgerEntries.amount}::numeric), 0)`,
+      }).from(depositLedgerEntries).where(eq(depositLedgerEntries.propertyId, propertyId))
+        .groupBy(depositLedgerEntries.status, depositLedgerEntries.currencyCode),
+      this.db.select().from(auditRuns).where(and(eq(auditRuns.propertyId, propertyId),
+        lte(auditRuns.businessDate, daily.date))).orderBy(sql`${auditRuns.businessDate} desc`).limit(1),
+      this.db.select({ currencyCode: arLedgers.currencyCode,
+        due: sql<string>`coalesce(sum(greatest(${arLedgers.balance}::numeric, 0)), 0)`,
+        credits: sql<string>`coalesce(sum(least(${arLedgers.balance}::numeric, 0)), 0)`,
+      }).from(arLedgers).where(and(eq(arLedgers.propertyId, propertyId), eq(arLedgers.status, 'open')))
+        .groupBy(arLedgers.currencyCode),
+    ]);
+    this.assertCurrency(balances, daily.currencyCode); this.assertCurrency(deposits, daily.currencyCode);
+    this.assertCurrency(receivables, daily.currencyCode);
+    const balance = balances[0];
+    const byStatus = Object.fromEntries(deposits.map((row: any) => [row.status, Number(row.total)]));
+    const adr = ratio(daily.netRevenueByCategory.room, occupancy.occupiedRooms);
+    const revpar = ratio(daily.netRevenueByCategory.room, occupancy.availableRooms);
+    const trevpar = ratio(daily.netEarnedRevenue, occupancy.availableRooms);
+    return { date: daily.date, propertyId, currencyCode: daily.currencyCode, timezone: daily.timezone,
+      kpis: { adr: adr ?? 0, revpar: revpar ?? 0, trevpar, occ: occupancy.occ,
+        occupancyRate: occupancy.occupancyRate, totalRevenue: daily.netEarnedRevenue,
+        roomRevenue: daily.netRevenueByCategory.room, foodBeverageRevenue: daily.netRevenueByCategory.foodBeverage,
+        ancillaryRevenue: daily.netRevenueByCategory.other, separatelyPostedTax: daily.separatelyPostedTax,
+        roomsSold: occupancy.occupiedRooms, availableRooms: occupancy.availableRooms,
+        ratioStatus: { adr: adr === null ? 'NO_ROOMS_SOLD' : 'AVAILABLE',
+          revpar: revpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE',
+          trevpar: trevpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE',
+          occ: occupancy.occ === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE' } },
+      actual: daily.actual, revenueByType: daily.revenueByType, paymentsByMethod: daily.cash.byMethod,
+      cash: daily.cash, deposits: { held: Number(byStatus['held'] ?? 0), byStatus, asOf: 'CURRENT_SNAPSHOT' },
+      outstandingBalances: { totalFoliosOpen: Number(balance?.count ?? 0),
+        totalBalanceDue: Number(balance?.totalBalance ?? 0), creditBalances: Number(balance?.credits ?? 0),
+        accountsReceivableDue: Number(receivables[0]?.due ?? 0), accountsReceivableCredits: Number(receivables[0]?.credits ?? 0),
+        asOf: 'CURRENT_SNAPSHOT' },
+      auditStatus: { lastAuditDate: lastAudit[0]?.businessDate ?? null,
+        lastAuditStatus: lastAudit[0]?.status ?? null, errorsInLastAudit: lastAudit[0]?.errors?.length ?? 0 } };
+  }
+
   async getOccupancyTrend(propertyId: string, startDate: string, endDate: string) {
-    // Property info
-    const [property] = await this.db
-      .select({ totalRooms: properties.totalRooms })
-      .from(properties)
-      .where(eq(properties.id, propertyId));
-    const totalRooms = property?.totalRooms ?? 0;
+    return this.inSnapshot ? this.readOccupancyTrend(propertyId, startDate, endDate) : this.snapshot(service => service.readOccupancyTrend(propertyId, startDate, endDate));
+  }
 
-    // OOO/OOS (snapshot — same for all dates in MVP)
-    const roomStatusCounts = await this.db
-      .select({
-        status: rooms.status,
-        count: sql<number>`count(*)::int`,
-      })
-      .from(rooms)
-      .where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true)))
-      .groupBy(rooms.status);
+  private async readOccupancyTrend(propertyId: string, startDate: string, endDate: string) {
+    const dates = reportDates(startDate, endDate);
+    const { property } = await this.context(propertyId, endDate);
+    const [inventory, ledgerRows, stays, closed] = await Promise.all([
+      this.inventory(propertyId, endDate, property.timezone),
+      this.db.select({ date: this.serviceDay(), type: charges.type, currencyCode: charges.currencyCode,
+        total: sql<string>`coalesce(sum(${charges.amount}::numeric),0)`,
+      }).from(charges).where(and(eq(charges.propertyId, propertyId),
+        gte(this.serviceDay(), startDate), lte(this.serviceDay(), endDate)))
+        .groupBy(this.serviceDay(), charges.type, charges.currencyCode),
+      this.db.select().from(reservations).where(and(eq(reservations.propertyId, propertyId),
+        lte(reservations.arrivalDate, endDate), sql`${reservations.departureDate} > ${startDate}`,
+        inArray(reservations.status, ['checked_in','stayover','due_out','checked_out'] as any))),
+      this.db.select().from(auditRuns).where(and(eq(auditRuns.propertyId, propertyId),
+        eq(auditRuns.status, 'completed'), gte(auditRuns.businessDate, startDate), lte(auditRuns.businessDate, endDate))),
+    ]);
+    this.assertCurrency(ledgerRows, property.currencyCode);
+    const daily = dates.map(date => {
+      const stock = inventory(date);
+      const rows = ledgerRows.filter((row: any) => row.date === date);
+      const amounts: Record<string, Decimal> = {};
+      for (const row of rows) amounts[row.type] = (amounts[row.type] ?? new Decimal(0)).plus(row.total);
+      const net = this.categories(amounts);
+      const roomRevenue = net.room, totalRevenue = net.earned;
+      const closedDays = closed.some((run: any) => run.businessDate === date) ? 1 : 0;
+      const status = closedDays ? 'COMPLETE' : rows.length ? 'PARTIAL' : 'NO_POSTINGS';
+      const roomsSold = stays.filter((stay: any) => stay.arrivalDate <= date && stay.departureDate > date).length;
+      return { date, ...stock, roomsSold, revenue: roomRevenue, roomRevenue, totalRevenue,
+        foodBeverageRevenue: net.foodBeverage, ancillaryRevenue: net.other,
+        separatelyPostedTax: net.tax, actual: { value: status === 'NO_POSTINGS' ? null : totalRevenue,
+          status, source: 'charges.serviceDate', closedDays, expectedDays: 1 },
+        occupancyRate: ratio(roomsSold, stock.availableRooms, 4) ?? 0,
+        adr: ratio(roomRevenue, roomsSold) ?? 0, revpar: ratio(roomRevenue, stock.availableRooms) ?? 0,
+        trevpar: ratio(totalRevenue, stock.availableRooms) };
+    });
+    const sum = (key: 'roomRevenue' | 'totalRevenue' | 'roomsSold' | 'availableRooms') =>
+      daily.reduce((total, day) => total.plus(day[key]), new Decimal(0)).toNumber();
+    const closedDays = closed.length;
+    const status = closedDays === dates.length ? 'COMPLETE' : ledgerRows.length ? 'PARTIAL' : 'NO_POSTINGS';
+    return { period: { start: startDate, end: endDate }, currencyCode: property.currencyCode, daily,
+      actual: { value: status === 'NO_POSTINGS' ? null : sum('totalRevenue'), status,
+        source: 'charges.serviceDate', closedDays, expectedDays: dates.length },
+      summary: { avgOccupancy: ratio(sum('roomsSold'), sum('availableRooms'), 4) ?? 0,
+        avgAdr: ratio(sum('roomRevenue'), sum('roomsSold')) ?? 0,
+        avgRevpar: ratio(sum('roomRevenue'), sum('availableRooms')) ?? 0,
+        trevpar: ratio(sum('totalRevenue'), sum('availableRooms')),
+        totalRevenue: sum('roomRevenue'), netEarnedRevenue: sum('totalRevenue'),
+        totalRoomNights: sum('roomsSold'), availableRoomNights: sum('availableRooms') } };
+  }
 
-    let unavailableRooms = 0;
-    for (const row of roomStatusCounts) {
-      if (row.status === 'out_of_order' || row.status === 'out_of_service') {
-        unavailableRooms += row.count;
-      }
-    }
-    const availableRooms = totalRooms - unavailableRooms;
+  async getRevenuePeriods(propertyId: string, requestedDate?: string) {
+    return this.inSnapshot ? this.readRevenuePeriods(propertyId, requestedDate) : this.snapshot(service => service.readRevenuePeriods(propertyId, requestedDate));
+  }
 
-    // Room revenue per day
-    const dailyRevenue = await this.db
-      .select({
-        date: sql<string>`${charges.serviceDate}::date`,
-        revenue: sql<string>`coalesce(sum(${charges.amount}::numeric), 0)`,
-      })
-      .from(charges)
-      .where(
-        and(
-          eq(charges.propertyId, propertyId),
-          eq(charges.type, 'room' as any),
-          eq(charges.isReversal, false),
-          sql`${charges.serviceDate}::date >= ${startDate}`,
-          sql`${charges.serviceDate}::date <= ${endDate}`,
-        ),
-      )
-      .groupBy(sql`${charges.serviceDate}::date`);
+  private async readRevenuePeriods(propertyId: string, requestedDate?: string) {
+    const { property, date } = await this.context(propertyId, requestedDate);
+    const lyDate = priorYearDate(date);
+    const ranges = { mtd: [`${date.slice(0,7)}-01`, date], ytd: [`${date.slice(0,4)}-01-01`, date],
+      ly: [lyDate, lyDate], lytd: [`${lyDate.slice(0,4)}-01-01`, lyDate] };
+    const actuals = Object.fromEntries(await Promise.all(Object.entries(ranges).map(async ([key, [start, end]]) => {
+      const ledger = await this.ledger(propertyId, start!, end!, property.currencyCode);
+      return [key, { start, end, ...ledger.actual, revenueByCategory: ledger.net }];
+    })));
+    const [statistics] = await this.db.select({
+      count: sql<number>`count(*)::int`,
+      bookingWindow: sql<string>`avg(${reservations.arrivalDate} - ${this.localDay(reservations.createdAt, property.timezone)})`,
+      alos: sql<string>`avg(${reservations.departureDate} - ${reservations.arrivalDate})`,
+    }).from(reservations).where(and(eq(reservations.propertyId, propertyId), eq(reservations.arrivalDate, date),
+      inArray(reservations.status, ['pending','confirmed','assigned','checked_in','stayover','due_out','checked_out'] as any)));
+    const quoteRows = await this.db.select({ currencyCode: reservations.currencyCode,
+      amount: sql<string>`coalesce(sum(${reservations.totalAmount}::numeric),0)`, count: sql<number>`count(*)::int`,
+    }).from(reservations).where(and(eq(reservations.propertyId, propertyId), gte(reservations.arrivalDate, date),
+      inArray(reservations.status, ['pending','confirmed','assigned'] as any))).groupBy(reservations.currencyCode);
+    this.assertCurrency(quoteRows, property.currencyCode);
+    const quotes = quoteRows[0];
+    const hasSample = Number(statistics?.count ?? 0) > 0;
+    return { date, propertyId, timezone: property.timezone, currencyCode: property.currencyCode, periods: actuals,
+      bookingWindow: { value: hasSample ? Number(statistics.bookingWindow) : null, unit: 'days', sampleSize: Number(statistics?.count ?? 0) },
+      averageLengthOfStay: { value: hasSample ? Number(statistics.alos) : null, unit: 'nights', sampleSize: Number(statistics?.count ?? 0) },
+      onBooksQuotedAmount: { value: Number(quotes?.amount ?? 0), reservations: Number(quotes?.count ?? 0),
+        source: 'reservations.totalAmount', isEarnedRevenue: false },
+      forecast: { value: null, status: 'INSUFFICIENT_HISTORY', source: null,
+        reason: 'No validated non-synthetic commercial forecast in the reporting domain' },
+      planToDate: { value: null, status: 'UNAVAILABLE', reason: 'No approved budget source' },
+      gop: { value: null, status: 'UNAVAILABLE', reason: 'No confirmed operating expense source' } };
+  }
 
-    // Rooms sold per day (reservations in-house for each date)
-    const dailyRoomsSold = await this.db
-      .select({
-        date: sql<string>`d.d::date`,
-        // Must use the drizzle table ref — alias "r" is not in the generated FROM.
-        count: sql<number>`count(distinct ${reservations.id})::int`,
-      })
-      .from(sql`generate_series(${startDate}::date, ${endDate}::date, '1 day'::interval) as d(d)`)
-      .leftJoin(
-        reservations,
-        and(
-          eq(reservations.propertyId, propertyId),
-          sql`${reservations.status} in ('checked_in', 'stayover', 'due_out', 'checked_out')`,
-          lte(reservations.arrivalDate, sql`d.d::date`),
-          sql`${reservations.departureDate} > d.d::date`,
-        ),
-      )
-      .groupBy(sql`d.d::date`)
-      .orderBy(sql`d.d::date`);
+  async getRevenueOverview(propertyId: string, requestedDate?: string) {
+    return this.inSnapshot ? this.readRevenueOverview(propertyId, requestedDate) : this.snapshot(service => service.readRevenueOverview(propertyId, requestedDate));
+  }
 
-    // Build lookup maps
-    const revenueMap = new Map<string, number>();
-    for (const row of dailyRevenue) {
-      const dateKey = typeof row.date === 'string' ? row.date : new Date(row.date).toISOString().split('T')[0]!;
-      revenueMap.set(dateKey, new Decimal(row.revenue).toNumber());
-    }
+  private async readRevenueOverview(propertyId: string, requestedDate?: string) {
+    const { date } = await this.context(propertyId, requestedDate);
+    const [financial, periods] = await Promise.all([
+      this.getFinancialSummary(propertyId, date), this.getRevenuePeriods(propertyId, date),
+    ]);
+    return { ...periods, financial };
+  }
 
-    // Build daily array
-    const daily: Array<{
-      date: string;
-      occupancyRate: number;
-      adr: number;
-      revpar: number;
-      roomsSold: number;
-      revenue: number;
-    }> = [];
+  /** Management/DRR and Dashboard share the exact ledger and financial KPI contracts. */
+  async getManagementSummary(propertyId: string, requestedDate?: string) {
+    return this.inSnapshot ? this.readManagementSummary(propertyId, requestedDate) : this.snapshot(service => service.readManagementSummary(propertyId, requestedDate));
+  }
 
-    let totalRevenue = 0;
-    let totalRoomNights = 0;
-
-    for (const row of dailyRoomsSold) {
-      const dateKey = typeof row.date === 'string' ? row.date : new Date(row.date).toISOString().split('T')[0]!;
-      const roomsSold = row.count;
-      const revenue = revenueMap.get(dateKey) ?? 0;
-      const occupancyRate = availableRooms > 0 ? roomsSold / availableRooms : 0;
-      const adr = roomsSold > 0 ? revenue / roomsSold : 0;
-      const revpar = adr * occupancyRate;
-
-      daily.push({
-        date: dateKey,
-        occupancyRate: Math.round(occupancyRate * 10000) / 10000,
-        adr: Math.round(adr * 100) / 100,
-        revpar: Math.round(revpar * 100) / 100,
-        roomsSold,
-        revenue,
-      });
-
-      totalRevenue += revenue;
-      totalRoomNights += roomsSold;
-    }
-
-    const dayCount = daily.length || 1;
-
-    return {
-      period: { start: startDate, end: endDate },
-      daily,
-      summary: {
-        avgOccupancy: Math.round(daily.reduce((s, d) => s + d.occupancyRate, 0) / dayCount * 10000) / 10000,
-        avgAdr: Math.round(daily.reduce((s, d) => s + d.adr, 0) / dayCount * 100) / 100,
-        avgRevpar: Math.round(daily.reduce((s, d) => s + d.revpar, 0) / dayCount * 100) / 100,
-        totalRevenue,
-        totalRoomNights,
-      },
-    };
+  private async readManagementSummary(propertyId: string, requestedDate?: string) {
+    const { property, date } = await this.context(propertyId, requestedDate);
+    const previousDate = new Date(Date.parse(date) - 86400000).toISOString().slice(0,10);
+    const lastWeekDate = new Date(Date.parse(date) - 7 * 86400000).toISOString().slice(0,10);
+    const [financial, occupancy, previousFinancial, lastWeekFinancial, periods, pickup, pace, statusRows, depositRows, channelRows, roomRows] = await Promise.all([
+      this.getFinancialSummary(propertyId, date), this.getOccupancy(propertyId, date),
+      this.getFinancialSummary(propertyId, previousDate), this.getFinancialSummary(propertyId, lastWeekDate),
+      this.getRevenuePeriods(propertyId, date), this.getPickup(propertyId, date, previousDate, date),
+      this.getBookingPace(propertyId, date, date),
+      this.db.select({ status: reservations.status, count: sql<number>`count(*)::int` }).from(reservations)
+        .where(and(eq(reservations.propertyId, propertyId), eq(reservations.arrivalDate, date))).groupBy(reservations.status),
+      this.db.select({ currencyCode: depositLedgerEntries.currencyCode,
+        amount: sql<string>`coalesce(sum(${depositLedgerEntries.amount}::numeric),0)`, count: sql<number>`count(*)::int`,
+      }).from(depositLedgerEntries).where(and(eq(depositLedgerEntries.propertyId, propertyId),
+        eq(this.localDay(depositLedgerEntries.receivedAt, property.timezone), date))).groupBy(depositLedgerEntries.currencyCode),
+      this.db.select({ source: bookings.source, count: sql<number>`count(*)::int` }).from(reservations)
+        .innerJoin(bookings, and(eq(bookings.id, reservations.bookingId), eq(bookings.propertyId, propertyId)))
+        .where(and(eq(reservations.propertyId, propertyId), eq(reservations.arrivalDate, date))).groupBy(bookings.source),
+      this.db.select({ status: rooms.status, count: sql<number>`count(*)::int` }).from(rooms)
+        .where(and(eq(rooms.propertyId, propertyId), eq(rooms.isActive, true))).groupBy(rooms.status),
+    ]);
+    this.assertCurrency(depositRows, property.currencyCode);
+    const deposit = depositRows[0];
+    const statuses = Object.fromEntries(statusRows.map((row: any) => [row.status, Number(row.count)]));
+    const kpis = financial.kpis;
+    const compare = (current: number, baseline: number, status: string, currentAvailable = true) => ({
+      value: status === 'NO_POSTINGS' ? null : baseline,
+      absolute: status === 'NO_POSTINGS' || !currentAvailable ? null : current - baseline,
+      percent: status === 'NO_POSTINGS' || !currentAvailable || baseline === 0 ? null : ((current - baseline) / Math.abs(baseline)) * 100,
+      status: status === 'NO_POSTINGS' || currentAvailable ? status : 'CURRENT_NO_POSTINGS',
+    });
+    const currentAvailable = financial.actual.status !== 'NO_POSTINGS';
+    const comparison = (baseline: typeof financial) => ({
+      revenue: compare(kpis.totalRevenue, baseline.kpis.totalRevenue, baseline.actual.status, currentAvailable),
+      occupancy: compare(kpis.occupancyRate, baseline.kpis.occupancyRate, 'AVAILABLE'),
+      adr: compare(kpis.adr, baseline.kpis.adr, baseline.actual.status, currentAvailable),
+      revpar: compare(kpis.revpar, baseline.kpis.revpar, baseline.actual.status, currentAvailable),
+    });
+    return { financial, ...periods,
+      today: { revenue: kpis.totalRevenue, occupancy: kpis.occupancyRate, adr: kpis.adr, revpar: kpis.revpar,
+        trevpar: kpis.trevpar, arrivals: Object.values(statuses).reduce((sum: number, value: any) => sum + Number(value), 0),
+        departures: occupancy.departures, inHouse: occupancy.stayovers,
+        confirmed: (statuses['confirmed'] ?? 0) + (statuses['assigned'] ?? 0), cancellations: occupancy.cancellations,
+        noShows: occupancy.noShows, receivedDeposits: Number(deposit?.amount ?? 0),
+        receivedDepositCount: Number(deposit?.count ?? 0), pendingPayments: financial.outstandingBalances.totalBalanceDue,
+        rooms: Object.fromEntries(roomRows.map((row: any) => [row.status, Number(row.count)])) },
+      drr: { revenue: kpis.totalRevenue, bookings: periods.onBooksQuotedAmount.reservations,
+        occupancy: kpis.occupancyRate, adr: kpis.adr, revpar: kpis.revpar, trevpar: kpis.trevpar,
+        cancellations: occupancy.cancellations, deposits: Number(deposit?.amount ?? 0),
+        pickup: pickup.pickup, pace: pace.daily[0] ?? { roomsOnBooks: 0, newBookings: 0 },
+        channelMix: channelRows.map((row: any) => ({ source: row.source, bookings: Number(row.count) })),
+        mtdRevenue: periods.periods.mtd?.value ?? null, onBooks: periods.onBooksQuotedAmount.reservations,
+        forecastRevenue: null, forecast: periods.forecast,
+        comparisons: { previousDay: comparison(previousFinancial), sameDayLastWeek: comparison(lastWeekFinancial) } } };
   }
 
   /**
@@ -670,6 +511,25 @@ export class ReportsService {
    * A/R) is surfaced so it can be reconciled to net to zero between ledgers.
    */
   async dailyTrialBalance(propertyId: string, date: string) {
+    reportDate(date);
+    return this.inSnapshot ? this.readTrialBalance(propertyId, date) :
+      this.snapshot(service => service.readTrialBalance(propertyId, date));
+  }
+
+  private async readTrialBalance(propertyId: string, date: string) {
+    const { property } = await this.context(propertyId, date);
+    const currencies = await Promise.all([
+      this.db.select({ currencyCode: depositLedgerEntries.currencyCode }).from(depositLedgerEntries)
+        .where(eq(depositLedgerEntries.propertyId, propertyId)).groupBy(depositLedgerEntries.currencyCode),
+      this.db.select({ currencyCode: folios.currencyCode }).from(folios)
+        .where(and(eq(folios.propertyId, propertyId), eq(folios.status, 'open'))).groupBy(folios.currencyCode),
+      this.db.select({ currencyCode: arLedgers.currencyCode }).from(arLedgers)
+        .where(eq(arLedgers.propertyId, propertyId)).groupBy(arLedgers.currencyCode),
+      this.db.select({ currencyCode: arTransactions.currencyCode }).from(arTransactions)
+        .where(and(eq(arTransactions.propertyId, propertyId),
+          eq(this.localDay(arTransactions.createdAt, property.timezone), date))).groupBy(arTransactions.currencyCode),
+    ]);
+    this.assertCurrency(currencies.flat(), property.currencyCode);
     // --- Deposit ledger (KB 10) ---
     // Opening = held liability received before the date and not yet recognized
     // before the date. Closing = held liability as of end of date.
@@ -681,8 +541,8 @@ export class ReportsService {
       .where(
         and(
           eq(depositLedgerEntries.propertyId, propertyId),
-          sql`${depositLedgerEntries.receivedAt}::date < ${date}`,
-          sql`(${depositLedgerEntries.recognizedAt} is null or ${depositLedgerEntries.recognizedAt}::date >= ${date})`,
+          sql`${this.localDay(depositLedgerEntries.receivedAt, property.timezone)} < ${date}`,
+          sql`(${depositLedgerEntries.recognizedAt} is null or ${this.localDay(depositLedgerEntries.recognizedAt, property.timezone)} >= ${date})`,
         ),
       );
 
@@ -694,7 +554,7 @@ export class ReportsService {
       .where(
         and(
           eq(depositLedgerEntries.propertyId, propertyId),
-          sql`${depositLedgerEntries.receivedAt}::date = ${date}`,
+          sql`${this.localDay(depositLedgerEntries.receivedAt, property.timezone)} = ${date}`,
         ),
       );
 
@@ -706,7 +566,7 @@ export class ReportsService {
       .where(
         and(
           eq(depositLedgerEntries.propertyId, propertyId),
-          sql`${depositLedgerEntries.recognizedAt}::date = ${date}`,
+          sql`${this.localDay(depositLedgerEntries.recognizedAt, property.timezone)} = ${date}`,
         ),
       );
 
@@ -752,7 +612,7 @@ export class ReportsService {
         and(
           eq(arTransactions.propertyId, propertyId),
           eq(arTransactions.type, 'transfer_in' as any),
-          sql`${arTransactions.createdAt}::date = ${date}`,
+          sql`${this.localDay(arTransactions.createdAt, property.timezone)} = ${date}`,
         ),
       );
 
@@ -765,7 +625,7 @@ export class ReportsService {
         and(
           eq(arTransactions.propertyId, propertyId),
           eq(arTransactions.type, 'payment' as any),
-          sql`${arTransactions.createdAt}::date = ${date}`,
+          sql`${this.localDay(arTransactions.createdAt, property.timezone)} = ${date}`,
         ),
       );
 
@@ -780,6 +640,9 @@ export class ReportsService {
 
     return {
       date,
+      currencyCode: property.currencyCode,
+      timezone: property.timezone,
+      completeness: { deposit: 'DATE_RECONSTRUCTED', guest: 'CURRENT_SNAPSHOT_ONLY', ar: 'CURRENT_SNAPSHOT_WITH_DAILY_ACTIVITY' },
       ledgers: {
         deposit: {
           opening: depositOpening.toFixed(2),
@@ -812,69 +675,56 @@ export class ReportsService {
   /**
    * Portfolio financial summary — aggregates KPIs across multiple properties.
    */
-  async getPortfolioFinancialSummary(propertyIds: string[], date: string) {
-    const summaries = await Promise.all(
-      propertyIds.map((id) => this.getFinancialSummary(id, date)),
-    );
+  async getPortfolioFinancialSummary(propertyIds: string[], date?: string) {
+    return this.inSnapshot ? this.readPortfolioFinancialSummary(propertyIds, date) : this.snapshot(service => service.readPortfolioFinancialSummary(propertyIds, date));
+  }
 
-    let totalRevenue = new Decimal(0);
-    let roomRevenue = new Decimal(0);
-    let totalRoomsSold = 0;
-    let totalAvailableRooms = 0;
-    const byProperty: Array<{
-      propertyId: string;
-      totalRevenue: number;
-      occupancyRate: number;
-      adr: number;
-      revpar: number;
-    }> = [];
-
-    for (const [i, propertyId] of propertyIds.entries()) {
-      const s = summaries[i]!;
-      const kpis = s.kpis ?? {};
-      totalRevenue = totalRevenue.plus(kpis.totalRevenue ?? 0);
-      roomRevenue = roomRevenue.plus(kpis.roomRevenue ?? 0);
-
-      const occ = await this.getOccupancy(propertyId, date);
-      const roomsSold = occ.occupiedRooms ?? 0;
-      const available = occ.availableRooms ?? 0;
-      totalRoomsSold += roomsSold;
-      totalAvailableRooms += available;
-
-      byProperty.push({
-        propertyId,
-        totalRevenue: kpis.totalRevenue ?? 0,
-        occupancyRate: kpis.occupancyRate ?? 0,
-        adr: kpis.adr ?? 0,
-        revpar: kpis.revpar ?? 0,
-      });
-    }
-
-    const portfolioOccupancy = totalAvailableRooms > 0 ? totalRoomsSold / totalAvailableRooms : 0;
-    const portfolioAdr = totalRoomsSold > 0 ? roomRevenue.div(totalRoomsSold) : new Decimal(0);
-    const portfolioRevpar = portfolioAdr.times(portfolioOccupancy);
-
-    return {
-      date,
-      propertyCount: propertyIds.length,
-      propertyIds,
-      kpis: {
-        totalRevenue: totalRevenue.toNumber(),
-        roomRevenue: roomRevenue.toNumber(),
-        occupancyRate: Math.round(portfolioOccupancy * 10000) / 10000,
-        adr: Math.round(portfolioAdr.toNumber() * 100) / 100,
-        revpar: Math.round(portfolioRevpar.toNumber() * 100) / 100,
-        totalRoomsSold,
-        totalAvailableRooms,
-      },
-      byProperty,
+  private async readPortfolioFinancialSummary(propertyIds: string[], date?: string) {
+    propertyIds = [...new Set(propertyIds)];
+    const summaries = await Promise.all(propertyIds.map(id => this.getFinancialSummary(id, date)));
+    const byProperty = summaries.map((summary, i) => ({ propertyId: propertyIds[i], currencyCode: summary.currencyCode,
+      date: summary.date, ...summary.kpis, actual: summary.actual }));
+    const aggregate = (rows: typeof summaries) => {
+      const sum = (key: 'totalRevenue' | 'roomRevenue' | 'roomsSold' | 'availableRooms') =>
+        rows.reduce((total, row) => total.plus(row.kpis[key]), new Decimal(0)).toNumber();
+      const available = rows.filter(row => row.actual.value !== null);
+      const status = rows.length > 0 && rows.every(row => row.actual.status === 'COMPLETE') ? 'COMPLETE' : available.length ? 'PARTIAL' : 'NO_POSTINGS';
+      const earned = available.length ? available.reduce((total, row) => total.plus(row.actual.value!), new Decimal(0)).toNumber() : null;
+      const room = available.length ? available.reduce((total, row) => total.plus(row.kpis.roomRevenue), new Decimal(0)).toNumber() : null;
+      const adr = room === null ? null : ratio(room, sum('roomsSold'));
+      const revpar = room === null ? null : ratio(room, sum('availableRooms'));
+      const trevpar = earned === null ? null : ratio(earned, sum('availableRooms'));
+      return { totalRevenue: earned, roomRevenue: room,
+        totalRoomsSold: sum('roomsSold'), totalAvailableRooms: sum('availableRooms'),
+        occupancyRate: ratio(sum('roomsSold'), sum('availableRooms'), 4),
+        occ: ratio(sum('roomsSold'), sum('availableRooms'), 4), adr, revpar, trevpar,
+        ratioStatus: { adr: earned === null ? 'NO_POSTINGS' : adr === null ? 'NO_ROOMS_SOLD' : 'AVAILABLE',
+          revpar: earned === null ? 'NO_POSTINGS' : revpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE',
+          trevpar: earned === null ? 'NO_POSTINGS' : trevpar === null ? 'NO_AVAILABLE_INVENTORY' : 'AVAILABLE' },
+        actual: { value: earned, status, source: 'charges.serviceDate',
+          closedDays: rows.reduce((n, row) => n + row.actual.closedDays, 0),
+          expectedDays: rows.reduce((n, row) => n + row.actual.expectedDays, 0),
+          propertiesWithActual: available.length, missingProperties: rows.length - available.length } };
     };
+    const currencies = [...new Set(summaries.map(summary => summary.currencyCode))];
+    const byCurrency = currencies.map(currencyCode => ({ currencyCode,
+      ...aggregate(summaries.filter(summary => summary.currencyCode === currencyCode)) }));
+    const combined = aggregate(summaries);
+    const { actual: combinedActual, ...combinedKpis } = combined;
+    const mixed = currencies.length > 1;
+    return { date: date ?? null, dateMode: date ? 'EXPLICIT' : 'PROPERTY_OPERATIONAL_DATE', propertyCount: propertyIds.length, propertyIds, currencyCode: mixed ? null : currencies[0] ?? null,
+      currencyStatus: mixed ? 'MIXED_CURRENCIES' : 'SINGLE_CURRENCY',
+      actual: { ...combinedActual, value: mixed ? null : combinedActual.value, status: mixed ? 'MIXED_CURRENCIES' : combinedActual.status },
+      kpis: { ...combinedKpis, totalRevenue: mixed ? null : combined.totalRevenue,
+        roomRevenue: mixed ? null : combined.roomRevenue, adr: mixed ? null : combined.adr,
+        revpar: mixed ? null : combined.revpar, trevpar: mixed ? null : combined.trevpar },
+      byCurrency, byProperty };
   }
 
   /**
    * Portfolio occupancy — sums room counts and activity across properties.
    */
-  async getPortfolioOccupancy(propertyIds: string[], date: string) {
+  async getPortfolioOccupancy(propertyIds: string[], date?: string) {
     const rows = await Promise.all(
       propertyIds.map((id) => this.getOccupancy(id, date)),
     );
@@ -895,7 +745,8 @@ export class ReportsService {
       stayovers += r.stayovers ?? 0;
       return {
         propertyId,
-        occupancyRate: r.occupancyRate ?? 0,
+        date: r.date,
+        occupancyRate: r.availableRooms > 0 ? r.occupancyRate : null,
         occupiedRooms: r.occupiedRooms ?? 0,
         availableRooms: r.availableRooms ?? 0,
         arrivals: r.arrivals ?? 0,
@@ -903,7 +754,7 @@ export class ReportsService {
       };
     });
 
-    const occupancyRate = availableRooms > 0 ? occupiedRooms / availableRooms : 0;
+    const occupancyRate = availableRooms > 0 ? occupiedRooms / availableRooms : null;
 
     return {
       date,
@@ -912,8 +763,8 @@ export class ReportsService {
       totalRooms,
       availableRooms,
       occupiedRooms,
-      occupancyRate: Math.round(occupancyRate * 10000) / 10000,
-      occupancyPercent: `${(occupancyRate * 100).toFixed(1)}%`,
+      occupancyRate: occupancyRate === null ? null : Math.round(occupancyRate * 10000) / 10000,
+      occupancyPercent: occupancyRate === null ? 'N/A' : `${(occupancyRate * 100).toFixed(1)}%`,
       arrivals,
       departures,
       stayovers,
@@ -927,8 +778,19 @@ export class ReportsService {
    * daily breakdown of additions (by createdAt) and losses (by cancelledAt).
    */
   async getPickup(propertyId: string, stayDate: string, from: string, to: string) {
+    return this.inSnapshot ? this.readPickup(propertyId, stayDate, from, to) :
+      this.snapshot(service => service.readPickup(propertyId, stayDate, from, to));
+  }
+
+  private async readPickup(propertyId: string, stayDate: string, from: string, to: string, roomTypeId?: string) {
+    reportDate(stayDate);
+    const { property } = await this.context(propertyId, stayDate);
+    from = this.bookingDate(from, property.timezone);
+    to = this.bookingDate(to, property.timezone);
+    reportDates(from, to);
     const coversStayDate = and(
       eq(reservations.propertyId, propertyId),
+      roomTypeId ? eq(reservations.roomTypeId, roomTypeId) : undefined,
       lte(reservations.arrivalDate, stayDate),
       sql`${reservations.departureDate} > ${stayDate}`,
     );
@@ -936,8 +798,8 @@ export class ReportsService {
     const activeAsOf = (asOfDate: string) =>
       and(
         coversStayDate,
-        sql`${reservations.createdAt}::date <= ${asOfDate}`,
-        sql`(${reservations.cancelledAt} is null or ${reservations.cancelledAt}::date > ${asOfDate})`,
+        sql`${this.localDay(reservations.createdAt, property.timezone)} <= ${asOfDate}`,
+        sql`(${reservations.cancelledAt} is null or ${this.localDay(reservations.cancelledAt, property.timezone)} > ${asOfDate})`,
         sql`${reservations.status} not in ('no_show')`,
       );
 
@@ -947,8 +809,8 @@ export class ReportsService {
       .where(
         and(
           coversStayDate,
-          sql`${reservations.createdAt}::date < ${from}`,
-          sql`(${reservations.cancelledAt} is null or ${reservations.cancelledAt}::date >= ${from})`,
+          sql`${this.localDay(reservations.createdAt, property.timezone)} < ${from}`,
+          sql`(${reservations.cancelledAt} is null or ${this.localDay(reservations.cancelledAt, property.timezone)} >= ${from})`,
           // A later cancellation must still count in the earlier baseline.
           sql`${reservations.status} not in ('no_show')`,
         ),
@@ -964,25 +826,25 @@ export class ReportsService {
 
     const dailyAdded = await this.db
       .select({
-        date: sql<string>`${reservations.createdAt}::date`,
+        date: sql<string>`${this.localDay(reservations.createdAt, property.timezone)}`,
         roomNights: sql<number>`count(*)::int`,
       })
       .from(reservations)
       .where(
         and(
           coversStayDate,
-          sql`${reservations.createdAt}::date >= ${from}`,
-          sql`${reservations.createdAt}::date <= ${to}`,
+          sql`${this.localDay(reservations.createdAt, property.timezone)} >= ${from}`,
+          sql`${this.localDay(reservations.createdAt, property.timezone)} <= ${to}`,
           // Count additions even if cancelled later within the same window.
           sql`${reservations.status} not in ('no_show')`,
         ),
       )
-      .groupBy(sql`${reservations.createdAt}::date`)
-      .orderBy(sql`${reservations.createdAt}::date`);
+      .groupBy(sql`1`)
+      .orderBy(sql`1`);
 
     const dailyLost = await this.db
       .select({
-        date: sql<string>`${reservations.cancelledAt}::date`,
+        date: sql<string>`${this.localDay(reservations.cancelledAt, property.timezone)}`,
         roomNights: sql<number>`count(*)::int`,
       })
       .from(reservations)
@@ -990,12 +852,12 @@ export class ReportsService {
         and(
           coversStayDate,
           eq(reservations.status, 'cancelled' as any),
-          sql`${reservations.cancelledAt}::date >= ${from}`,
-          sql`${reservations.cancelledAt}::date <= ${to}`,
+          sql`${this.localDay(reservations.cancelledAt, property.timezone)} >= ${from}`,
+          sql`${this.localDay(reservations.cancelledAt, property.timezone)} <= ${to}`,
         ),
       )
-      .groupBy(sql`${reservations.cancelledAt}::date`)
-      .orderBy(sql`${reservations.cancelledAt}::date`);
+      .groupBy(sql`1`)
+      .orderBy(sql`1`);
 
     const dailyMap = new Map<string, { roomNightsAdded: number; roomNightsLost: number }>();
 
@@ -1024,6 +886,8 @@ export class ReportsService {
 
     return {
       stayDate,
+      source: 'reservation_created_and_cancelled_timestamps',
+      historicalAmendmentsReconstructed: false,
       period: { from, to },
       baseline: { roomNights: baselineRoomNights },
       current: { roomNights: currentRoomNights },
@@ -1032,6 +896,13 @@ export class ReportsService {
     };
   }
   async getBookingPace(propertyId: string, startDate: string, endDate: string) {
+    return this.inSnapshot ? this.readBookingPace(propertyId, startDate, endDate) :
+      this.snapshot(service => service.readBookingPace(propertyId, startDate, endDate));
+  }
+
+  private async readBookingPace(propertyId: string, startDate: string, endDate: string, roomTypeId?: string) {
+    reportDates(startDate, endDate);
+    const { property } = await this.context(propertyId, endDate);
     const bookedStatuses = [
       'pending',
       'confirmed',
@@ -1054,6 +925,7 @@ export class ReportsService {
         and(
           eq(reservations.propertyId, propertyId),
           inArray(reservations.status, bookedStatuses as any),
+          roomTypeId ? eq(reservations.roomTypeId, roomTypeId) : undefined,
           lte(reservations.arrivalDate, sql`d.d::date`),
           sql`${reservations.departureDate} > d.d::date`,
         ),
@@ -1063,18 +935,19 @@ export class ReportsService {
 
     const dailyNewBookings = await this.db
       .select({
-        date: sql<string>`${reservations.createdAt}::date`,
+        date: sql<string>`${this.localDay(reservations.createdAt, property.timezone)}`,
         count: sql<number>`count(*)::int`,
       })
       .from(reservations)
       .where(
         and(
           eq(reservations.propertyId, propertyId),
-          sql`${reservations.createdAt}::date >= ${startDate}`,
-          sql`${reservations.createdAt}::date <= ${endDate}`,
+          roomTypeId ? eq(reservations.roomTypeId, roomTypeId) : undefined,
+          sql`${this.localDay(reservations.createdAt, property.timezone)} >= ${startDate}`,
+          sql`${this.localDay(reservations.createdAt, property.timezone)} <= ${endDate}`,
         ),
       )
-      .groupBy(sql`${reservations.createdAt}::date`);
+      .groupBy(sql`1`);
 
     const newBookingsMap = new Map<string, number>();
     for (const row of dailyNewBookings) {

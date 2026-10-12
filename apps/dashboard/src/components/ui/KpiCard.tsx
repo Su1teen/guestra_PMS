@@ -4,6 +4,7 @@ interface KpiCardProps {
   title: string;
   value: string | number;
   subtitle?: string;
+  nowrap?: boolean;
   icon: LucideIcon;
   trend?: { value: number; label: string };
   /** Optional numeric value used for threshold coloring (when display value is formatted). */
@@ -26,6 +27,7 @@ export default function KpiCard({
   title,
   value,
   subtitle,
+  nowrap = false,
   icon: Icon,
   trend,
   numericValue,
@@ -56,7 +58,7 @@ export default function KpiCard({
       <div className="flex items-start justify-between gap-3 min-w-0">
         <div className="min-w-0 flex-1">
           <p className="text-sm text-telivity-mid-grey font-medium">{title}</p>
-          <p className={`text-2xl font-semibold leading-tight mt-1 break-words ${valueClass}`}>{value}</p>
+          <p className={`${nowrap ? 'whitespace-nowrap text-xl tabular-nums' : 'text-2xl break-words'} font-semibold leading-tight mt-1 ${valueClass}`}>{value}</p>
           {subtitle && <p className="text-xs text-telivity-mid-grey mt-1">{subtitle}</p>}
           {trend && (
             <p className={`text-xs mt-1 font-medium ${trend.value >= 0 ? 'text-telivity-dark-teal' : 'text-telivity-orange'}`}>

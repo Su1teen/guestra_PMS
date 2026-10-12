@@ -1,4 +1,4 @@
-import { IsUUID, IsDateString, IsOptional } from 'class-validator';
+import { IsUUID, IsDateString, IsOptional, Matches } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class ReportQueryDto {
@@ -7,11 +7,12 @@ export class ReportQueryDto {
   propertyId!: string;
 
   @ApiPropertyOptional({
-    description: 'Report date (YYYY-MM-DD). Defaults to today when omitted.',
+    description: 'Business date YYYY-MM-DD. Defaults to next date after completed night audit, or property-local today.',
     example: '2026-04-06',
   })
   @IsOptional()
   @IsDateString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
   date?: string;
 }
 

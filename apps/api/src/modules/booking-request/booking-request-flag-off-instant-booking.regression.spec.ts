@@ -26,6 +26,7 @@ import {
   payments,
   properties,
   ratePlans,
+  rateRestrictions,
   rooms,
   roomTypes,
 } from '@telivityhaip/database';
@@ -200,6 +201,10 @@ describeDatabase('Booking engine flag-OFF default-install release gate', () => {
       paymentMethodCollection: 'disabled',
       depositPolicy: { type: 'first_night', refundable: true },
     });
+    const [checkoutRestriction] = await db.insert(rateRestrictions).values({ propertyId: instant.propertyId, ratePlanId: instant.ratePlanId,
+      startDate: instant.departureDate, endDate: instant.departureDate, isClosed: true, closedToDeparture: true, minLos: 9 }).returning();
+    await expect(bookingEngine.book(instant.propertyId, { ...stay, guestFirstName: 'Blocked', guestLastName: 'Departure', guestEmail: 'blocked@example.com', paymentToken: 'tok_blocked' })).rejects.toThrow(/closed to departure/);
+    await db.update(rateRestrictions).set({ closedToDeparture: false }).where(and(eq(rateRestrictions.id, checkoutRestriction!.id), eq(rateRestrictions.propertyId, instant.propertyId)));
     expect(await bookingEngine.quote(instant.propertyId, stay)).toMatchObject({
       currencyCode: 'USD',
       nights: 2,

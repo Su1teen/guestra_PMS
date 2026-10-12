@@ -6,7 +6,7 @@ export interface DownloadReportWorkbookOptions {
   title: string;
   reportType: string;
   propertyName: string;
-  currencyCode: string;
+  currencyCode: string | null;
   parameters: Record<string, string>;
   data: unknown;
   generatedAt?: Date;
@@ -93,12 +93,13 @@ function uniqueSheetName(workbook: ExcelJS.Workbook, proposed: string): string {
   return candidate;
 }
 
-function currencyNumberFormat(currencyCode: string): string {
+function currencyNumberFormat(currencyCode: string | null): string {
+  if (!currencyCode) return '#,##0.00;[Red]-#,##0.00';
   const suffix = currencyCode.toUpperCase() === 'KZT' ? '₸' : currencyCode.toUpperCase();
   return `#,##0.00 "${suffix}";[Red]-#,##0.00 "${suffix}"`;
 }
 
-function numberFormatForKey(key: string, currencyCode: string): string | undefined {
+function numberFormatForKey(key: string, currencyCode: string | null): string | undefined {
   const normalized = key.toLowerCase();
   if (/occupancy|percent|percentage|ratio/.test(normalized)) return '0.00';
   if (/amount|revenue|adr|revpar|price|rate|deposit|payment|balance|forecast|total|tax|fee/.test(normalized)) {
@@ -119,7 +120,7 @@ function styleSheetHeader(worksheet: ExcelJS.Worksheet, lastColumn: number): voi
 function addTableSheet(
   workbook: ExcelJS.Workbook,
   section: TableSection,
-  currencyCode: string,
+  currencyCode: string | null,
 ): void {
   const flattenedRows = section.rows.map((row) => flattenRecord(row));
   const columns = [...new Set(flattenedRows.flatMap((row) => Object.keys(row)))];
@@ -147,7 +148,7 @@ function addTableSheet(
     const excelRow = worksheet.addRow(columns.map((key) => row[key] ?? ''));
     excelRow.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
       const key = columns[columnNumber - 1] ?? '';
-      const numberFormat = numberFormatForKey(key, currencyCode);
+      const numberFormat = numberFormatForKey(key, typeof row.currencyCode === 'string' ? row.currencyCode : currencyCode);
       if (numberFormat && typeof cell.value === 'number') cell.numFmt = numberFormat;
       cell.alignment = { vertical: 'top', wrapText: true };
       cell.border = { bottom: { style: 'hair', color: { argb: COLORS.border } } };
@@ -187,7 +188,7 @@ function createSummarySheet(
   const metadata: [string, ReportValue][] = [
     ['Property', options.propertyName],
     ['Report type', humanize(options.reportType)],
-    ['Currency', options.currencyCode.toUpperCase()],
+    ['Currency', options.currencyCode?.toUpperCase() ?? 'MIXED / UNKNOWN — see row currency'],
     ['Generated at', generatedAt.toLocaleString()],
     ...Object.entries(options.parameters).map(([key, value]) => [humanize(key), value] as [string, string]),
   ];

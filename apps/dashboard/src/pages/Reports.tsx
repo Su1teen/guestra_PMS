@@ -3,7 +3,6 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { BarChart3, Percent, DollarSign, TrendingUp, Building2, Download, Star } from 'lucide-react';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
-import { format, subDays } from 'date-fns';
 import { api } from '../lib/api';
 import { formatOccupancyPercent } from '../lib/api-helpers';
 import { useProperty } from '../context/PropertyContext';
@@ -13,6 +12,9 @@ import { formatMoney } from '../lib/money';
 import { useTranslation } from 'react-i18next';
 import { QueryError } from '../components/ui/ErrorBoundary';
 import { SkeletonPage } from '../components/ui/Skeleton';
+import { useOperationalDate, shiftBusinessDate } from '../hooks/useOperationalDate';
+import { reportForPresentation } from '../lib/financial-presentation';
+import PortfolioRevenue from '../components/revenue/PortfolioRevenue';
 
 type ReportType = 'financial-summary' | 'occupancy' | 'daily-revenue' | 'occupancy-trend' | 'trial-balance' | 'pickup' | 'booking-pace';
 
@@ -29,6 +31,11 @@ const REPORT_OPTIONS: { value: ReportType; labelKey: string }[] = [
 const DEMO_FAVORITES_KEY = 'haip.reportFavorites';
 
 export default function Reports() {
+  const { propertyId } = useProperty();
+  return <ScopedReports key={propertyId ?? 'none'} />;
+}
+
+function ScopedReports() {
   const { t, i18n } = useTranslation();
   const { hasPermission } = useAuth();
   const { propertyId, isPortfolioMode, properties, currencyCode } = useProperty();
@@ -42,17 +49,29 @@ export default function Reports() {
       ? linkedReport
       : 'financial-summary',
   );
-  const [date, setDate] = useState(linkedDate ?? format(new Date(), 'yyyy-MM-dd'));
+  const operational = useOperationalDate(propertyId, !isPortfolioMode && hasPermission('reports.view'));
+  const [date, setDate] = useState(linkedDate ?? '');
   useEffect(() => {
     if (linkedReport && REPORT_OPTIONS.some(option => option.value === linkedReport)) setReport(linkedReport);
     else setReport('financial-summary');
   }, [linkedReport]);
   useEffect(() => { if (linkedDate) setDate(linkedDate); }, [linkedDate]);
-  const [startDate, setStartDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
-  const [endDate, setEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [stayDate, setStayDate] = useState(format(subDays(new Date(), -30), 'yyyy-MM-dd'));
-  const [pickupFrom, setPickupFrom] = useState(format(subDays(new Date(), 7), 'yyyy-MM-dd'));
-  const [pickupTo, setPickupTo] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [stayDate, setStayDate] = useState('');
+  const [pickupFrom, setPickupFrom] = useState('');
+  const [pickupTo, setPickupTo] = useState('');
+  useEffect(() => {
+    setDate(linkedDate ?? ''); setStartDate(''); setEndDate(''); setStayDate(''); setPickupFrom(''); setPickupTo('');
+  }, [propertyId, linkedDate]);
+  useEffect(() => {
+    if (!operational.data?.date) return;
+    const current = operational.data.date;
+    setDate(previous => previous || linkedDate || current);
+    setStartDate(previous => previous || shiftBusinessDate(current, -30)); setEndDate(previous => previous || current);
+    setStayDate(previous => previous || shiftBusinessDate(current, 30));
+    setPickupFrom(previous => previous || shiftBusinessDate(current, -7)); setPickupTo(previous => previous || current);
+  }, [propertyId, linkedDate, operational.data]);
   const [isExporting, setIsExporting] = useState(false);
   const [exportError, setExportError] = useState('');
 
@@ -121,7 +140,7 @@ export default function Reports() {
           report === 'financial-summary'
             ? '/v1/reports/portfolio/financial-summary'
             : '/v1/reports/portfolio/occupancy';
-        return api.get(path, { params: { date }, signal }).then((r) => r.data);
+        return api.get(path, { params: { date: date || undefined }, signal }).then((r) => r.data);
       }
       const params: Record<string, string> = { propertyId: propertyId! };
       if (usesDateRange) {
@@ -136,12 +155,12 @@ export default function Reports() {
       }
       return api.get(`/v1/reports/${report}`, { params, signal }).then((r) => r.data);
     },
-    enabled: !!propertyId && (!isPortfolioMode || portfolioReport),
+    enabled: !!propertyId && (!isPortfolioMode || portfolioReport) && (portfolioReport || !!date) && hasPermission('reports.view'),
   });
 
-  const reportData = data?.data ?? data ?? {};
+  const reportData = reportForPresentation(report, data?.data ?? data ?? {});
   const kpis = reportData.kpis ?? {};
-  const revenue = reportData.revenue ?? {};
+  const revenue = reportData.netRevenueByCategory ?? {};
   const payments = reportData.payments ?? {};
   const propertyNameMap = new Map(properties.map((p) => [p.id, p.name]));
   const reportOption = REPORT_OPTIONS.find((option) => option.value === report);
@@ -168,7 +187,7 @@ export default function Reports() {
         propertyName: isPortfolioMode
           ? (i18n.language.startsWith('ru') ? 'Портфель объектов' : 'Property portfolio')
           : (properties.find((property) => property.id === propertyId)?.name ?? propertyId ?? 'Property'),
-        currencyCode: currencyCode ?? 'KZT',
+        currencyCode: reportData.currencyCode ?? currencyCode,
         parameters,
         data: reportData,
       });
@@ -194,6 +213,7 @@ export default function Reports() {
     );
   }
 
+  if (operational.isError) return <QueryError error={operational.error} onRetry={() => void operational.refetch()} />;
   if (isError) return <QueryError error={error} onRetry={() => void refetch()} />;
   if (isPending) return <SkeletonPage />;
 
@@ -336,6 +356,8 @@ export default function Reports() {
       {/* Financial Summary */}
       {report === 'financial-summary' && (
         <div className="space-y-4">
+          <p className="text-xs">{reportData.actual?.status} · {reportData.actual?.closedDays}/{reportData.actual?.expectedDays} · charges.serviceDate · {reportData.date ?? 'Операционная дата каждого объекта'}</p>
+          {isPortfolioMode && <PortfolioRevenue data={reportData} names={propertyNameMap} />}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <KpiCard title="ADR" value={kpis.adr != null ? formatMoney(kpis.adr, currencyCode) : '—'} icon={DollarSign} />
             <KpiCard title="RevPAR" value={kpis.revpar != null ? formatMoney(kpis.revpar, currencyCode) : '—'} icon={TrendingUp} />
@@ -356,13 +378,13 @@ export default function Reports() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(reportData.byProperty as Array<{ propertyId: string; totalRevenue: number; occupancyRate: number; adr: number; revpar: number }>).map((row) => (
+                    {(reportData.byProperty as Array<{ propertyId: string; currencyCode: string; date: string; actual: { status: string }; totalRevenue: number | null; occupancyRate: number; adr: number | null; revpar: number | null }>).map((row) => (
                       <tr key={row.propertyId} className="border-b border-gray-50">
                         <td className="py-2">{propertyNameMap.get(row.propertyId) ?? row.propertyId}</td>
-                        <td className="py-2">{formatMoney(row.totalRevenue, currencyCode)}</td>
+                        <td className="py-2 whitespace-nowrap">{formatMoney(row.totalRevenue, row.currencyCode)} · {row.actual.status} · {row.date}</td>
                         <td className="py-2">{formatOccupancyPercent(row.occupancyRate)}</td>
-                        <td className="py-2">{formatMoney(row.adr, currencyCode)}</td>
-                        <td className="py-2">{formatMoney(row.revpar, currencyCode)}</td>
+                        <td className="py-2 whitespace-nowrap">{formatMoney(row.adr, row.currencyCode)}</td>
+                        <td className="py-2 whitespace-nowrap">{formatMoney(row.revpar, row.currencyCode)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -438,11 +460,15 @@ export default function Reports() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <KpiCard title={t('reports.roomRevenue')} value={revenue.room != null ? formatMoney(revenue.room, currencyCode) : '—'} icon={DollarSign} />
             <KpiCard title={t('reports.otherRevenue')} value={revenue.other != null ? formatMoney(revenue.other, currencyCode) : '—'} icon={DollarSign} />
-            <KpiCard title={t('reports.totalRevenue')} value={revenue.total != null ? formatMoney(revenue.total, currencyCode) : '—'} icon={DollarSign} />
+            <KpiCard title={t('reports.totalRevenue')} value={formatMoney(reportData.netEarnedRevenue, reportData.currencyCode)} icon={DollarSign} />
+            <KpiCard title="F&B" value={formatMoney(revenue.foodBeverage, reportData.currencyCode)} icon={DollarSign} />
+            <KpiCard title="Налог (не выручка)" value={formatMoney(revenue.tax, reportData.currencyCode)} icon={DollarSign} />
+            <KpiCard title="Корректировки / reversals" value={formatMoney(reportData.adjustments, reportData.currencyCode)} icon={DollarSign} />
           </div>
+          <p className="text-xs">{reportData.actual?.status} · charges.serviceDate · Выручка не равна оплатам; налог и reversals показаны отдельно, без повторного вычитания.</p>
           {payments && Object.keys(payments).length > 0 && (
             <div className="bg-white rounded-xl shadow-sm p-5">
-              <h3 className="text-sm font-semibold text-telivity-navy mb-3">{t('reports.revenueByPaymentMethod')}</h3>
+              <h3 className="text-sm font-semibold text-telivity-navy mb-3">Платежи по способу оплаты · не earned revenue</h3>
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={Object.entries(payments as Record<string, number>).filter(([k]) => k !== 'total').map(([k, v]) => ({ method: k, amount: v }))}>
                   <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="method" tick={{ fontSize: 12 }} /><YAxis tick={{ fontSize: 12 }} /><Tooltip />
@@ -462,7 +488,7 @@ export default function Reports() {
             <ResponsiveContainer width="100%" height={300}>
               <LineChart data={(reportData.daily as { date: string; occupancyRate: number }[]).map((d) => ({
                 ...d,
-                occupancyPct: Number(d.occupancyRate) * 100,
+                occupancyPct: d.occupancyRate == null ? null : Number(d.occupancyRate) * 100,
               }))}>
                 <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 12 }} domain={[0, 100]} /><Tooltip />
                 <Line type="monotone" dataKey="occupancyPct" stroke="#06bdb4" strokeWidth={2} dot={{ r: 3 }} />

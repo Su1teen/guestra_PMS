@@ -13,8 +13,9 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { PricingMutationDto } from './pricing-mutation.dto';
 
-export class CreateRateRestrictionDto {
+export class CreateRateRestrictionDto extends PricingMutationDto {
   @ApiProperty()
   @IsUUID()
   propertyId!: string;

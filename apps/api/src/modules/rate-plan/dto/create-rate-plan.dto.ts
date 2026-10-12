@@ -17,8 +17,9 @@ import {
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { LosAdjustmentDto, OccupancyBandDto } from './rate-adjustment.dto';
+import { PricingMutationDto } from './pricing-mutation.dto';
 
-export class CreateRatePlanDto {
+export class CreateRatePlanDto extends PricingMutationDto {
   @ApiPropertyOptional({
     description:
       'Property id. Required in the body, or pass ?propertyId= as a query alias when omitted from the body.',

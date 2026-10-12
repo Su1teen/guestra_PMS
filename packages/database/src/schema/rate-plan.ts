@@ -79,6 +79,7 @@ export const ratePlans = pgTable('rate_plans', {
 
   // Metadata
   sortOrder: integer('sort_order').notNull().default(0),
+  revision: integer('revision').notNull().default(1),
 
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -112,6 +113,7 @@ export const rateRestrictions = pgTable('rate_restrictions', {
 
   // Day-of-week overrides (KB 5.3: weekend premium, weekday discount)
   dayOfWeekOverrides: jsonb('day_of_week_overrides').$type<Record<string, number>>(), // { "friday": 20, "saturday": 30 }
+  revision: integer('revision').notNull().default(1),
 
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

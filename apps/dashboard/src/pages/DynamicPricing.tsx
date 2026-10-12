@@ -7,6 +7,7 @@ import {
   Legend,
   Line,
   ResponsiveContainer,
+  ReferenceLine,
   Tooltip,
   XAxis,
   YAxis,
@@ -30,6 +31,9 @@ import { formatMoney } from '../lib/money';
 import { useProperty } from '../context/PropertyContext';
 import KpiCard from '../components/ui/KpiCard';
 import RevenueWorkspaceNav from '../components/revenue/RevenueWorkspaceNav';
+import { Link } from 'react-router-dom';
+import { propertyHref } from '../lib/navigation';
+import { useAuth } from '../context/AuthContext';
 import {
   DEFAULT_PRICING_SETTINGS,
   FORECAST_DAYS,
@@ -140,8 +144,15 @@ function Accordion({
 }
 
 export default function DynamicPricing() {
+  const { propertyId } = useProperty();
+  return <PricingSimulation key={propertyId} />;
+}
+
+function PricingSimulation() {
   const { t, i18n } = useTranslation();
   const { propertyId, currencyCode, properties, isPortfolioMode } = useProperty();
+  const { hasPermission } = useAuth();
+  const ru = i18n.language.startsWith('ru');
   const dateLocale = getDateLocale(i18n.resolvedLanguage);
   const property = properties.find((p) => p.id === propertyId);
 
@@ -165,16 +176,16 @@ export default function DynamicPricing() {
   const windowStart = clock.today;
   const windowEnd = addDaysKey(clock.today, FORECAST_DAYS - 1);
 
-  const { data: occupancyReport } = useQuery({
+  const occupancyQuery = useQuery({
     queryKey: ['reports', 'occupancy', propertyId, windowStart],
     queryFn: () =>
       api
         .get('/v1/reports/occupancy', { params: { propertyId, date: windowStart } })
         .then((r) => r.data),
-    enabled: !!propertyId && !isPortfolioMode,
+    enabled: !!propertyId && !isPortfolioMode && hasPermission('reports.view'),
   });
 
-  const { data: paceReport } = useQuery({
+  const paceQuery = useQuery({
     queryKey: ['reports', 'booking-pace', propertyId, windowStart, windowEnd],
     queryFn: () =>
       api
@@ -182,12 +193,12 @@ export default function DynamicPricing() {
           params: { propertyId, startDate: windowStart, endDate: windowEnd },
         })
         .then((r) => r.data),
-    enabled: !!propertyId && !isPortfolioMode,
+    enabled: !!propertyId && !isPortfolioMode && hasPermission('reports.view'),
   });
 
   // Pace is a property-wide velocity signal: how many bookings landed in the
   // last 24h, not how many landed for one specific night.
-  const { data: recentPaceReport } = useQuery({
+  const recentPaceQuery = useQuery({
     queryKey: ['reports', 'booking-pace', 'recent', propertyId, windowStart],
     queryFn: () =>
       api
@@ -199,8 +210,12 @@ export default function DynamicPricing() {
           },
         })
         .then((r) => r.data),
-    enabled: !!propertyId && !isPortfolioMode,
+    enabled: !!propertyId && !isPortfolioMode && hasPermission('reports.view'),
   });
+
+  const occupancyReport = occupancyQuery.data;
+  const paceReport = paceQuery.data;
+  const recentPaceReport = recentPaceQuery.data;
 
   const totalRooms: number = occupancyReport?.totalRooms ?? property?.totalRooms ?? 0;
   const availableRooms: number = occupancyReport?.availableRooms ?? totalRooms;
@@ -359,6 +374,14 @@ export default function DynamicPricing() {
       </div>
 
       <RevenueWorkspaceNav />
+
+      <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs">
+        <p className="font-semibold">Simulation · {ru ? 'Не изменяет реальные тарифы' : 'Does not change live rates'}</p>
+        <p className="mt-1">{ru ? 'Все цены, ADR, RevPAR и суммы ниже — результаты сценария, не Actual и не подтверждённый прогноз. Synthetic demand никогда не применяется к Live. Реальный прогноз: INSUFFICIENT_HISTORY.' : 'All prices, ADR, RevPAR and amounts below are scenario results, not Actual or a confirmed forecast. Synthetic demand is never applied to Live. Real forecast: INSUFFICIENT_HISTORY.'}</p>
+        <Link className="mt-2 inline-block font-semibold text-telivity-teal" to={propertyHref('/revenue', propertyId)}>{ru ? 'Live Rate Management →' : 'Live Rate Management →'}</Link>
+        {(occupancyQuery.isError || paceQuery.isError || recentPaceQuery.isError) && <p role="alert" className="mt-2">{ru ? 'Коммерческие данные недоступны; демонстрация не является прогнозом.' : 'Commercial data unavailable; demo is not a forecast.'} <button type="button" className="underline" onClick={() => { void occupancyQuery.refetch(); void paceQuery.refetch(); void recentPaceQuery.refetch(); }}>{ru ? 'Повторить' : 'Retry'}</button></p>}
+        {(occupancyQuery.isPending || paceQuery.isPending) && hasPermission('reports.view') && <p role="status">{ru ? 'Загрузка данных PMS; пока показан демонстрационный сценарий.' : 'Loading PMS data; currently showing a demo scenario.'}</p>}
+      </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-4">
         {/* ---- Left: controls ---- */}
@@ -670,13 +693,13 @@ export default function DynamicPricing() {
                     <span className="text-telivity-slate">{breakdownLabel(line)}</span>
                     <span
                       className={
-                        line.kind === 'total'
+                        'whitespace-nowrap tabular-nums shrink-0 ' + (line.kind === 'total'
                           ? 'text-telivity-navy'
                           : line.amount < 0
                             ? 'text-telivity-orange'
                             : line.amount > 0
                               ? 'text-telivity-dark-teal'
-                              : 'text-telivity-mid-grey'
+                              : 'text-telivity-mid-grey')
                       }
                     >
                       {line.kind === 'total' || line.kind === 'base'
@@ -731,16 +754,19 @@ export default function DynamicPricing() {
         <div className="xl:col-span-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <KpiCard
+              nowrap
               title={t('dynamicPricing.kpi.adr')}
               value={formatMoney(Math.round(summary.adr), currencyCode)}
               icon={TrendingUp}
             />
             <KpiCard
+              nowrap
               title={t('dynamicPricing.kpi.occupancy')}
               value={`${summary.averageOccupancyPercent.toFixed(1)}%`}
               icon={Percent}
             />
             <KpiCard
+              nowrap
               title={t('dynamicPricing.kpi.revpar')}
               value={formatMoney(Math.round(summary.revpar), currencyCode)}
               subtitle={t('dynamicPricing.kpi.revparSubtitle', {
@@ -756,18 +782,21 @@ export default function DynamicPricing() {
                 <LineChartIcon size={16} className="text-telivity-teal" />
                 {t('dynamicPricing.forecast.title', { days: FORECAST_DAYS })}
               </h2>
-              {forecastSource.synthetic && (
+              {forecastSource.synthetic ? (
                 <span className="rounded-full bg-telivity-orange/15 text-telivity-orange text-[11px] font-semibold px-2.5 py-1">
                   {t('dynamicPricing.forecast.synthetic')}
                 </span>
-              )}
+              ) : <span className="text-[11px] text-telivity-mid-grey">{ru ? 'Сценарий на основе On books (не Forecast)' : 'On-books scenario (not Forecast)'}</span>}
             </div>
-            <div className="h-64">
+            <div className="h-56 sm:h-64" role="img" aria-label={ru ? 'Сценарий цены и загрузки на 30 дней; выбор даты в таблице ниже' : '30-day price and occupancy scenario; choose a date in the table below'}>
               <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData}>
+                <ComposedChart data={chartData} margin={{ top: 8, right: 0, left: 0, bottom: 4 }} onClick={(state) => {
+                  const date = state?.activePayload?.[0]?.payload?.date;
+                  if (typeof date === 'string') setSelectedDate(date);
+                }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#eef2f5" />
-                  <XAxis dataKey="label" tick={{ fontSize: 10 }} interval={2} />
-                  <YAxis yAxisId="rate" tick={{ fontSize: 10 }} width={70} />
+                  <XAxis dataKey="date" tickFormatter={date => format(new Date(`${date}T00:00:00`), 'd MMM', { locale: dateLocale })} tick={{ fontSize: 10 }} minTickGap={24} />
+                  <YAxis yAxisId="rate" tick={{ fontSize: 10 }} width={56} tickFormatter={value => new Intl.NumberFormat(i18n.language, { notation: 'compact', maximumFractionDigits: 1 }).format(value)} />
                   <YAxis
                     yAxisId="occupancy"
                     orientation="right"
@@ -776,13 +805,13 @@ export default function DynamicPricing() {
                     tick={{ fontSize: 10 }}
                     width={45}
                   />
-                  <Tooltip
-                    formatter={(value: number, name: string) =>
-                      name === t('dynamicPricing.forecast.occupancySeries')
-                        ? `${value}%`
-                        : formatMoney(value, currencyCode)
-                    }
-                  />
+                  <Tooltip content={({ active, payload }) => {
+                    const date = payload?.[0]?.payload?.date as string | undefined;
+                    const night = pricedNights.find(n => n.date === date);
+                    if (!active || !night) return null;
+                    return <div className="max-w-64 rounded-lg border bg-white p-3 text-xs shadow-lg"><p className="font-semibold">{night.date} · Simulation</p><p className="mt-1 whitespace-nowrap tabular-nums">{t('dynamicPricing.forecast.dynamicSeries')}: {formatMoney(night.finalPrice, currencyCode, i18n.language)}</p><p className="whitespace-nowrap tabular-nums">{t('dynamicPricing.forecast.baseSeries')}: {formatMoney(settings.baseRate * (settings.categoryMultipliers[category] ?? 1), currencyCode, i18n.language)}</p><p>{t('dynamicPricing.forecast.occupancySeries')}: {night.occupancyPercent}%</p><p className="mt-2">{night.lines.filter(line => line.amount !== 0 && line.kind !== 'base' && line.kind !== 'total').map(breakdownLabel).join(' · ')}</p><p className="mt-2 text-telivity-mid-grey">{ru ? 'Нажмите для расшифровки' : 'Click for waterfall'}</p></div>;
+                  }} />
+                  <ReferenceLine x={selectedDate} yAxisId="rate" stroke="#0f9b8e" strokeDasharray="3 3" />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar
                     yAxisId="occupancy"
@@ -823,7 +852,7 @@ export default function DynamicPricing() {
               </h2>
               <p className="text-xs text-telivity-mid-grey">{t('dynamicPricing.table.hint')}</p>
             </div>
-            <div className="max-h-96 overflow-y-auto">
+            <div className="max-h-80 overflow-auto">
               <table className="w-full">
                 <thead className="sticky top-0 bg-telivity-teal/5">
                   <tr className="border-b border-gray-100">
