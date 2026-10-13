@@ -216,6 +216,9 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
 
     const attemptNumber = delivery.attempts + 1;
     const body = JSON.stringify(delivery.payload);
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const versionedSignature = subscription.secret
+      ? createHmac('sha256', subscription.secret).update(timestamp + '.' + body).digest('hex') : '';
     const signature = subscription.secret
       ? `sha256=${createHmac('sha256', subscription.secret).update(body).digest('hex')}`
       : 'unsigned';
@@ -239,6 +242,8 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
             'X-HAIP-Signature': signature,
             'X-HAIP-Event-Id': delivery.logicalEventId ?? delivery.id,
             'X-HAIP-Event-Type': delivery.eventType,
+            'X-Guestra-Timestamp': timestamp,
+            'X-Guestra-Signature': versionedSignature,
           },
           body,
           // The pre-flight assertSafeOutboundUrl only validates the FIRST URL.

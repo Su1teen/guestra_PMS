@@ -53,6 +53,7 @@ export const NAVIGATION: NavigationSection[] = [
     { to: '/channels', icon: Radio, labelKey: 'nav.channels', permission: 'channels.manage' },
     { to: '/integrations', icon: Plug, labelKey: 'nav.integrations', permission: 'settings.manage' },
     { to: '/communications', icon: Mail, labelKey: 'nav.communications', permission: 'communications.manage' },
+    { to: '/guest-inbox', icon: MessageSquare, labelKey: 'guestInbox.title', permission: 'communications.manage' },
     { to: '/reviews', icon: MessageSquare, labelKey: 'nav.reviews', permission: 'reviews.manage' },
     { to: '/settings?tab=users', icon: ShieldCheck, labelKey: 'nav.usersRoles', permission: 'admin.users.manage' },
     { to: '/import', icon: Upload, labelKey: 'nav.import', permission: 'settings.manage' },
@@ -71,7 +72,8 @@ export function propertyHref(to: string, propertyId: string | null): string {
 
 export function visibleNavigation(hasPermission: (permission: string) => boolean) {
   return NAVIGATION.map(section => ({ ...section, items: section.items.filter(item =>
-    hasPermission(item.permission) && (item.to !== '/booking-requests' || isBookingRequestsUiEnabled()),
+    hasPermission(item.permission) && (item.to !== '/booking-requests' || isBookingRequestsUiEnabled()) &&
+    (item.to !== '/guest-inbox' || import.meta.env.VITE_GUESTRA_INBOX_ENABLED === 'true'),
   ) })).filter(section => section.items.length);
 }
 

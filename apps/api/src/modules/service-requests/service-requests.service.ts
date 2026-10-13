@@ -158,7 +158,14 @@ export class ServiceRequestsService {
       type: dto.type as any, category: dto.category, department: dto.department, priority: dto.priority ?? 0,
       status: 'open', title: dto.title, description: dto.description, sourceChannel: 'ai_guest_agent',
       idempotencyKey: dto.idempotencyKey, integrationContext: { ...(dto.integrationContext ?? {}), idempotencyFingerprint: fingerprint },
-    }).returning();
+    }).onConflictDoNothing().returning();
+    if (!request) {
+      const [receipt] = await this.db.select().from(serviceRequests).where(and(
+        eq(serviceRequests.propertyId,dto.propertyId),eq(serviceRequests.idempotencyKey,dto.idempotencyKey)));
+      if (!receipt || (receipt.integrationContext as any)?.idempotencyFingerprint !== fingerprint)
+        throw new ConflictException('IDEMPOTENCY_CONFLICT');
+      return {...receipt,idempotentReplay:true};
+    }
     await this.webhookService.emit('service_request.created', 'service_request', request.id, {
       serviceRequestId: request.id, guestId: request.guestId, reservationId: request.reservationId,
       status: request.status, integrationContext: dto.integrationContext ?? {},

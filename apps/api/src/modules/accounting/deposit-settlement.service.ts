@@ -72,7 +72,7 @@ export class DepositSettlementService {
     additionalFeeAmount?: number | string | null;
     additionalFeeDescription?: string;
     actor?: AuditActor;
-  }): Promise<SettlementResult> {
+  }, transaction?: any): Promise<SettlementResult> {
     const {
       reservationId,
       propertyId,
@@ -122,7 +122,7 @@ export class DepositSettlementService {
       return { penaltyPosted, penaltyAmount: evaluation.penaltyAmount, deposits,
         policyDescription: evaluation.policyDescription, withinFreeWindow: evaluation.withinFreeWindow };
     };
-    return this.db.transaction(perform);
+    return transaction ? perform(transaction) : this.db.transaction(perform);
   }
 
   async settleDeposits(
