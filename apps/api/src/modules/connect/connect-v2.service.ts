@@ -63,10 +63,15 @@ export class ConnectV2Service {
     const [existing]=await this.db.select().from(bookings).where(and(eq(bookings.propertyId,dto.propertyId),eq(bookings.idempotencyKey,dto.idempotencyKey)));
     if(existing) {
       if(existing.integrationContext?.acceptedQuoteHash!==fingerprint(acceptedQuote)) throw new ConflictException('IDEMPOTENCY_CONFLICT');
-      return this.booking.book({...input,integrationContext:{...input.integrationContext,acceptedQuoteHash:fingerprint(acceptedQuote)}});
+      return this.publicBooking(await this.booking.book({...input,integrationContext:{...input.integrationContext,acceptedQuoteHash:fingerprint(acceptedQuote)}}));
     }
     const quote=readQuote(acceptedQuote,this.config.get('CONNECT_QUOTE_SIGNING_SECRET',''));
-    return this.booking.book({...input,integrationContext:{...input.integrationContext,acceptedQuoteHash:fingerprint(acceptedQuote)}},quote);
+    return this.publicBooking(await this.booking.book({...input,integrationContext:{...input.integrationContext,acceptedQuoteHash:fingerprint(acceptedQuote)}},quote));
+  }
+  private publicBooking(row:any) {
+    const result={...row,integrationContext:this.context(row.integrationContext)};
+    for(const key of ['roomId','roomNumber','roomAssigned'])delete result[key];
+    return result;
   }
   private async identity(propertyId:string,customerId:string,db=this.db) {
     const [link]=await db.select().from(integrationLinks).where(and(eq(integrationLinks.propertyId,propertyId),eq(integrationLinks.sourceSystem,'guestra_crm'),
@@ -249,6 +254,8 @@ export class ConnectV2Service {
     if(dto.integrationContext?.sourceSystem!=='guestra_crm'||!dto.integrationContext.customerId)throw new BadRequestException('INTEGRATION_CONTEXT_REQUIRED');
     const guestId=await this.identity(dto.propertyId,dto.integrationContext.customerId);
     if(dto.guestId&&dto.guestId!==guestId)throw new ConflictException('IDENTITY_CONFLICT');
-    return this.requests.createFromAgent({...dto,guestId,integrationContext:{...dto.integrationContext}});
+    const row=await this.requests.createFromAgent({...dto,guestId,integrationContext:{...dto.integrationContext}});
+    return {id:row.id,propertyId:row.propertyId,guestId:row.guestId,status:row.status,type:row.type,title:row.title,
+      reservationId:row.reservationId,integrationContext:this.context(row.integrationContext)};
   }
 }

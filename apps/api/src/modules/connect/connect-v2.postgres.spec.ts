@@ -105,6 +105,11 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
     const results=await Promise.all([v2.book(dto),v2.book(dto)]);
     expect(results[0].reservationId).toBe(results[1].reservationId);
     expect(results[0].guestId).toBe(results[1].guestId);
+    for(const result of results) {
+      expect(JSON.stringify(result)).not.toContain('acceptedQuoteHash');
+      expect(JSON.stringify(result)).not.toContain('idempotencyFingerprint');
+      expect(result).not.toHaveProperty('roomNumber');
+    }
     expect(await db.select().from(reservations).where(eq(reservations.propertyId,ids.property))).toHaveLength(1);
     expect(await db.select().from(guestPropertyLinks).where(eq(guestPropertyLinks.propertyId,ids.property))).toHaveLength(1);
     const read=await v2.snapshot(ids.property,'reservation',results[0].reservationId,input.customerId);
@@ -204,6 +209,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
         roomTypeId:ids.type,ratePlanId:ids.rate,idempotencyKey:randomUUID()});
       expect(offer.status,offer.text).toBe(201);
       expect(offer.body.offer.total).toBe(220);
+      expect((await pool.query('select total_amount,room_amount from leads where id=$1',[offer.body.offer.leadId])).rows[0])
+        .toEqual({total_amount:220,room_amount:220});
       async function approve(actionType:string,payload:any) {
         const key=randomUUID();
         const proposed=await send('/v2/messages/outbound/prepare',{...identity,text:'Подтвердите действие',idempotencyKey:key,proposedAction:{actionType,payload}}).expect(201);
@@ -220,6 +227,11 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       expect(outcomes[0].body.snapshot.id).toBe(outcomes[1].body.snapshot.id);
       const booked=outcomes[0].body.snapshot;
       expect(booked.guestId).not.toBe(inbound.body.context.customer.id);
+      expect(await db.select().from(reservations).where(eq(reservations.propertyId,ids.property))).toHaveLength(1);
+      const repeatedOffer=await send('/v2/offers',{...identity,requestId:offer.body.offer.leadId,
+        roomTypeId:ids.type,ratePlanId:ids.rate,idempotencyKey:randomUUID()});
+      expect(repeatedOffer.status,repeatedOffer.text).toBe(409);
+      expect(repeatedOffer.body.error).toBe('REQUEST_ALREADY_BOOKED');
       expect(await db.select().from(reservations).where(eq(reservations.propertyId,ids.property))).toHaveLength(1);
       expect((await pool.query('select (select count(*) from reservations)::int as reservations,(select count(*) from folios)::int as folios')).rows).toEqual(before.rows);
       const payload={serviceId:ids.service,startAt:'2027-03-01T09:00:00Z',endAt:'2027-03-01T10:00:00Z',participants:1,quantity:1,expectedTotal:'50.00'};

@@ -36,6 +36,8 @@ When integration is OFF, existing Telegram and v1 operational flows remain avail
 
 A timeout after PMS commit leaves a recoverable pending CRM operation. Repeat with the original idempotency key and identical payload. Do not create a new key for transport retries. Reusing a key for a different payload is a conflict. Quote/revision/ownership conflicts are rejected without pretending the booking succeeded. Reservation cancellation includes policy settlement locally; amendments include inventory, accepted price and folio changes atomically. Service cancellation reports reversal/refund review consequences and never claims a refund just from a status change.
 
+One commercial Request maps to one verified PMS reservation. A pending booking must finish or recover before another booking attempt for that Request. A different booking requires a new Request; completed or cancelled mappings are never reassigned. Accepted PMS prices update CRM commercial totals without creating local operational or financial records.
+
 PMS entity snapshots read identity, row, event revision and financial facts in a local repeatable-read transaction. PMS ledger math uses the existing canonical net-payment predicate, including negative captured refund children and supported legacy parent statuses. Prepaid/virtual-card flags do not create captured payment facts. Payment link capability is currently false: production links need a real provider adapter. Simulated fixture payments are explicitly labelled and never enter the payment ledger.
 
 CRM integral KZT Offer columns reject fractional/non-KZT accepted prices with `CRM_MONEY_PRECISION_UNSUPPORTED`. They do not round an accepted PMS quote. Supporting those currencies needs a separately reviewed commercial-money migration.
