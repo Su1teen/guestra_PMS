@@ -26,4 +26,3 @@ try {
  });
  console.log("Optional integration migration verified on isolated "+environment+" database.");
 }finally{await pool.end();}
-
