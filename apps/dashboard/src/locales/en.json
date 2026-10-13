@@ -1,4 +1,12 @@
 {
+  "guestInbox": {
+    "title":"Guest Inbox","disabled":"Guest Inbox is not enabled for this account.","selectProperty":"Select a property.",
+    "unavailable":"Guest messages are temporarily unavailable. Try again shortly.","loading":"Loading…","empty":"No guest conversations yet.",
+    "ai":"AI assistant","human":"Staff","selectConversation":"Select a conversation.","takeover":"Take over",
+    "recentMessages":"Showing the most recent 100 messages.","context":"Guest context","noStay":"No verified stay is linked yet.",
+    "services":"Services","requests":"Guest requests","finance":"Account","balance":"Balance","received":"Received","attachment":"Attachment",
+    "states":{"pending":"Pending","confirmed":"Confirmed","assigned":"Room assigned","checked_in":"In house","stayover":"In house","checked_out":"Checked out","cancelled":"Cancelled","no_show":"No show","completed":"Completed","open":"Open","in_progress":"In progress","done":"Completed","sent":"Sent","delivered":"Delivered","failed":"Failed","received":"Received","processing":"Processing","ready":"Ready","rejected":"Rejected"}
+  },
   "reservationActions": {
     "reason": "Cancellation reason",
     "back": "Back without changes"

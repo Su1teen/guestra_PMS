@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, BadRequestException, ConflictException, Optional } from '@nestjs/common';
 import { eq, and, ne, notInArray, lt, gt, asc } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import {
@@ -12,7 +12,13 @@ import {
   rooms,
   guestPropertyLinks,
   integrationLinks,
+  properties,
 } from '@telivityhaip/database';
+import { TaxService } from '../tax/tax.service';
+import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
+import { calculateCanonicalRoomPricing } from '../rate-plan/canonical-room-pricing';
+import { assertQuoteMatches, type ConnectAcceptedQuote, fingerprint as quoteFingerprint } from './connect-quote';
+import { randomUUID } from 'node:crypto';
 import { DRIZZLE } from '../../database/database.module';
 import {
   assertFullStayAvailability,
@@ -35,13 +41,16 @@ export class ConnectBookingService {
     private readonly webhookService: WebhookService,
     private readonly ratePlanService: RatePlanService,
     private readonly policyService: PolicyService,
+    @Optional() private readonly taxService?: TaxService,
+    @Optional() private readonly outbox?: DomainEventOutboxService,
   ) {}
 
   /**
    * Book a room — Agent 4.5 (Hotel Booking Agent).
    * Agent bookings auto-confirm (skip pending status).
    */
-  async book(dto: AgentBookDto) {
+  async book(dto: AgentBookDto, acceptedQuote?: ConnectAcceptedQuote) {
+    if (acceptedQuote) assertQuoteMatches(acceptedQuote, dto);
     const arrival = new Date(`${dto.checkIn}T00:00:00.000Z`);
     const departure = new Date(`${dto.checkOut}T00:00:00.000Z`);
     const nights = Math.ceil((departure.getTime() - arrival.getTime()) / (1000 * 60 * 60 * 24));
@@ -58,6 +67,15 @@ export class ConnectBookingService {
     const confirmationNumber = `HAIP-${generateConfirmationToken()}`;
 
     const committed = await this.db.transaction(async (tx: any) => {
+      // Serialize first contact and operation replay across different categories.
+      // Property is a local mutex; no remote transaction or phone/email merge.
+      if (dto.idempotencyKey || dto.integrationContext?.customerId) {
+        await tx.select({ id: properties.id }).from(properties).where(eq(properties.id, dto.propertyId)).for('no key update');
+        if (dto.idempotencyKey) {
+          const replay = await this.findIdempotentBooking(dto.propertyId, dto.idempotencyKey, fingerprint, tx);
+          if (replay) return { replay };
+        }
+      }
       // All canonical reservation writers lock the room-type inventory row first.
       // The physical room row is then locked as the per-room mutex, so two voice
       // calls cannot both pass the overlap check for the same room.
@@ -174,8 +192,19 @@ export class ConnectBookingService {
       if (!room) throw new BadRequestException('NO_AVAILABILITY: no assignable physical room remains');
 
       const guest = await this.findOrCreateGuest(dto, tx);
-      const baseAmountDec = new Decimal(ratePlan.baseAmount);
-      const totalAmountDec = baseAmountDec.times(nights);
+      if (acceptedQuote && !this.taxService) throw new BadRequestException('CANONICAL_PRICING_UNAVAILABLE');
+      const pricing = this.taxService ? await calculateCanonicalRoomPricing({
+        propertyId: dto.propertyId, ratePlanId: dto.ratePlanId, checkIn: dto.checkIn, checkOut: dto.checkOut,
+        nights, isTaxInclusive: ratePlan.isTaxInclusive, ratePlanService: this.ratePlanService,
+        taxService: this.taxService, db: tx, lockForUpdate: true,
+      }) : undefined;
+      if (acceptedQuote && (Date.parse(acceptedQuote.expiresAt) <= Date.now() ||
+          quoteFingerprint({ totalAmount: pricing!.totalAmount, currency: pricing!.currency, lineItems: pricing!.lineItems }) !==
+          quoteFingerprint({ totalAmount: acceptedQuote.totalAmount, currency: acceptedQuote.currency, lineItems: acceptedQuote.lineItems }))) {
+        throw new ConflictException('PRICE_CHANGED');
+      }
+      const baseAmountDec = new Decimal(pricing?.lineItems[0]?.rate ?? ratePlan.baseAmount);
+      const totalAmountDec = new Decimal(pricing?.totalAmount ?? baseAmountDec.times(nights));
 
       const [booking] = await tx
         .insert(bookings)
@@ -204,7 +233,11 @@ export class ConnectBookingService {
           roomId: room.id,
           ratePlanId: dto.ratePlanId,
           totalAmount: totalAmountDec.toFixed(2),
-          currencyCode: ratePlan.currencyCode,
+          currencyCode: pricing?.currency ?? ratePlan.currencyCode,
+          ...(pricing && acceptedQuote ? { acceptedPricingSnapshot: { version: 1 as const, source: 'current' as const,
+            currencyCode: pricing.currency, grandTotal: pricing.totalAmount, roomTotal: pricing.roomTotal, taxTotal: pricing.taxTotal,
+            nights: pricing.lineItems.map(n => ({ date: n.date, roomAmount: n.rate, taxAmount: n.tax })),
+            services: [], servicesTotal: '0.00', servicesTaxTotal: '0.00', customReason: null, adjustment: null } } : {}),
           adults: dto.adults,
           children: dto.children ?? 0,
           specialRequests: dto.specialRequests,
@@ -220,6 +253,11 @@ export class ConnectBookingService {
       });
 
       await this.persistIntegrationLinks(tx, dto.propertyId, guest.id, booking.id, reservation.id, dto.integrationContext);
+      const eventId = randomUUID();
+      if (this.outbox) await this.outbox.persist(tx, { event: acceptedQuote ? 'reservation.created' : 'connect.booking_created', entityType: 'reservation',
+        entityId: reservation.id, propertyId: dto.propertyId, timestamp: new Date().toISOString(),
+        data: { bookingId: booking.id, guestId: guest.id, integrationContext: dto.integrationContext,
+          totalAmount: totalAmountDec.toFixed(2), currencyCode: pricing?.currency ?? ratePlan.currencyCode } }, eventId);
 
       return {
         reservation,
@@ -227,27 +265,35 @@ export class ConnectBookingService {
         roomType,
         booking,
         ratePlan,
+        pricing,
+        eventId,
         baseAmount: baseAmountDec.toNumber(),
         totalAmount: totalAmountDec.toNumber(),
       };
     });
+    if ('replay' in committed) return committed.replay;
 
     const { reservation, room, roomType, booking, ratePlan, baseAmount, totalAmount } = committed;
 
     const settings = await this.getPropertySettings(dto.propertyId);
     const taxRate = (settings['taxRate'] as number) ?? 0;
-    const nightlyBreakdown = this.buildNightlyBreakdown(baseAmount, nights, arrival, taxRate);
+    const nightlyBreakdown = committed.pricing ? committed.pricing.lineItems.map((line: { date:string;rate:string;tax:string }) => ({ date: line.date,
+      baseRate: Number(line.rate), taxAmount: Number(line.tax), totalRate: Number(new Decimal(line.rate).plus(line.tax)) }))
+      : this.buildNightlyBreakdown(baseAmount, nights, arrival, taxRate);
 
     let paymentStatus: 'none' | 'authorized' | 'charged' = 'none';
-    let depositAmount: number | undefined;
+    const depositAmount: number | undefined = undefined;
 
     if (dto.paymentMethod === 'prepaid' || dto.paymentMethod === 'virtual_card') {
       // In a real system, process payment via paymentService
-      paymentStatus = 'authorized';
-      depositAmount = totalAmount;
+      // A textual payment preference is not a provider authorization or capture.
+      paymentStatus = 'none';
     }
 
-    await this.webhookService.emit(
+    if (this.outbox) {
+      // Delivery failure never rolls back a committed reservation; recover retries it.
+      await this.outbox.deliver(dto.propertyId, committed.eventId).catch(() => undefined);
+    } else await this.webhookService.emit(
       'connect.booking_created',
       'reservation',
       reservation.id,
@@ -267,6 +313,7 @@ export class ConnectBookingService {
       bookingId: booking.id,
       externalReference: dto.externalReference,
       reservationId: reservation.id,
+      guestId: reservation.guestId,
       status: 'assigned',
       roomTypeId: roomType.id,
       roomTypeCode: roomType.code,
@@ -619,7 +666,7 @@ export class ConnectBookingService {
         eq(integrationLinks.externalEntityType, 'customer'),
         eq(integrationLinks.externalEntityId, externalCustomerId),
       ));
-      if (link?.localEntityType !== 'guest') {
+      if (link && link.localEntityType !== 'guest') {
         throw new ConflictException('IDENTITY_CONFLICT: external customer is not linked to a guest');
       }
       if (link) {
@@ -634,7 +681,8 @@ export class ConnectBookingService {
     // by design, yet a bare email match would let one tenant attach to (and later,
     // via modify(), overwrite) another tenant's guest profile. Scope reuse to the
     // requesting property; otherwise create a fresh row (CLAUDE.md guest rule).
-    if (dto.guestEmail) {
+    // A stable external identity never implicitly merges by contact details.
+    if (dto.guestEmail && !(sourceSystem && externalCustomerId)) {
       const matches = await db
         .select()
         .from(guests)
@@ -678,7 +726,7 @@ export class ConnectBookingService {
       .where(and(eq(guestPropertyLinks.guestId, guestId), eq(guestPropertyLinks.propertyId, propertyId)));
     if (existing) {
       await db.update(guestPropertyLinks).set({ lastSeenAt: new Date(), updatedAt: new Date() })
-        .where(eq(guestPropertyLinks.id, existing.id));
+        .where(and(eq(guestPropertyLinks.id, existing.id), eq(guestPropertyLinks.propertyId, propertyId)));
       return;
     }
     await db.insert(guestPropertyLinks).values({ guestId, propertyId, source });
@@ -727,21 +775,22 @@ export class ConnectBookingService {
     return JSON.stringify(canonical(payload));
   }
 
-  private async findIdempotentBooking(propertyId: string, key: string, fingerprint: string): Promise<any | undefined> {
-    const [booking] = await this.db.select().from(bookings).where(and(
+  private async findIdempotentBooking(propertyId: string, key: string, fingerprint: string, db: any = this.db): Promise<any | undefined> {
+    const [booking] = await db.select().from(bookings).where(and(
       eq(bookings.propertyId, propertyId), eq(bookings.idempotencyKey, key),
     ));
     if (!booking) return undefined;
     if ((booking.integrationContext as any)?.idempotencyFingerprint !== fingerprint) {
       throw new ConflictException('IDEMPOTENCY_CONFLICT: key was used with a different payload');
     }
-    const [reservation] = await this.db.select().from(reservations).where(and(
+    const [reservation] = await db.select().from(reservations).where(and(
       eq(reservations.bookingId, booking.id), eq(reservations.propertyId, propertyId),
     ));
     if (!reservation) throw new ConflictException('IDEMPOTENCY_CONFLICT: booking replay is incomplete');
-    const [roomType] = await this.db.select().from(roomTypes).where(and(eq(roomTypes.id, reservation.roomTypeId), eq(roomTypes.propertyId, propertyId)));
+    const [roomType] = await db.select().from(roomTypes).where(and(eq(roomTypes.id, reservation.roomTypeId), eq(roomTypes.propertyId, propertyId)));
     return {
       success: true, idempotentReplay: true, bookingId: booking.id, reservationId: reservation.id,
+      guestId: reservation.guestId,
       confirmationNumber: booking.confirmationNumber, status: reservation.status,
       roomTypeId: reservation.roomTypeId, roomTypeCode: roomType?.code, roomTypeName: roomType?.name,
       checkIn: reservation.arrivalDate, checkOut: reservation.departureDate,

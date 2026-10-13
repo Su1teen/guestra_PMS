@@ -1,4 +1,5 @@
-import { Injectable, Inject, NotFoundException, Optional } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { OnEvent } from '@nestjs/event-emitter';
 import { eq, and, gte, desc } from 'drizzle-orm';
 import { agentWebhookSubscriptions, auditLogs } from '@telivityhaip/database';
@@ -109,12 +110,13 @@ export class ConnectEventsService {
       throw new NotFoundException(`Subscription ${id} not found`);
     }
 
-    // Log the test delivery (no actual HTTP call — needs BullMQ for reliable delivery)
+    if (!this.deliveryService) throw new ServiceUnavailableException('WEBHOOK_DELIVERY_UNAVAILABLE');
+    const delivery = await this.deliveryService.enqueue({ eventType: 'integration.test', propertyId,
+      entityType: 'subscription', entityId: id, data: { test: true }, timestamp: new Date().toISOString() }, id, randomUUID());
     await this.db
       .update(agentWebhookSubscriptions)
       .set({
-        lastDeliveryAt: new Date(),
-        lastDeliveryStatus: 'test_logged',
+        lastDeliveryStatus: 'test_queued',
         updatedAt: new Date(),
       })
       .where(
@@ -125,10 +127,12 @@ export class ConnectEventsService {
       );
 
     return {
-      testSent: true,
+      testSent: false,
+      queued: true,
+      deliveryId: delivery.id,
       subscriptionId: id,
       callbackUrl: subscription.callbackUrl,
-      note: 'Test event logged. Webhook delivery jobs are processed by BullMQ.',
+      note: 'Queued for signed HTTP delivery. Inspect delivery status to verify acknowledgement.',
     };
   }
 
@@ -153,14 +157,14 @@ export class ConnectEventsService {
     // Filter by event type patterns if specified
     if (types?.length) {
       events = events.filter((e: any) => {
-        const eventType = `${e.entityType}.${e.action}`;
+        const eventType = e.newValue?.event ?? `${e.entityType}.${e.action}`;
         return types.some((pattern) => this.matchesEventPattern(eventType, pattern));
       });
     }
 
     return events.map((e: any) => ({
       id: e.id,
-      type: `${e.entityType}.${e.action}`,
+      type: e.newValue?.event ?? `${e.entityType}.${e.action}`,
       propertyId: e.propertyId,
       entityType: e.entityType,
       entityId: e.entityId,

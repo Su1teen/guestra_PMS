@@ -25,6 +25,7 @@ const Reports = lazy(() => import('./pages/Reports'));
 const ManagementReport = lazy(() => import('./pages/ManagementReport'));
 const Channels = lazy(() => import('./pages/Channels'));
 const Communications = lazy(() => import('./pages/Communications'));
+const GuestInbox = lazy(() => import('./pages/GuestInbox'));
 const Reviews = lazy(() => import('./pages/Reviews'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Import = lazy(() => import('./pages/Import'));
@@ -76,6 +77,7 @@ export default function App() {
             <Route path="/channels/*" element={<Channels />} />
             <Route path="/integrations" element={<Integrations />} />
             <Route path="/communications" element={<Communications />} />
+            <Route path="/guest-inbox" element={<GuestInbox />} />
             <Route path="/reviews" element={<Reviews />} />
             <Route path="/settings/*" element={<Settings />} />
             <Route path="/import" element={<Import />} />

@@ -94,6 +94,40 @@ jobs:
           FORCE_COLOR: '0'
           CI: 'true'
 
+  integration-v2:
+    name: Isolated PostgreSQL integration v2
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: haip
+          POSTGRES_PASSWORD: haip
+          POSTGRES_DB: guestra_pms_integration_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://haip:haip@localhost:5432/guestra_pms_integration_test
+      INTEGRATION_ENVIRONMENT: test
+      PMS_LIVE_PG: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r --filter @telivityhaip/shared --filter @telivityhaip/database --filter @telivityhaip/booking-requests run build
+      - run: pnpm db:migrate
+      - run: node scripts/setup-integration-test.mjs
+      - run: node scripts/setup-integration-test.mjs
+      - run: pnpm --filter @telivityhaip/api exec vitest run src/modules/connect/connect-v2.postgres.spec.ts
+
   release-smoke:
     name: Release smoke (PG${{ matrix.postgres }} / Redis${{ matrix.redis }})
     runs-on: ubuntu-latest

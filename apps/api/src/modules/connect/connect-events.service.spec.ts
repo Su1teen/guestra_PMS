@@ -123,16 +123,19 @@ describe('ConnectEventsService', () => {
   });
 
   describe('testSubscription', () => {
-    it('should log a test event delivery', async () => {
+    it('queues a real test delivery without claiming receipt', async () => {
       mockDb.select.mockImplementation(() => ({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockResolvedValue([mockSubscription]),
         }),
       }));
 
-      const result = await service.testSubscription('sub-1', 'prop-1');
+      const delivery = {enqueue: vi.fn().mockResolvedValue({id:'delivery-test'})};
+      const result = await new ConnectEventsService(mockDb,delivery as any).testSubscription('sub-1', 'prop-1');
 
-      expect(result.testSent).toBe(true);
+      expect(result.testSent).toBe(false);
+      expect(result.queued).toBe(true);
+      expect(delivery.enqueue).toHaveBeenCalled();
       expect(result.callbackUrl).toBe('https://otaip.example.com/webhooks');
       expect(mockDb.update).toHaveBeenCalled();
     });

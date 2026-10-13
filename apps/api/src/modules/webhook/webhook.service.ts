@@ -12,6 +12,7 @@ export interface WebhookPayload {
   data: Record<string, unknown>;
   timestamp: string;
   logicalEventId?: string;
+  integrationEnvelope?: Record<string, unknown>;
 }
 
 @Injectable()
@@ -30,7 +31,8 @@ export class WebhookService {
     payload: WebhookPayload,
     logicalEventId: string,
   ): Promise<void> {
-    if (!Object.hasOwn(WEBHOOK_EVENTS, payload.event)) {
+    if (!Object.hasOwn(WEBHOOK_EVENTS, payload.event) &&
+        payload.integrationEnvelope?.['schemaVersion'] !== 'guestra-domain-event-v1') {
       throw new Error(`Unknown persisted webhook event: ${String(payload.event)}`);
     }
     await this.eventEmitter.emitAsync(payload.event, {

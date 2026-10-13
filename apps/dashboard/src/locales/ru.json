@@ -1,4 +1,12 @@
 {
+  "guestInbox": {
+    "title":"Гостевой Inbox","disabled":"Гостевой Inbox ещё не включён для этого аккаунта.","selectProperty":"Выберите гостиницу.",
+    "unavailable":"Переписка временно недоступна. Повторите попытку немного позже.","loading":"Загрузка…","empty":"Гостевых диалогов пока нет.",
+    "ai":"AI ассистент","human":"Сотрудник","selectConversation":"Выберите диалог.","takeover":"Взять в работу",
+    "recentMessages":"Показаны последние 100 сообщений.","context":"Контекст гостя","noStay":"Подтверждённое проживание пока не связано.",
+    "services":"Услуги","requests":"Запросы гостя","finance":"Счёт","balance":"Остаток","received":"Получено","attachment":"Вложение",
+    "states":{"pending":"Ожидается","confirmed":"Подтверждено","assigned":"Номер назначен","checked_in":"Гость проживает","stayover":"Гость проживает","checked_out":"Выезд завершён","cancelled":"Отменено","no_show":"Незаезд","completed":"Выполнено","open":"Открыто","in_progress":"В работе","done":"Выполнено","sent":"Отправлено","delivered":"Доставлено","failed":"Ошибка","received":"Получено","processing":"Обрабатывается","ready":"Готово","rejected":"Отклонено"}
+  },
   "reservationActions": {
     "reason": "Причина отмены",
     "back": "Вернуться без изменений"

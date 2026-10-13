@@ -254,11 +254,11 @@ describe('ConnectBookingService', () => {
       );
     });
 
-    it('reports prepaid authorization without storing raw card data', async () => {
+    it('does not claim authorization or a deposit from a textual payment method', async () => {
       configureBookDb();
       const result = await service.book({ ...baseDto, paymentMethod: 'prepaid' });
-      expect(result.paymentStatus).toBe('authorized');
-      expect(result.depositAmount).toBe(399.98);
+      expect(result.paymentStatus).toBe('none');
+      expect(result.depositAmount).toBeUndefined();
     });
   });
 

@@ -1,4 +1,10 @@
 import { Module } from '@nestjs/common';
+import { ConnectV2Controller } from './connect-v2.controller';
+import { ConnectV2Service } from './connect-v2.service';
+import { ConnectV2Guard } from './connect-v2.guard';
+import { ConnectSandboxService } from './connect-sandbox.service';
+import { ConnectInboxService } from './connect-inbox.service';
+import { ConnectInboxController } from './connect-inbox.controller';
 import { ServiceOperationsController } from './service-operations.controller';
 import { ConnectController } from './connect.controller';
 import { ConnectSearchService } from './connect-search.service';
@@ -14,14 +20,16 @@ import { AuthModule } from '../auth/auth.module';
 import { RatePlanModule } from '../rate-plan/rate-plan.module';
 import { PolicyModule } from '../policy/policy.module';
 import { TaxModule } from '../tax/tax.module';
+import { AccountingModule } from '../accounting/accounting.module';
 import { FolioModule } from '../folio/folio.module';
 import { ServiceRequestsModule } from '../service-requests/service-requests.module';
 import { ConnectServiceBookingService } from './connect-service-booking.service';
 
 @Module({
-  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule],
-  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController],
+  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule],
+  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController],
   providers: [
+    ConnectV2Service, ConnectV2Guard, ConnectInboxService, ConnectSandboxService,
     ConnectSearchService,
     ConnectContentService,
     ConnectBookingService,
