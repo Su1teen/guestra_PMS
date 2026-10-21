@@ -2,13 +2,14 @@ import { createRequire } from 'node:module';
 import { readdir } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { deploy, identityFromEnv, attestIntegration } from './deploy-engine.mjs';
+import { deploy, identityFromEnv, attestIntegration, loadMigrationPolicy } from './deploy-engine.mjs';
 
 if (process.env.GUESTRA_DEPLOY_AUTOMATION_ENABLED !== 'true') {
   console.log('Deployment automation disabled; apply the reviewed Railway bootstrap configuration to enable it.');
 } else {
   const postgres = createRequire(new URL('../../packages/database/package.json', import.meta.url))('postgres');
   const identity = identityFromEnv('guestra_pms');
+  const category = await loadMigrationPolicy();
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL_REQUIRED');
   const sql = postgres(process.env.DATABASE_URL, { max: 1, onnotice: () => {} });
   const query = async (text, args = []) => sql.unsafe(text, args);
@@ -20,7 +21,7 @@ if (process.env.GUESTRA_DEPLOY_AUTOMATION_ENABLED !== 'true') {
       const version = Number(file.slice(0, 4));
       const old = installed.find(row => row.version === version);
       if (old && old.filename !== file) throw new Error('MIGRATION_FILENAME_DRIFT');
-      return { name: 'core/' + file, file: resolve(root, file), installed: Boolean(old), category: [26,28].includes(version) && !old ? 'manual' : 'safe',
+      return { name: 'core/' + file, file: resolve(root, file), installed: Boolean(old), category: category('core/' + file),
         record: async query => {
           await query('CREATE TABLE IF NOT EXISTS schema_migrations(version integer PRIMARY KEY,filename varchar(255) NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())');
           await query('INSERT INTO schema_migrations(version,filename) VALUES($1,$2)', [version, file]);
@@ -32,12 +33,13 @@ if (process.env.GUESTRA_DEPLOY_AUTOMATION_ENABLED !== 'true') {
     for (const file of (await readdir('integration-migrations')).filter(f => f.endsWith('.sql')).sort()) {
       const old = optional.find(row => row.name === file);
       migrations.push({ name: 'integration/' + file, file: resolve('integration-migrations', file), installed: Boolean(old),
-        legacyDigest: old?.digest, category: 'integration', record: async (query, checksum) => {
+        legacyDigest: old?.digest, category: category('integration/' + file), record: async (query, checksum) => {
           await query('CREATE TABLE IF NOT EXISTS guestra_integration_migrations(name text PRIMARY KEY,digest text NOT NULL,installed_at timestamptz NOT NULL DEFAULT now())');
           await query('INSERT INTO guestra_integration_migrations(name,digest) VALUES($1,$2)', [file, checksum]);
         } });
     }
     await deploy(query, { identity, migrations, foreignTables: ['app_users', 'workspaces', 'workflow_entity'],
+      attestationTable: 'guestra_integration_deployment',
       requiredTables: ['properties', 'reservations', 'folios', 'payments'],
       baselineApproved: process.env.GUESTRA_MIGRATION_BASELINE_APPROVED === 'true',
       integrationApproved: process.env.GUESTRA_INTEGRATION_MIGRATIONS_APPROVED === 'true',
