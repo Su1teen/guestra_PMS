@@ -265,7 +265,7 @@ function WebhookSettings({ propertyId }: { propertyId: string }) {
   const { t } = useTranslation();
   const { data } = useQuery({
     queryKey: ['connect', 'subscriptions', propertyId],
-    queryFn: () => api.get('/v1/connect/subscriptions', { params: { propertyId } }).then((r) => r.data),
+    queryFn: () => api.get('/v1/settings/connect/subscriptions', { params: { propertyId } }).then((r) => r.data),
     enabled: !!propertyId,
   });
 

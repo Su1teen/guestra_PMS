@@ -23,6 +23,8 @@ export class ConnectV2Guard implements CanActivate {
     try {[deployment]=await this.db.select().from(integrationDeployment).limit(1);}catch {throw new ForbiddenException('INTEGRATION_DATABASE_NOT_ATTESTED');}
     if(!deployment||deployment.environment!==environment)throw new ForbiddenException('INTEGRATION_DATABASE_NOT_ATTESTED');
     if(scope==='integration.write') {
+      if(this.config.get('GUESTRA_BUSINESS_WRITES_ENABLED')!=='true' && environment==='production')
+        throw new ForbiddenException('BUSINESS_WRITES_DISABLED');
       const secret=this.config.get('PMS_COMMAND_SECRET',''),timestamp=request.headers['x-guestra-command-time'],signature=request.headers['x-guestra-command-signature'];
       if(secret.length<32||typeof timestamp!=='string'||!/^\d+$/.test(timestamp)||Math.abs(Date.now()/1000-Number(timestamp))>300||typeof signature!=='string')
         throw new ForbiddenException('TRUSTED_CRM_COMMAND_REQUIRED');

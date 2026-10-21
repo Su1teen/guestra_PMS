@@ -1,0 +1,15 @@
+
+# Never send operator secrets to the Docker build context
+.git
+node_modules
+**/node_modules
+**/dist
+.tmp
+.vitest-count
+**/.env
+**/.env.local
+**/.env.production
+**/.local
+*.log
+ops/railway/generated/
+ops/railway/*.private.*

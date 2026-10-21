@@ -62,3 +62,8 @@ model-build/
 *.safetensors
 training-data/
 *.dataset.jsonl
+
+# Operator-generated secrets and full environment snapshots
+ops/railway/generated/
+ops/railway/*.private.json
+ops/railway/*.private.env

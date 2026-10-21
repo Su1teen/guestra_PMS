@@ -9,6 +9,7 @@ export default defineConfig({
     'src/schema/index.ts',
     'src/push-schema.ts',
     'src/run-migrations.ts',
+    'src/bootstrap-connect.ts',
     'src/seed.ts',
   ],
   format: ['esm', 'cjs'],

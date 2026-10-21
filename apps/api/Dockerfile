@@ -13,11 +13,13 @@ COPY packages/database/package.json ./packages/database/
 COPY packages/shared/package.json* ./packages/shared/
 COPY packages/booking-requests/package.json ./packages/booking-requests/
 
-RUN pnpm install --frozen-lockfile || pnpm install
+RUN pnpm install --frozen-lockfile
 
 # Copy source
 COPY tsconfig.base.json ./
 COPY packages/ ./packages/
+COPY ops/railway/ ./ops/railway/
+COPY integration-migrations/ ./integration-migrations/
 COPY apps/api/ ./apps/api/
 COPY apps/dashboard/ ./apps/dashboard/
 COPY apps/booking/ ./apps/booking/
@@ -35,11 +37,13 @@ ARG VITE_KEYCLOAK_CLIENT_ID=haip-dashboard
 # Must match the API's HAIP_BOOKING_REQUESTS at deploy time, or the module can
 # be enabled server-side while the UIs compile it out (see booking-engine-config.service.ts).
 ARG VITE_HAIP_BOOKING_REQUESTS=false
+ARG VITE_GUESTRA_INBOX_ENABLED=false
 ENV VITE_AUTH_ENABLED=$VITE_AUTH_ENABLED \
     VITE_KEYCLOAK_URL=$VITE_KEYCLOAK_URL \
     VITE_KEYCLOAK_REALM=$VITE_KEYCLOAK_REALM \
     VITE_KEYCLOAK_CLIENT_ID=$VITE_KEYCLOAK_CLIENT_ID \
-    VITE_HAIP_BOOKING_REQUESTS=$VITE_HAIP_BOOKING_REQUESTS
+    VITE_HAIP_BOOKING_REQUESTS=$VITE_HAIP_BOOKING_REQUESTS \
+    VITE_GUESTRA_INBOX_ENABLED=$VITE_GUESTRA_INBOX_ENABLED
 
 # Build dashboard (Vite static output)
 RUN pnpm --filter dashboard run build
@@ -58,6 +62,8 @@ RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 WORKDIR /app
 
 COPY --from=base /app/package.json /app/pnpm-workspace.yaml ./
+COPY --from=base /app/ops/railway ./ops/railway
+COPY --from=base /app/integration-migrations ./integration-migrations
 COPY --from=base /app/node_modules ./node_modules
 COPY --from=base /app/apps/api/dist ./apps/api/dist
 COPY --from=base /app/apps/api/package.json ./apps/api/
@@ -87,4 +93,4 @@ ENV NODE_ENV=production
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "node packages/database/dist/run-migrations.js && node apps/api/dist/main.js"]
+CMD ["sh", "-c", "node ops/railway/predeploy.mjs && node apps/api/dist/main.js"]
