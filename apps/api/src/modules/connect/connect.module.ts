@@ -1,4 +1,7 @@
 import { Module } from '@nestjs/common';
+import { CredentialAdminGuard } from '../auth/credential-admin.guard';
+import { ConnectReadinessController } from './connect-readiness.controller';
+import { StaffConnectSubscriptionsController } from './staff-connect-subscriptions.controller';
 import { ConnectV2Controller } from './connect-v2.controller';
 import { ConnectV2Service } from './connect-v2.service';
 import { ConnectV2Guard } from './connect-v2.guard';
@@ -27,8 +30,9 @@ import { ConnectServiceBookingService } from './connect-service-booking.service'
 
 @Module({
   imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule],
-  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController],
+  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController],
   providers: [
+    CredentialAdminGuard,
     ConnectV2Service, ConnectV2Guard, ConnectInboxService, ConnectSandboxService,
     ConnectSearchService,
     ConnectContentService,

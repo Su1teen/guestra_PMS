@@ -19,7 +19,8 @@ import { CONNECT_SERVICE_CAPABILITY } from '../connect/service-capability.decora
  * a `ConnectPrincipal` to the request.
  *
  * Runs AFTER `ApiKeyGuard` on `ConnectController`. Decision logic, fail-closed:
- *   1. `scope='platform'` (or `AUTH_ENABLED=false`) → allow (cross-tenant by design).
+ *   1. `scope='platform'` → allow (legacy trusted cross-tenant callers).
+ *      Staff demo bypass is available only outside production and v2.
  *   2. `scope='property'`:
  *      - any `params.id` (the `/connect/properties/:id` route) must equal `propertyId`,
  *      - any `query.propertyId` or `body.propertyId` must equal `propertyId`,
@@ -42,7 +43,11 @@ export class ConnectScopeGuard implements CanActivate {
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
-    if (this.configService.get<string>('AUTH_ENABLED', 'true') === 'false') {
+    const requestPath = context.switchToHttp().getRequest<any>().path ?? '';
+    if (this.configService.get<string>('AUTH_ENABLED', 'true') === 'false'
+      && this.configService.get('CONNECT_AUTH_REQUIRED') !== 'true'
+      && this.configService.get('NODE_ENV') !== 'production'
+      && !requestPath.includes('/connect/v2')) {
       return true;
     }
 
@@ -53,6 +58,11 @@ export class ConnectScopeGuard implements CanActivate {
       throw new UnauthorizedException('Connect principal not resolved');
     }
     if (principal.scope === 'platform') return true;
+    // Declarative scoped credentials cannot use the legacy API to evade v2 scopes.
+    if (principal.scopes?.includes('pms:scoped:v1') && !requestPath.includes('/connect/v2')) {
+      const readOnlyLegacy = context.switchToHttp().getRequest<any>().method === 'GET';
+      if (!readOnlyLegacy) throw new ForbiddenException('SCOPED_CREDENTIAL_REQUIRES_V2');
+    }
     const handler = context.getHandler?.();
     const capability = handler ? Reflect.getMetadata(CONNECT_SERVICE_CAPABILITY, handler) as string | undefined : undefined;
     // Empty historical scope metadata keeps the v1 contract. Explicit scope lists

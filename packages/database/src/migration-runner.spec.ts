@@ -12,6 +12,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import postgres from 'postgres';
 import { postgresOptionsFromEnv } from './postgres-options.js';
 import { pushSchema } from './push-schema.js';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { bootstrapConnect, parseBootstrapCredentials } from './bootstrap-connect.js';
 import {
   FIRST_TRACKED_MIGRATION_VERSION,
   getAppliedMigrationVersions,
@@ -118,6 +120,27 @@ async function seedWebhookDedupFixtures(sql: postgres.Sql) {
 const postgresReady = await postgresReachable(DEFAULT_DATABASE_URL);
 
 describe.skipIf(!postgresReady)('migration runner (PostgreSQL)', () => {
+  it('repairs the historical missing credentials table, bootstraps twice, and rejects scope mutation and resurrection', async () => {
+    await withEphemeralDatabase(async databaseUrl => {
+      await runAllMigrations(databaseUrl, {migrationsDir:MIGRATIONS_DIR});
+      const sql = postgres(databaseUrl,postgresOptionsFromEnv());
+      try {
+        await sql`DROP TABLE connect_credentials`;
+        await sql`DELETE FROM schema_migrations WHERE version=42`;
+        expect(await runPendingSqlMigrations(sql,MIGRATIONS_DIR)).toEqual(['0042_connect_credential_baseline.sql']);
+        const propertyId='f4200001-0000-4000-a000-000000000001';
+        await sql`INSERT INTO properties(id,name,code,country_code,timezone,currency_code,total_rooms) VALUES(${propertyId},'Bootstrap test','BOOTSTRAP','KZ','Asia/Almaty','KZT',1)`;
+        const records=parseBootstrapCredentials(JSON.stringify([{id:'f4200002-0000-4000-a000-000000000002',propertyId,label:'Read-only Studio',key:'isolated-test-key-minimum-48-characters-no-production',environment:'test',scopes:['integration.read']}]),'test');
+        const db=drizzle(sql);
+        await bootstrapConnect(db,records);await bootstrapConnect(db,records);
+        expect(await sql`SELECT id FROM connect_credentials`).toHaveLength(1);
+        expect(await sql`SELECT id FROM audit_logs WHERE entity_type='connect_credential'`).toHaveLength(1);
+        await expect(bootstrapConnect(db,[{...records[0]!,scopes:['integration.write']}])).rejects.toThrow('CONFLICT');
+        await bootstrapConnect(db,[{...records[0]!,revoked:true}]);
+        await expect(bootstrapConnect(db,records)).rejects.toThrow('REVOKED');
+      } finally {await sql.end();}
+    });
+  });
   beforeAll(async () => {
     if (!postgresReady) return;
     const canCreateDb = await postgresReachable(ADMIN_DATABASE_URL);

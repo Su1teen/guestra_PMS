@@ -2,6 +2,7 @@ import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from 'vites
 import { randomUUID,createHash,createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { createServer } from 'node:https';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
@@ -167,7 +168,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
     const {bootstrapDatabase}=await import(crmRoot+'/server/db/bootstrap.ts');
     const {pool,db:crmDb}=createDatabase(crmUrl.toString());
     const pmsKey='local-http-pms-test-key',crmKey='local-http-crm-test-key',eventSecret='local-http-domain-event-signing-secret';
-    let api:any;
+    let api:any, studioCrmServer:ReturnType<typeof createServer>|undefined;
     try {
       const exists=await pool.query("select to_regclass('public.organizations') as name");
       if(!exists.rows[0].name) {
@@ -200,7 +201,25 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       await pool.query("insert into guestra_sandbox_properties(property_id,tenant_id) values('les_borovoe','org_les_live') on conflict do nothing");
       const send=(path:string,body:any)=>agent.post('/api/integrations/agent'+path).set('x-crm-api-key',crmKey).send(body);
       const origin={propertyId:'les_borovoe',channel:'simulator',externalUserId:'http-'+randomUUID(),externalChatId:'http-chat-'+randomUUID()};
-      const inbound=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'Хочу забронировать'}).expect(201);
+      let inbound:any;
+      if(process.env.STUDIO_TEST_ROOT) {
+        const studioRoot=process.env.STUDIO_TEST_ROOT.replace(/\\/g,'/');
+        const {Integrations}=await import(studioRoot+'/server/integrations.ts');
+        studioCrmServer=createServer({key:await readFile(process.env.INTEGRATION_TEST_TLS_KEY!),cert:await readFile(process.env.INTEGRATION_TEST_TLS_CERT!)},crm);
+        await new Promise<void>(resolve=>studioCrmServer!.listen(0,'127.0.0.1',resolve));
+        const port=(studioCrmServer.address() as any).port;
+        const studio=new Integrations({environment:'test',sandbox:true,local:false,crmVersion:'v2',allowedHosts:['127.0.0.1'],integrationHosts:['127.0.0.1'],
+          crmUrl:`https://127.0.0.1:${port}/api/integrations/agent`,crmKey,crmProperty:'les_borovoe',crmTenant:'org_les_live',pmsProperty:ids.property,pmsTenant:ids.property});
+        const conv={externalChatId:origin.externalChatId},guest={externalUserId:origin.externalUserId},attempt={externalMessageId:randomUUID(),correlationId:randomUUID(),text:'Хочу забронировать',attachments:[]};
+        const client={firstName:'Integration',lastName:'Test',displayName:'Integration Test',language:'ru'};
+        inbound={body:await studio.inbound(conv,guest,attempt,client)};
+        const duplicate=await studio.inbound(conv,guest,attempt,client);
+        expect(duplicate.duplicate).toBe(true);
+        expect(duplicate.context.customer.id).toBe(inbound.body.context.customer.id);
+        const returning=await studio.inbound(conv,guest,{...attempt,externalMessageId:randomUUID(),correlationId:randomUUID(),text:'Я уже писал'},client);
+        expect(returning.context.customer.id).toBe(inbound.body.context.customer.id);
+        expect(returning.context.conversation.id).toBe(inbound.body.context.conversation.id);
+      } else inbound=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'Хочу забронировать'}).expect(201);
       const identity={...origin,conversationId:inbound.body.context.conversation.id};
       const before=await pool.query('select (select count(*) from reservations)::int as reservations,(select count(*) from folios)::int as folios');
       const lead=await send('/requests/upsert',{...identity,idempotencyKey:randomUUID(),direction:'accommodation',checkIn:'2027-03-01T00:00:00Z',
@@ -271,6 +290,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
         await send('/v2/sandbox/fixtures',payload).expect(409);
       }
     } finally {
+      if(studioCrmServer)await new Promise<void>((resolve,reject)=>studioCrmServer!.close(error=>error?reject(error):resolve()));
       await api?.close();await db.delete(connectCredentials).where(eq(connectCredentials.propertyId,ids.property));await pool.end();
     }
   },60000);

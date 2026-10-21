@@ -24,7 +24,13 @@ export class ConnectInboxService {
   }
   private async mapping(propertyId:string) {
     let configured:any;
-    try {configured=JSON.parse(this.config.get('CRM_PROPERTY_MAPPINGS','[]')).find((m:any)=>m.pmsPropertyId===propertyId);}
+    try {
+      if(this.config.get('GUESTRA_REGISTRY_ENABLED')==='true') {
+        const [binding]=await this.db.select().from(integrationLinks).where(and(eq(integrationLinks.propertyId,propertyId),
+          eq(integrationLinks.sourceSystem,'guestra_crm'),eq(integrationLinks.localEntityType,'property'),eq(integrationLinks.localEntityId,propertyId)));
+        configured=binding?.metadata;
+      } else configured=JSON.parse(this.config.get('CRM_PROPERTY_MAPPINGS','[]')).find((m:any)=>m.pmsPropertyId===propertyId);
+    }
     catch {throw new ServiceUnavailableException('INVALID_CRM_MAPPING_CONFIGURATION');}
     const [property]=await this.db.select().from(properties).where(eq(properties.id,propertyId));
     const environment=this.config.get('INTEGRATION_ENVIRONMENT','production');

@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
@@ -16,10 +17,12 @@ import { RequirePermissions } from '../auth/permissions.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { ConnectCredentialsService } from './connect-credentials.service';
 import { CreateConnectCredentialDto } from './dto/connect-credential.dto';
+import { CredentialAdminGuard } from '../auth/credential-admin.guard';
 
 @ApiTags('admin')
 @Controller('admin/connect/credentials')
 @Roles('admin')
+@UseGuards(CredentialAdminGuard)
 export class ConnectCredentialsController {
   constructor(private readonly credentialsService: ConnectCredentialsService) {}
 

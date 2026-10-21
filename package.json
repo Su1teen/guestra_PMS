@@ -10,6 +10,11 @@
   },
   "packageManager": "pnpm@9.15.4",
   "scripts": {
+    "integrations:generate-config": "node ops/railway/generate-config.mjs",
+    "integrations:predeploy": "node ops/railway/predeploy.mjs",
+    "integrations:bootstrap": "node packages/database/dist/bootstrap-connect.js",
+    "integrations:test-isolated": "node ops/railway/run-isolated-integration.mjs",
+    "test:deployment": "node --test ops/railway/deploy-engine.test.mjs ops/railway/generate-config.test.mjs",
     "build": "pnpm -r run build",
     "dev": "pnpm --filter @telivityhaip/api run dev",
     "lint": "pnpm -r run lint",

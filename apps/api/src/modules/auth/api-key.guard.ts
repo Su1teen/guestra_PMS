@@ -51,8 +51,8 @@ export interface ConnectPrincipal {
  *      → `{ scope:'platform' }`.
  *   3. Otherwise → 401.
  *
- * Fail-closed: when `AUTH_ENABLED!=='false'` and there is no DB row AND no env
- * value, the request is rejected. `AUTH_ENABLED='false'` is a no-op (dev/demo).
+ * Production and v2 machine authentication remain fail-closed independently of
+ * staff AUTH_ENABLED. Only non-production legacy demos may inherit the bypass.
  *
  * Closes CRITICAL #2 from the security audit (was: single global key, no tenant
  * binding — any key holder could read/write any tenant's Connect data).
@@ -66,7 +66,11 @@ export class ApiKeyGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const authEnabled = this.configService.get<string>('AUTH_ENABLED', 'true');
-    if (authEnabled === 'false') {
+    const requestPath = context.switchToHttp().getRequest<any>().path ?? '';
+    const serviceAuthRequired = this.configService.get('CONNECT_AUTH_REQUIRED') === 'true'
+      || this.configService.get('NODE_ENV') === 'production'
+      || requestPath.includes('/connect/v2');
+    if (authEnabled === 'false' && !serviceAuthRequired) {
       // Sandbox/demo parity with the other guards — also attach a platform
       // principal so downstream code that reads req.connect doesn't NPE.
       const req = context.switchToHttp().getRequest<any>();

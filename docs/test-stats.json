@@ -1,7 +1,7 @@
 {
-  "tests": 2575,
-  "files": 329,
+  "tests": 2582,
+  "files": 331,
   "scope": "all workspace packages with a test script",
   "semantics": "passed test cases and files containing at least one passed test; skipped test cases and skipped-only files are excluded",
-  "updatedAt": "2026-10-13T20:45:24.294Z"
+  "updatedAt": "2026-10-21T00:12:57.333Z"
 }

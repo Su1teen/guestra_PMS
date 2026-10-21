@@ -1,0 +1,5 @@
+{
+  "safe": ["core/0042_connect_credential_baseline.sql"],
+  "integration": ["integration/0001_domain_event_capture_v2.sql"],
+  "manual": []
+}
