@@ -7,7 +7,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { pgTable, uuid, varchar, numeric, timestamp, boolean } from 'drizzle-orm/pg-core';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { properties, guests, roomTypes, ratePlans, bookings, reservations, folios, charges, depositLedgerEntries, auditLogs } from './schema/index.js';
+import { properties, guests, roomTypes, bookings, reservations, folios, charges, depositLedgerEntries, auditLogs } from './schema/index.js';
 import { listTrackedMigrationFiles, resolveMigrationsDirectory, runAllMigrations } from './migration-runner.js';
 
 // Only test infrastructure creates/drops a fresh database; financial fixtures use Drizzle.
@@ -42,7 +42,9 @@ describe.runIf(process.env['PMS_LIVE_PG'] === '1')('0040 historical provenance a
     await db.insert(properties).values({ id: p, name: 'Migration test', code: p.slice(0, 16), countryCode: 'KZ', currencyCode: 'KZT', timezone: 'UTC', totalRooms: 1 });
     await db.insert(guests).values({ id: guest, firstName: 'Migration', lastName: 'Test' });
     await db.insert(roomTypes).values({ id: type, propertyId: p, name: 'Standard', code: 'STD', maxOccupancy: 2, defaultOccupancy: 1 });
-    await db.insert(ratePlans).values({ id: rate, propertyId: p, roomTypeId: type, name: 'BAR', code: 'BAR', type: 'bar', baseAmount: '100', currencyCode: 'KZT' });
+    // Pre-0040 database: insert only columns that existed then (later migrations add rate plan columns).
+    await client`INSERT INTO rate_plans (id, property_id, room_type_id, name, code, type, base_amount, currency_code)
+      VALUES (${rate}, ${p}, ${type}, 'BAR', 'BAR', 'bar', '100', 'KZT')`;
     await db.insert(bookings).values({ id: booking, propertyId: p, guestId: guest, source: 'direct', confirmationNumber: randomUUID() });
     for (const id of [resA, resB]) await db.insert(reservations).values({ id, propertyId: p, bookingId: booking, guestId: guest, roomTypeId: type, ratePlanId: rate,
       arrivalDate: '2027-05-01', departureDate: '2027-05-02', nights: 1, status: 'cancelled', cancelledAt: date, updatedAt: date, totalAmount: '100', currencyCode: 'KZT' });
