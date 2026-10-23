@@ -14,6 +14,11 @@ export class ListGroupProfilesDto {
   @IsEnum(GROUP_TYPES)
   type?: string;
 
+  @ApiPropertyOptional({ enum: ['active', 'inactive', 'all'], default: 'active' })
+  @IsOptional()
+  @IsEnum(['active', 'inactive', 'all'])
+  status?: 'active' | 'inactive' | 'all' = 'active';
+
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()
   @Type(() => Number)

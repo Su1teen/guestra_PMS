@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsEmail,
   MaxLength,
+  IsBoolean,
 } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -54,4 +55,9 @@ export class UpdateGroupProfileDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  @ApiPropertyOptional({ description: 'Reactivate (true) or deactivate (false) the company' })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, Routes, Route, useNavigate, useParams } from 'react-router-dom';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { BadgeDollarSign, Plus, ChevronLeft } from 'lucide-react';
 import { api } from '../lib/api';
 import { moneyString, requirePropertyId, requireCurrency } from '../lib/api-helpers';
@@ -32,6 +32,45 @@ interface RatePlan {
   derivedAdjustmentValue?: string | number;
   derivationRule?: { type: string; value: number };
   isActive?: boolean;
+  revision?: number;
+  extraAdultAmount?: string | null;
+  extraChildAmount?: string | null;
+}
+
+/** Per-night supplements for guests above the room type's standard occupancy. */
+function OccupancySupplements({ plan, propertyId, canManage }: { plan: RatePlan; propertyId: string; canManage: boolean }) {
+  const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const { currencyCode } = useProperty();
+  const [adult, setAdult] = useState(plan.extraAdultAmount ?? '');
+  const [child, setChild] = useState(plan.extraChildAmount ?? '');
+  const [reason, setReason] = useState('');
+  const save = useMutation({
+    mutationFn: () => api.patch(`/v1/rate-plans/${plan.id}`, {
+      extraAdultAmount: moneyString(adult || '0'), extraChildAmount: moneyString(child || '0'),
+      requestId: crypto.randomUUID(), expectedRevision: plan.revision ?? 0, reason: reason.trim(),
+    }, { params: { propertyId } }),
+    onSuccess: () => { setReason(''); void queryClient.invalidateQueries({ queryKey: ['rate-plans', propertyId] }); },
+  });
+  const input = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm';
+  return (
+    <div className="bg-white rounded-xl shadow-sm p-6 space-y-3">
+      <h2 className="text-sm font-semibold text-telivity-navy">{t('ratePlans.supplements', { defaultValue: 'Доплаты за дополнительных гостей' })}</h2>
+      <p className="text-xs text-telivity-mid-grey">{t('ratePlans.supplementsHint', { defaultValue: 'За каждую ночь, за каждого гостя сверх стандартного размещения категории. Пусто или 0 — цена за номер не зависит от числа гостей.' })}</p>
+      <div className="grid grid-cols-2 gap-3">
+        <label><span className="block text-xs text-telivity-mid-grey mb-1">{t('ratePlans.extraAdult', { defaultValue: 'Взрослый' })} ({currencyCode})</span>
+          <input inputMode="decimal" disabled={!canManage} value={adult} onChange={(e) => setAdult(e.target.value.replace(',', '.'))} className={input}/></label>
+        <label><span className="block text-xs text-telivity-mid-grey mb-1">{t('ratePlans.extraChild', { defaultValue: 'Ребёнок' })} ({currencyCode})</span>
+          <input inputMode="decimal" disabled={!canManage} value={child} onChange={(e) => setChild(e.target.value.replace(',', '.'))} className={input}/></label>
+      </div>
+      {canManage && <>
+        <input placeholder={t('ratePlans.changeReason', { defaultValue: 'Причина изменения' })} value={reason} onChange={(e) => setReason(e.target.value)} className={input}/>
+        {save.isError && <p role="alert" className="text-xs text-red-700">{pricingError(save.error, true)}</p>}
+        <button type="button" disabled={!reason.trim() || save.isPending} onClick={() => save.mutate()}
+          className="bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">{save.isPending ? t('common.saving') : t('common.save')}</button>
+      </>}
+    </div>
+  );
 }
 
 interface RateRestriction {
@@ -323,6 +362,8 @@ function RatePlanDetailContent() {
             )}
           </div>
         </div>
+
+        <OccupancySupplements key={plan.id + ':' + (plan.revision ?? 0)} plan={plan} propertyId={propertyId} canManage={hasPermission('rateplans.manage')} />
 
         <div className="bg-white rounded-xl shadow-sm p-6">
           <h2 className="text-sm font-semibold text-telivity-navy mb-3">{t('ratePlans.calculator')}</h2>

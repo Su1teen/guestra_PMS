@@ -8,7 +8,7 @@ export class StaffCreateReservationDto extends OmitType(ReservationQuoteDto, ['g
   @ApiProperty() @IsUUID() requestId!: string;
   @ApiProperty() @IsMoneyString({ allowZero: true }) expectedTotal!: string;
   @ApiProperty() @IsString() @MaxLength(3) currencyCode!: string;
-  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(1) @Max(100) adults?: number;
-  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) @Max(100) children?: number;
+  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(1) @Max(100) override adults?: number;
+  @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) @Max(100) override children?: number;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(4000) specialRequests?: string;
 }

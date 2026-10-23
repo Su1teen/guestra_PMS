@@ -19,6 +19,8 @@ import { WebhookModule } from '../webhook/webhook.module';
 import { AncillaryModule } from '../ancillary/ancillary.module';
 import { AccountingModule } from '../accounting/accounting.module';
 import { PolicyModule } from '../policy/policy.module';
+import { ReservationPricingService } from './reservation-pricing.service';
+import { ReservationConfirmationService } from './reservation-confirmation.service';
 import { RatePlanModule } from '../rate-plan/rate-plan.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map.module';
@@ -50,6 +52,8 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     ReservationNotesService,
     ReservationMessagingService,
     ReservationImportService,
+    ReservationPricingService,
+    ReservationConfirmationService,
   ],
   exports: [
     ReservationService,

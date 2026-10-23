@@ -49,7 +49,7 @@ export class ConnectV2Service {
     if(!type || !plan || dto.adults+(dto.children??0)>type.maxOccupancy) throw new BadRequestException('INVALID_ROOM_RATE_OR_OCCUPANCY');
     await this.rates.assertSellable(dto.propertyId,dto.ratePlanId,dto.checkIn,dto.checkOut);
     const price=await calculateCanonicalRoomPricing({propertyId:dto.propertyId,ratePlanId:dto.ratePlanId,checkIn:dto.checkIn,checkOut:dto.checkOut,nights,
-      isTaxInclusive:plan.isTaxInclusive,ratePlanService:this.rates,taxService:this.taxes});
+      isTaxInclusive:plan.isTaxInclusive,ratePlanService:this.rates,taxService:this.taxes,occupancy:{adults:dto.adults,children:dto.children??0}});
     const expiresAt=new Date(Date.now()+Math.min(900,Math.max(30,Number(this.config.get('CONNECT_QUOTE_TTL_SECONDS','300'))))*1000).toISOString();
     const quote={version:'connect-quote-v2' as const,...dto,children:dto.children??0,...price,expiresAt};
     return { ...price,nights,propertyId:dto.propertyId,roomTypeId:dto.roomTypeId,ratePlanId:dto.ratePlanId,roomTypeName:type.name,expiresAt,
@@ -211,7 +211,8 @@ export class ConnectV2Service {
         const nights=(Date.parse(quote.checkOut)-Date.parse(quote.checkIn))/86400000;
         const [plan]=await tx.select().from(ratePlans).where(and(eq(ratePlans.id,row.ratePlanId),eq(ratePlans.propertyId,dto.propertyId))).for('update');
         const price=await calculateCanonicalRoomPricing({propertyId:dto.propertyId,ratePlanId:row.ratePlanId,checkIn:quote.checkIn,checkOut:quote.checkOut,
-          nights,isTaxInclusive:plan.isTaxInclusive,ratePlanService:this.rates,taxService:this.taxes,db:tx,lockForUpdate:true});
+          nights,isTaxInclusive:plan.isTaxInclusive,ratePlanService:this.rates,taxService:this.taxes,db:tx,lockForUpdate:true,
+          occupancy:{adults:quote.adults,children:quote.children??0}});
         if(fingerprint(price.lineItems)!==fingerprint(quote.lineItems)||price.totalAmount!==quote.totalAmount||price.currency!==quote.currency)
           throw new ConflictException('PRICE_CHANGED');
         const inventory=await this.availability.searchAvailability(dto.propertyId,quote.checkIn,quote.checkOut,row.roomTypeId,tx);

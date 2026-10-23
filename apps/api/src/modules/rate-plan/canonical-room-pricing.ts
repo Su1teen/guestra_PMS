@@ -14,7 +14,25 @@ type CanonicalRoomPricingInput = {
   taxService: TaxService;
   db?: any;
   lockForUpdate?: boolean;
+  /** Party size; applies the rate plan's occupancy supplements when the plan defines them. */
+  occupancy?: { adults: number; children: number };
 };
+
+/**
+ * Supplement per night for guests above the room type default occupancy.
+ * Adults fill the included places first; every further adult or child pays the plan's supplement.
+ */
+export function occupancySupplementAmount(
+  plan: { extraAdultAmount?: string | null; extraChildAmount?: string | null },
+  includedOccupancy: number,
+  adults: number,
+  children: number,
+): string {
+  const extraAdults = Math.max(0, adults - includedOccupancy);
+  const extraChildren = Math.max(0, Math.min(children, adults + children - includedOccupancy));
+  return new Decimal(plan.extraAdultAmount ?? 0).times(extraAdults)
+    .plus(new Decimal(plan.extraChildAmount ?? 0).times(extraChildren)).toFixed(2);
+}
 
 /** Canonical room-only pricing shared by Booking Engine Search and Quote. */
 export async function calculateCanonicalRoomPricing(input: CanonicalRoomPricingInput) {
@@ -23,6 +41,10 @@ export async function calculateCanonicalRoomPricing(input: CanonicalRoomPricingI
   let roomTotal = new Decimal(0);
   let taxTotal = new Decimal(0);
   const arrival = new Date(input.checkIn);
+  const supplement = new Decimal(input.occupancy
+    ? await input.ratePlanService.occupancySupplement(input.ratePlanId, input.propertyId,
+      input.occupancy.adults, input.occupancy.children, input.db)
+    : 0);
 
   for (let i = 0; i < input.nights; i++) {
     const date = new Date(arrival);
@@ -52,7 +74,7 @@ export async function calculateCanonicalRoomPricing(input: CanonicalRoomPricingI
 
     if (currency && currency !== nightCurrency) throw new Error('Currency changed within stay pricing');
     currency = nightCurrency;
-    let nightlyRate = new Decimal(new Decimal(effectiveRate).toFixed(2));
+    let nightlyRate = new Decimal(new Decimal(effectiveRate).toFixed(2)).plus(supplement);
     const taxOptions = { numberOfNights: input.nights, nightNumber: i + 1, ...(input.guestId ? { guestId: input.guestId } : {}) };
     const inclusive = input.isTaxInclusive ? await input.taxService.backCalculateFromInclusive(
       nightlyRate.toFixed(2), 'room', input.propertyId, serviceDate, taxOptions, input.db,

@@ -4,6 +4,7 @@ import {
   Post,
   Patch,
   Put,
+  Delete,
   Param,
   Body,
   Query,
@@ -86,6 +87,18 @@ export class GroupsController {
     @Body() dto: UpdateGroupProfileDto,
   ) {
     return this.groupProfileService.updateProfile(id, propertyId, dto);
+  }
+
+  @Delete('profiles/:id')
+  @Roles('admin', 'general_manager', 'front_desk', 'reservations', 'revenue_manager')
+  @ApiOperation({ summary: 'Delete an unused company, or deactivate it when it is referenced' })
+  @ApiResponse({ status: 200, description: '{ result: deleted | deactivated }' })
+  @ApiQuery({ name: 'propertyId', type: String })
+  removeProfile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) {
+    return this.groupProfileService.removeProfile(id, propertyId);
   }
 
   @Post('profiles/:id/reservations')

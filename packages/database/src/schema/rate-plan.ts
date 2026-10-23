@@ -38,6 +38,11 @@ export const ratePlans = pgTable('rate_plans', {
   derivedAdjustmentType: varchar('derived_adjustment_type', { length: 10 }), // "percentage" | "fixed"
   derivedAdjustmentValue: numeric('derived_adjustment_value', { precision: 8, scale: 2 }),
 
+  /** Per-night supplement for each adult above the room type default occupancy (null = none). */
+  extraAdultAmount: numeric('extra_adult_amount', { precision: 12, scale: 2 }),
+  /** Per-night supplement for each child sharing the room (null = none). */
+  extraChildAmount: numeric('extra_child_amount', { precision: 12, scale: 2 }),
+
   // Tax handling
   isTaxInclusive: boolean('is_tax_inclusive').notNull().default(false),
 

@@ -57,6 +57,7 @@ function makeServices(taxAmount: string | null) {
   const ratePlan = {
     findById: vi.fn().mockResolvedValue({ roomTypeId: ROOM_TYPE_ID, isTaxInclusive: false }),
     calculateDerivedRate: vi.fn().mockResolvedValue({ effectiveRate: 85000, currency: 'KZT' }),
+    occupancySupplement: vi.fn().mockResolvedValue('0.00'),
   };
   const tax = {
     calculateTaxes: vi.fn().mockResolvedValue(taxAmount == null ? [] : [{ amount: taxAmount }]),

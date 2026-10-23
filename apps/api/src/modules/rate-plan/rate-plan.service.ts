@@ -19,7 +19,7 @@ import type { PricingMutationDto } from './dto/pricing-mutation.dto';
 import type { LiveRateChangeDto, LiveCalendarQueryDto } from './dto/live-rate.dto';
 import type { WebhookEvent } from '@telivityhaip/shared';
 import { TaxService } from '../tax/tax.service';
-import { calculateCanonicalRoomPricing } from './canonical-room-pricing';
+import { calculateCanonicalRoomPricing, occupancySupplementAmount } from './canonical-room-pricing';
 import { CreateRatePlanDto } from './dto/create-rate-plan.dto';
 import { UpdateRatePlanDto } from './dto/update-rate-plan.dto';
 import { CreateRateRestrictionDto } from './dto/create-rate-restriction.dto';
@@ -180,6 +180,15 @@ export class RatePlanService {
       throw new NotFoundException(`Rate plan ${id} not found`);
     }
     return this.pricingDraft?.plan.id === id && this.pricingDraft.plan.propertyId === propertyId ? this.pricingDraft.plan : ratePlan;
+  }
+
+  /** Per-night occupancy supplement for a party on this rate plan ('0.00' when the plan prices per room only). */
+  async occupancySupplement(ratePlanId: string, propertyId: string, adults: number, children: number, db?: any): Promise<string> {
+    const plan = await this.findById(ratePlanId, propertyId, db);
+    if (plan.extraAdultAmount == null && plan.extraChildAmount == null) return '0.00';
+    const [type] = await (db ?? this.db).select({ defaultOccupancy: roomTypes.defaultOccupancy }).from(roomTypes)
+      .where(and(eq(roomTypes.id, plan.roomTypeId), eq(roomTypes.propertyId, propertyId)));
+    return occupancySupplementAmount(plan, type?.defaultOccupancy ?? 1, adults, children);
   }
 
   async update(id: string, propertyId: string, dto: UpdateRatePlanDto & Partial<PricingMutationDto>, actor?: AuditActor) {

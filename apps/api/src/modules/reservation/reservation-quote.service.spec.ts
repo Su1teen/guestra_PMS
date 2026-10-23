@@ -5,7 +5,7 @@ describe('staff reservation quote', () => {
   const input = { propertyId: 'hotel-a', roomTypeId: 'rt-a', ratePlanId: 'rp-a', checkIn: '2026-10-10', checkOut: '2026-10-12' };
   let rates: any; let taxes: any; let availability: any; let service: ReservationQuoteService;
   beforeEach(() => {
-    rates = { findById: vi.fn().mockResolvedValue({ roomTypeId: 'rt-a', isTaxInclusive: false }), assertSellable: vi.fn(), calculateDerivedRate: vi.fn().mockResolvedValue({ effectiveRate: 1200.01, currency: 'KZT' }) };
+    rates = { findById: vi.fn().mockResolvedValue({ roomTypeId: 'rt-a', isTaxInclusive: false }), assertSellable: vi.fn(), calculateDerivedRate: vi.fn().mockResolvedValue({ effectiveRate: 1200.01, currency: 'KZT' }), occupancySupplement: vi.fn().mockResolvedValue('0.00') };
     taxes = { calculateTaxes: vi.fn().mockResolvedValue([{ amount: '120.00' }]) };
     availability = { searchAvailability: vi.fn().mockResolvedValue([{ roomTypeId: 'rt-a', date: '2026-10-10', available: 1 }, { roomTypeId: 'rt-a', date: '2026-10-11', available: 1 }]) };
     service = new ReservationQuoteService(rates, taxes, availability, { findById: vi.fn() } as any);

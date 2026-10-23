@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { UserPlus, Split, ArrowRightLeft, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { moneyString, requirePropertyId, requireCurrency } from '../../lib/api-helpers';
+import { formatMoney } from '../../lib/money';
 import { useToast } from '../ui/Toast';
 import FindGuest from '../guests/FindGuest';
 import type { Guest } from '../../types/guest';
@@ -56,8 +57,10 @@ export default function ReservationPartyPanel({
   totalAmount,
   currencyCode,
   readOnly = false,
+  readOnlyReason,
 }: {
   readOnly?: boolean;
+  readOnlyReason?: string;
   reservationId: string;
   propertyId: string;
   roomTypeId?: string;
@@ -145,8 +148,11 @@ export default function ReservationPartyPanel({
         { params: { propertyId } },
       );
     },
-    onSuccess: () => {
-      toast('success', t('reservations.guestAdded'));
+    onSuccess: (res) => {
+      const pricing = (res.data?.data ?? res.data)?.pricing as { repriced?: boolean; totalAmount?: string } | undefined;
+      toast('success', pricing?.repriced
+        ? t('reservations.guestAddedRepriced', { total: formatMoney(pricing.totalAmount, currencyCode ?? undefined), defaultValue: 'Гость добавлен. Новая стоимость: {{total}}' })
+        : t('reservations.guestAdded'));
       setAddOpen(false);
       setSelectedGuest(null);
       setAddOverrideOccupancy(false);
@@ -237,8 +243,8 @@ export default function ReservationPartyPanel({
           <button
             type="button"
             disabled={readOnly} onClick={() => setAddOpen(true)}
-            className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-telivity-slate hover:bg-telivity-light-grey"
-            title={t('reservations.addGuest')}
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-telivity-slate hover:bg-telivity-light-grey disabled:opacity-40"
+            title={readOnly && readOnlyReason ? readOnlyReason : t('reservations.addGuest')}
           >
             <UserPlus size={14} />
             {t('reservations.addGuest')}
@@ -260,6 +266,7 @@ export default function ReservationPartyPanel({
         </div>
       </div>
 
+      {readOnly && readOnlyReason && <p className="text-xs text-telivity-mid-grey">{readOnlyReason}</p>}
       {isLoading ? (
         <p className="text-xs text-telivity-mid-grey">{t('common.loading')}</p>
       ) : (

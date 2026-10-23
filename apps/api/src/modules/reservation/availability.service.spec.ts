@@ -80,6 +80,7 @@ describe('AvailabilityService', () => {
         sold: 3,
         available: 2,
         overbookingBuffer: 0,
+        outOfOrder: 0,
       },
     ]);
   });

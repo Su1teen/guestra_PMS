@@ -1,5 +1,5 @@
 {
-  "safe": ["core/0042_connect_credential_baseline.sql"],
+  "safe": ["core/0042_connect_credential_baseline.sql", "core/0043_occupancy_supplements_and_company_status.sql"],
   "integration": ["integration/0001_domain_event_capture_v2.sql"],
   "manual": []
 }

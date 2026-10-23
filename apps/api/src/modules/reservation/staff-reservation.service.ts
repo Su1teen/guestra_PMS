@@ -1,4 +1,6 @@
-import { BadRequestException, ConflictException, Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { actorFields, type AuditActor } from '@telivityhaip/shared';
+import { AddBookingRoomDto } from './dto/add-booking-room.dto';
 import { and, eq, sql, or, inArray, isNull } from 'drizzle-orm';
 import { createHash } from 'crypto';
 import Decimal from 'decimal.js';
@@ -75,7 +77,8 @@ export class StaffReservationService {
       if (!type?.isActive || (dto.adults ?? 1) + (dto.children ?? 0) > type.maxOccupancy) throw new BadRequestException('Selected room type cannot accommodate this party');
       const quote = await calculateCanonicalRoomPricing({ propertyId: dto.propertyId, ratePlanId: dto.ratePlanId,
         checkIn: dto.checkIn, checkOut: dto.checkOut, nights: dates.length, isTaxInclusive: plan.isTaxInclusive,
-        ratePlanService: this.rates, taxService: this.taxes, db: tx, lockForUpdate: true, guestId: dto.guestId });
+        ratePlanService: this.rates, taxService: this.taxes, db: tx, lockForUpdate: true, guestId: dto.guestId,
+        occupancy: { adults: dto.adults ?? 1, children: dto.children ?? 0 } });
       if (quote.currency !== dto.currencyCode || !new Decimal(quote.totalAmount).equals(dto.expectedTotal)) throw new ConflictException({ code: 'QUOTE_CHANGED', message: 'Reservation price changed. Refresh the quote before accepting.' });
       const created = await this.reservationsService.create({ propertyId: dto.propertyId, guestId: dto.guestId,
         arrivalDate: dto.checkIn, departureDate: dto.checkOut, roomTypeId: dto.roomTypeId, ratePlanId: dto.ratePlanId,
@@ -96,6 +99,56 @@ export class StaffReservationService {
       return { reservation, replayed: false };
     });
     await this.outbox.deliver(dto.propertyId, logicalEventId);
+    return { ...result.reservation, replayed: result.replayed };
+  }
+
+  /** Add one more room to an existing booking: same dates, own room type, tariff and guests. */
+  async addRoom(reservationId: string, propertyId: string, dto: AddBookingRoomDto, actor?: AuditActor) {
+    const logicalEventId = 'staff-booking-room:' + dto.requestId;
+    const result = await this.db.transaction(async (tx: any) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${propertyId + ':staff-room:' + dto.requestId}, 0))`);
+      const [done] = await tx.select().from(auditLogs).where(and(eq(auditLogs.propertyId, propertyId),
+        eq(auditLogs.entityType, 'staff_request'), eq(auditLogs.entityId, dto.requestId), eq(auditLogs.action, 'add_room')));
+      if (done) {
+        const previous = done.newValue as { reservationId: string; sourceReservationId: string };
+        if (previous.sourceReservationId !== reservationId) throw new ConflictException({ code: 'REQUEST_CHANGED', message: 'Request key was already used for another booking' });
+        const [row] = await tx.select().from(reservations).where(and(eq(reservations.id, previous.reservationId), eq(reservations.propertyId, propertyId)));
+        return { reservation: row, replayed: true };
+      }
+      const [source] = await tx.select().from(reservations).where(and(eq(reservations.id, reservationId), eq(reservations.propertyId, propertyId)));
+      if (!source) throw new NotFoundException(`Reservation ${reservationId} not found`);
+      if (!['pending', 'confirmed', 'assigned'].includes(source.status)) throw new BadRequestException('Rooms can only be added before arrival');
+      const [booking] = await tx.select().from(bookings).where(and(eq(bookings.id, source.bookingId), eq(bookings.propertyId, propertyId)));
+      const guestId = dto.guestId ?? booking.guestId;
+      const plan = await this.rates.findById(dto.ratePlanId, propertyId, tx, true);
+      if (plan.roomTypeId !== dto.roomTypeId) throw new BadRequestException('Rate plan does not apply to the selected room type');
+      const [type] = await tx.select().from(roomTypes).where(and(eq(roomTypes.id, dto.roomTypeId), eq(roomTypes.propertyId, propertyId)));
+      if (!type?.isActive || (dto.adults ?? 1) + (dto.children ?? 0) > type.maxOccupancy) throw new BadRequestException('Selected room type cannot accommodate this party');
+      const nights = stayDates(source.arrivalDate, source.departureDate).length;
+      const quote = await calculateCanonicalRoomPricing({ propertyId, ratePlanId: dto.ratePlanId, checkIn: source.arrivalDate,
+        checkOut: source.departureDate, nights, isTaxInclusive: plan.isTaxInclusive, ratePlanService: this.rates, taxService: this.taxes,
+        db: tx, lockForUpdate: true, guestId, occupancy: { adults: dto.adults ?? 1, children: dto.children ?? 0 } });
+      if (quote.currency !== dto.currencyCode || !new Decimal(quote.totalAmount).equals(dto.expectedTotal))
+        throw new ConflictException({ code: 'QUOTE_CHANGED', message: 'Reservation price changed. Refresh the quote before accepting.' });
+      const created = await this.reservationsService.create({ propertyId, guestId, arrivalDate: source.arrivalDate,
+        departureDate: source.departureDate, roomTypeId: dto.roomTypeId, ratePlanId: dto.ratePlanId, totalAmount: quote.totalAmount,
+        currencyCode: quote.currency, adults: dto.adults, children: dto.children, specialRequests: dto.specialRequests?.trim(), source: 'direct' }, {
+          bookingId: booking.id,
+          acceptedPricingSnapshot: { version: 1, source: 'current', currencyCode: quote.currency, grandTotal: quote.totalAmount,
+            roomTotal: quote.roomTotal, taxTotal: quote.taxTotal, nights: quote.lineItems.map(n => ({ date: n.date, roomAmount: n.rate, taxAmount: n.tax })),
+            services: [], servicesTotal: '0.00', servicesTaxTotal: '0.00', customReason: null, adjustment: null },
+        }, tx);
+      const [confirmed] = await tx.update(reservations).set({ status: 'confirmed', updatedAt: new Date() })
+        .where(and(eq(reservations.id, created.id), eq(reservations.propertyId, propertyId), eq(reservations.status, 'pending'))).returning();
+      const reservation = dto.roomId ? await this.reservationsService.assignRoom(created.id, propertyId, { roomId: dto.roomId }, tx) : confirmed;
+      await tx.insert(auditLogs).values({ propertyId, entityType: 'staff_request', entityId: dto.requestId, action: 'add_room', ...actorFields(actor),
+        description: 'Добавлен номер в бронирование', newValue: { reservationId: created.id, sourceReservationId: reservationId, bookingId: booking.id } });
+      await this.outbox.persist(tx, { event: 'reservation.created', entityType: 'reservation', entityId: created.id, propertyId,
+        timestamp: new Date().toISOString(), data: { reservationId: created.id, arrivalDate: source.arrivalDate,
+          departureDate: source.departureDate, roomTypeId: dto.roomTypeId } }, logicalEventId);
+      return { reservation, replayed: false };
+    });
+    await this.outbox.deliver(propertyId, logicalEventId);
     return { ...result.reservation, replayed: result.replayed };
   }
 }

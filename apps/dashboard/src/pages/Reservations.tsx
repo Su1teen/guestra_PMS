@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { formatMoney } from '../lib/money';
 import { Routes, Route, useNavigate, useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -132,7 +132,7 @@ function ReservationList() {
   const [createCheckOut, setCreateCheckOut] = useState(format(addDays(new Date(), 1), 'yyyy-MM-dd'));
   const [createAdults, setCreateAdults] = useState(1);
   const [createChildren, setCreateChildren] = useState(0);
-  const [availResults, setAvailResults] = useState<{ roomTypeId: string; roomTypeName: string; ratePlans: { id: string; name: string; rate: number }[] }[]>([]);
+  const [availResults, setAvailResults] = useState<{ roomTypeId: string; roomTypeName: string; available: number; ratePlans: { id: string; name: string; rate: number; total: string; currency: string; nights: number }[] }[]>([]);
   const [selectedRoomType, setSelectedRoomType] = useState('');
   const [selectedRatePlan, setSelectedRatePlan] = useState('');
   const [selectedGuest, setSelectedGuest] = useState<Guest | null>(null);
@@ -159,18 +159,24 @@ function ReservationList() {
   const searchAvailMutation = useMutation({
     mutationFn: async () => {
       requirePropertyId(propertyId);
-      const [availRes, rateRes] = await Promise.all([
+      const [availRes, rateRes, typeRes] = await Promise.all([
         api.post('/v1/reservations/search-availability', {
           propertyId,
           checkIn: createCheckIn,
           checkOut: createCheckOut,
         }),
         api.get('/v1/rate-plans', { params: { propertyId } }),
+        api.get('/v1/rooms/types', { params: { propertyId } }),
       ]);
       const rows: { roomTypeId: string; roomTypeName: string; available: number }[] =
         availRes.data?.data ?? availRes.data ?? [];
-      const ratePlans: { id: string; name: string; roomTypeId: string; baseAmount?: string | number }[] =
+      const ratePlans: { id: string; name: string; roomTypeId: string; baseAmount?: string | number; isActive?: boolean }[] =
         rateRes.data?.data ?? rateRes.data ?? [];
+      const capacity = new Map<string, number>(
+        ((typeRes.data?.data ?? typeRes.data ?? []) as { id: string; maxOccupancy?: number }[])
+          .map((type) => [type.id, type.maxOccupancy ?? Infinity]),
+      );
+      const party = createAdults + createChildren;
 
       const byType = new Map<string, { roomTypeId: string; roomTypeName: string; minAvailable: number }>();
       for (const row of rows) {
@@ -186,19 +192,28 @@ function ReservationList() {
         }
       }
 
-      return [...byType.values()]
-        .filter((rt) => rt.minAvailable > 0)
-        .map((rt) => ({
-          roomTypeId: rt.roomTypeId,
-          roomTypeName: rt.roomTypeName,
-          ratePlans: ratePlans
-            .filter((rp) => rp.roomTypeId === rt.roomTypeId)
-            .map((rp) => ({
-              id: rp.id,
-              name: rp.name,
-              rate: Number(rp.baseAmount ?? 0),
-            })),
-        }));
+      const types = [...byType.values()]
+        .filter((rt) => rt.minAvailable > 0 && (capacity.get(rt.roomTypeId) ?? Infinity) >= party);
+      // Price every rate plan for the actual stay so staff compare totals, not base rates.
+      return Promise.all(types.map(async (rt) => ({
+        roomTypeId: rt.roomTypeId,
+        roomTypeName: rt.roomTypeName,
+        available: rt.minAvailable,
+        ratePlans: (await Promise.all(ratePlans
+          .filter((rp) => rp.roomTypeId === rt.roomTypeId && rp.isActive !== false)
+          .map(async (rp) => {
+            try {
+              const quote = await api.post('/v1/reservations/quote', {
+                propertyId, roomTypeId: rt.roomTypeId, ratePlanId: rp.id,
+                checkIn: createCheckIn, checkOut: createCheckOut, adults: createAdults, children: createChildren,
+              }, { skipErrorToast: true }).then((r) => r.data?.data ?? r.data);
+              return { id: rp.id, name: rp.name, rate: Number(rp.baseAmount ?? 0),
+                total: quote.totalAmount as string, currency: quote.currency as string, nights: (quote.lineItems ?? []).length as number };
+            } catch {
+              return null; // Not sellable for these dates (restrictions, closed rate).
+            }
+          }))).filter((rp): rp is NonNullable<typeof rp> => rp !== null),
+      })));
     },
     onSuccess: (grouped) => {
       setAvailResults(grouped);
@@ -642,12 +657,20 @@ function ReservationList() {
               <div className="space-y-2">
                 {availResults.map((rt) => (
                   <div key={rt.roomTypeId} className={`border rounded-lg p-3 cursor-pointer transition-colors ${selectedRoomType === rt.roomTypeId ? 'border-telivity-teal bg-telivity-teal/5' : 'border-gray-200 hover:border-telivity-teal/50'}`} onClick={() => setSelectedRoomType(rt.roomTypeId)}>
-                    <p className="text-sm font-semibold text-telivity-navy">{rt.roomTypeName}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-telivity-navy">{rt.roomTypeName}</p>
+                      <span className="text-xs text-telivity-mid-grey">{t('reservations.roomsLeft', { count: rt.available, defaultValue: 'Свободно: {{count}}' })}</span>
+                    </div>
                     <div className="mt-2 space-y-1">
-                      {(rt.ratePlans ?? []).map((rp) => (
+                      {rt.ratePlans.length === 0 && <p className="text-xs text-telivity-mid-grey">{t('reservations.noSellableRate', { defaultValue: 'Нет тарифа, доступного на эти даты' })}</p>}
+                      {rt.ratePlans.map((rp) => (
                         <label key={rp.id} className="flex items-center gap-2 text-sm cursor-pointer">
                           <input type="radio" name="ratePlan" value={rp.id} checked={selectedRatePlan === rp.id} onChange={() => { setSelectedRoomType(rt.roomTypeId); setSelectedRatePlan(rp.id); }} className="text-telivity-teal" />
-                          {rp.name}
+                          <span className="flex-1">{rp.name}</span>
+                          <span className="text-right">
+                            <span className="block font-semibold text-telivity-navy">{formatMoney(rp.total, rp.currency)}</span>
+                            {rp.nights > 0 && <span className="block text-xs text-telivity-mid-grey">{t('reservations.perNightAverage', { amount: formatMoney((Number(rp.total) / rp.nights).toFixed(2), rp.currency), nights: rp.nights, defaultValue: '{{nights}} ноч. · ~{{amount}} / ночь' })}</span>}
+                          </span>
                         </label>
                       ))}
                     </div>
@@ -874,6 +897,7 @@ function AvailabilityCalendar() {
       {blocks.length > 0 && <p className="mb-3 rounded-lg bg-orange-50 p-3 text-xs text-orange-800">{t('reservationWorkspace.icalPool', { count: blocks.length })}</p>}
       {calendarQuery.isError && <QueryError onRetry={() => void calendarQuery.refetch()}/>}
       {calendarQuery.isPending && <p role="status" className="mb-4 text-sm">{t('common.loading')}</p>}
+      <AvailabilitySummary days={dayKeys} roomTypes={roomTypes} rows={calendarQuery.data?.availability ?? []} />
       <div className="flex flex-wrap gap-4 mb-3 text-xs text-telivity-mid-grey">
         <LegendSwatch className="bg-telivity-teal/20" label={t('reservations.tape.legendBooked')} />
         <LegendSwatch className="bg-telivity-orange/25" label={t('reservations.tape.legendBlocked')} />
@@ -941,6 +965,50 @@ function AvailabilityCalendar() {
 
       {detailRes && <ReservationWorkspace key={propertyId + detailRes.id} reservationId={detailRes.id} initial={detailRes} onClose={() => setDetailRes(null)}/>}
 
+    </div>
+  );
+}
+
+interface AvailabilityRow { roomTypeId: string; date: string; totalRooms: number; sold: number; available: number; outOfOrder?: number }
+
+/** Per room type and night: free / booked / out of sale, plus a property total row. */
+function AvailabilitySummary({ days, roomTypes, rows }: { days: string[]; roomTypes: { id: string; name: string }[]; rows: AvailabilityRow[] }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(true);
+  const byKey = useMemo(() => new Map(rows.map((row) => [row.roomTypeId + ':' + row.date, row])), [rows]);
+  const types = roomTypes.filter((type) => rows.some((row) => row.roomTypeId === type.id));
+  if (!types.length) return null;
+  const total = (date: string) => types.reduce((sum, type) => {
+    const row = byKey.get(type.id + ':' + date);
+    return row ? { total: sum.total + row.totalRooms, sold: sum.sold + row.sold, ooo: sum.ooo + (row.outOfOrder ?? 0), free: sum.free + row.available } : sum;
+  }, { total: 0, sold: 0, ooo: 0, free: 0 });
+  const cell = (free: number, sold: number, ooo: number, all: number) => (
+    <td className={`px-1 py-1 text-center ${free <= 0 ? 'bg-red-50 text-red-700' : free <= 1 ? 'bg-amber-50 text-amber-800' : 'text-telivity-navy'}`}
+      title={t('reservations.summaryCell', { free, sold, ooo, all, defaultValue: 'Свободно {{free}} · Забронировано {{sold}} · Не в продаже {{ooo}} · Всего {{all}}' })}>
+      <span className="font-semibold">{free}</span><span className="block text-[10px] text-telivity-mid-grey">{sold}/{all}{ooo ? ` · ${ooo}✕` : ''}</span>
+    </td>);
+  return (
+    <div className="mb-3 rounded-xl bg-white shadow-sm">
+      <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center justify-between px-4 py-2 text-sm font-semibold text-telivity-navy">
+        {t('reservations.availabilitySummary', { defaultValue: 'Сводка доступности по категориям' })}
+        <span className="text-xs font-normal text-telivity-mid-grey">{t('reservations.availabilityLegend', { defaultValue: 'свободно · забронировано/всего · ✕ не в продаже' })}</span>
+      </button>
+      {open && <div className="overflow-x-auto"><table className="w-full text-xs" style={{ minWidth: days.length * 64 + 160 }}>
+        <thead><tr className="border-y border-gray-100 bg-telivity-teal/5">
+          <th className="w-40 px-3 py-1 text-left">{t('reservations.roomType')}</th>
+          {days.map((day) => <th key={day} className="px-1 py-1 text-center font-medium">{day.slice(8, 10)}.{day.slice(5, 7)}</th>)}
+        </tr></thead>
+        <tbody>
+          {types.map((type) => <tr key={type.id} className="border-b border-gray-50">
+            <td className="px-3 py-1 font-medium text-telivity-slate">{type.name}</td>
+            {days.map((day) => { const row = byKey.get(type.id + ':' + day); return row ? <React.Fragment key={day}>{cell(row.available, row.sold, row.outOfOrder ?? 0, row.totalRooms)}</React.Fragment> : <td key={day}/>; })}
+          </tr>)}
+          <tr className="bg-gray-50 font-semibold">
+            <td className="px-3 py-1">{t('reservations.summaryTotal', { defaultValue: 'Всего по отелю' })}</td>
+            {days.map((day) => { const sum = total(day); return <React.Fragment key={day}>{cell(sum.free, sum.sold, sum.ooo, sum.total)}</React.Fragment>; })}
+          </tr>
+        </tbody>
+      </table></div>}
     </div>
   );
 }

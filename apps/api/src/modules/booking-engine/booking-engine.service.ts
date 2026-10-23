@@ -198,6 +198,7 @@ export class BookingEngineService {
       taxService: this.taxService,
       db,
       lockForUpdate: options?.lockForUpdate,
+      occupancy: { adults: dto.adults, children: (dto as { children?: number }).children ?? 0 },
     });
     const lineItems = roomPricing.lineItems;
     const roomTotal = new Decimal(roomPricing.roomTotal);

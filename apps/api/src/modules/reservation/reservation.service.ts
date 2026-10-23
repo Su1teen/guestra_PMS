@@ -89,6 +89,8 @@ export class ReservationService {
       acceptedPricingSnapshot?: AcceptedPricingSnapshot;
       idempotencyKey?: string;
       integrationContext?: Record<string, unknown>;
+      /** Add this room to an existing booking (same confirmation number) instead of opening a new one. */
+      bookingId?: string;
     },
     tx?: any,
   ) {
@@ -184,7 +186,10 @@ export class ReservationService {
         dto.departureDate,
       );
 
-      const [booking] = await transaction
+      const [booking] = opts?.bookingId
+        ? await transaction.select().from(bookings)
+          .where(and(eq(bookings.id, opts.bookingId), eq(bookings.propertyId, dto.propertyId)))
+        : await transaction
         .insert(bookings)
         .values({
           propertyId: dto.propertyId,
@@ -197,6 +202,7 @@ export class ReservationService {
           channelCode: dto.channelCode,
         })
         .returning();
+      if (!booking) throw new NotFoundException('Booking not found in this property');
 
       const [reservation] = await transaction
         .insert(reservations)
