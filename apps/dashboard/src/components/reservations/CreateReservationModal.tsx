@@ -108,9 +108,9 @@ export default function CreateReservationModal({
     if (open) { setAdults(prefill?.adults ?? 1); setChildren(prefill?.children ?? 0); }
   }, [open, prefill?.adults, prefill?.children]);
 
-  const quoteBody = { propertyId, roomTypeId: prefill?.roomTypeId, ratePlanId, checkIn: prefill?.checkInDate, checkOut: prefill?.checkOutDate, ...(guest?.id ? { guestId: guest.id } : {}) };
+  const quoteBody = { propertyId, roomTypeId: prefill?.roomTypeId, ratePlanId, checkIn: prefill?.checkInDate, checkOut: prefill?.checkOutDate, adults, children, ...(guest?.id ? { guestId: guest.id } : {}) };
   const quoteQuery = useQuery<ServerQuote>({
-    queryKey: ['reservation-quote', propertyId, prefill?.roomTypeId, ratePlanId, prefill?.checkInDate, prefill?.checkOutDate, guest?.id],
+    queryKey: ['reservation-quote', propertyId, prefill?.roomTypeId, ratePlanId, prefill?.checkInDate, prefill?.checkOutDate, guest?.id, adults, children],
     queryFn: () => api.post('/v1/reservations/quote', quoteBody, { skipErrorToast: true }).then((r) => r.data?.data ?? r.data),
     enabled: open && !!propertyId && !!prefill && !!ratePlanId,
     staleTime: 0,
@@ -132,7 +132,7 @@ export default function CreateReservationModal({
         if (fresh.data.currency !== currencyCode) throw new Error(t('reservationWorkspace.currencyMismatch'));
         if (fresh.data.totalAmount !== quote?.totalAmount) throw new Error(t('reservationWorkspace.quoteChanged'));
         submitted.current = { ...quoteBody, guestId: guest.id, roomId: prefill.roomId,
-          requestId: requestId.current, expectedTotal: fresh.data.totalAmount, currencyCode, adults, children,
+          requestId: requestId.current, expectedTotal: fresh.data.totalAmount, currencyCode,
           ...(specialRequests.trim() ? { specialRequests: specialRequests.trim() } : {}) };
       }
       if (!saveStaffRequest(recoveryKey, requestId.current)) {

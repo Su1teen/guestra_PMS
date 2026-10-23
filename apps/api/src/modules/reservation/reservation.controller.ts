@@ -4,6 +4,7 @@ import {
   Post,
   Patch,
   Delete,
+  Header,
   Param,
   Body,
   Query,
@@ -45,6 +46,13 @@ import { AddReservationGuestDto } from './dto/add-reservation-guest.dto';
 import { SplitReservationDto } from './dto/split-reservation.dto';
 import { MoveReservationGuestDto } from './dto/move-reservation-guest.dto';
 import { resolvePropertyId } from '../../common/property-id';
+import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
+import { ReservationPricingService } from './reservation-pricing.service';
+import { ReservationConfirmationService } from './reservation-confirmation.service';
+import { ReservationPriceDto } from './dto/reservation-price.dto';
+import { UpgradeReservationDto } from './dto/upgrade-reservation.dto';
+import { AddBookingRoomDto } from './dto/add-booking-room.dto';
+import { ReservationOccupancyDto, SendConfirmationDto } from './dto/reservation-occupancy.dto';
 
 @ApiTags('reservations')
 @Controller('reservations')
@@ -59,6 +67,8 @@ export class ReservationController {
     private readonly quoteService: ReservationQuoteService,
     private readonly calendarService: ReservationCalendarService,
     private readonly staffReservationService: StaffReservationService,
+    private readonly pricingService: ReservationPricingService,
+    private readonly confirmationService: ReservationConfirmationService,
   ) {}
 
   // --- Action routes BEFORE :id to avoid conflicts ---
@@ -338,12 +348,104 @@ export class ReservationController {
   @ApiOperation({ summary: 'Add an accompanying guest to this room reservation' })
   @ApiQuery({ name: 'propertyId', required: true })
   @ApiResponse({ status: 201, description: 'Guest added' })
-  addReservationGuest(
+  async addReservationGuest(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
     @Body() dto: AddReservationGuestDto,
+    @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.partyService.addGuest(id, propertyId, dto);
+    const row = await this.partyService.addGuest(id, propertyId, dto);
+    // A larger party can change the tariff (occupancy supplements); manual prices are kept.
+    const pricing = await this.pricingService.repriceForOccupancy(id, propertyId, actor);
+    return { ...row, pricing };
+  }
+
+  @Patch(':id/occupancy')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Change adults/children and reprice the stay when the price is not manual' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  setOccupancy(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: ReservationOccupancyDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.pricingService.setOccupancy(id, propertyId, dto.adults, dto.children ?? 0, actor);
+  }
+
+  @Post(':id/pricing')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Set a manual total or discount (reason required, audited) or reset to the tariff' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  setPrice(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: ReservationPriceDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.pricingService.setPrice(id, propertyId, dto, actor);
+  }
+
+  @Post(':id/upgrade')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Upgrade the room category: complimentary, repriced or custom priced' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  upgrade(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: UpgradeReservationDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.pricingService.upgrade(id, propertyId, dto, actor);
+  }
+
+  @Post(':id/rooms')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Add another room to the same booking (group / family booking)' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  addBookingRoom(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: AddBookingRoomDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.staffReservationService.addRoom(id, propertyId, dto, actor);
+  }
+
+  @Get(':id/confirmation')
+  @RequirePermissions('reservations.read')
+  @ApiOperation({ summary: 'Booking confirmation data for the guest (all rooms of the booking)' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  confirmation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) {
+    return this.confirmationService.build(id, propertyId);
+  }
+
+  @Get(':id/confirmation/document')
+  @RequirePermissions('reservations.read')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @ApiOperation({ summary: 'Printable booking confirmation (HTML)' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  confirmationDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) {
+    return this.confirmationService.html(id, propertyId);
+  }
+
+  @Post(':id/confirmation/send')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Email the booking confirmation to the guest (audited)' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  sendConfirmation(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: SendConfirmationDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.confirmationService.send(id, propertyId, dto.email, actor);
   }
 
   @Delete(':id/guests/:guestId')

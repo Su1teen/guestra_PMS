@@ -13,6 +13,8 @@ export interface AvailabilityResult {
   sold: number;
   available: number;
   overbookingBuffer: number;
+  /** Physical rooms out of order / out of service or under a planned inventory block. */
+  outOfOrder: number;
   capacityShortfall?: number;
 }
 
@@ -212,6 +214,7 @@ export class AvailabilityService {
           sold: sold + importedBusy,
           available: Math.max(0, available),
           overbookingBuffer,
+          outOfOrder: Math.min(totalRooms, (blockedByType.get(type.id) ?? 0) + plannedCount),
           ...(options?.includeCapacity ? { capacityShortfall: Math.max(0, -available) } : {}),
         });
       }

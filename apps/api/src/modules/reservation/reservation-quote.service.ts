@@ -40,6 +40,7 @@ export class ReservationQuoteService {
       propertyId: dto.propertyId, ratePlanId: dto.ratePlanId,
       checkIn: dto.checkIn, checkOut: dto.checkOut, nights: dates.length,
       isTaxInclusive: plan.isTaxInclusive, ratePlanService: this.rates, taxService: this.taxes, guestId: dto.guestId,
+      occupancy: { adults: dto.adults ?? 1, children: dto.children ?? 0 },
     });
   }
 }

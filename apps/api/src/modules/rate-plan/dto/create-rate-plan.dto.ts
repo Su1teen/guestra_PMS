@@ -10,6 +10,7 @@ import {
   IsArray,
   IsDateString,
   MaxLength,
+  Matches,
   Length,
   ValidateIf,
   ValidateNested,
@@ -57,6 +58,16 @@ export class CreateRatePlanDto extends PricingMutationDto {
   @IsString()
   @IsNotEmpty()
   baseAmount!: string;
+
+  @ApiPropertyOptional({ example: '5000.00', description: 'Per night, each adult above the room type default occupancy' })
+  @IsOptional()
+  @Matches(/^\d{1,10}(\.\d{1,2})?$/)
+  extraAdultAmount?: string;
+
+  @ApiPropertyOptional({ example: '2500.00', description: 'Per night, each child above the room type default occupancy' })
+  @IsOptional()
+  @Matches(/^\d{1,10}(\.\d{1,2})?$/)
+  extraChildAmount?: string;
 
   @ApiProperty({ example: 'USD' })
   @IsString()

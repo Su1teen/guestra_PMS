@@ -59,6 +59,9 @@ export const groupProfiles = pgTable('group_profiles', {
 
   notes: text('notes'),
 
+  /** Deactivated companies stay on historical reservations but cannot be linked to new ones. */
+  isActive: boolean('is_active').notNull().default(true),
+
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

@@ -13,6 +13,7 @@ import { useGuestQuickView } from '../guests/GuestQuickView';
 import Guest360Panel from '../guests/Guest360Panel';
 import GuestContextSummary from '../guests/GuestContextSummary';
 import ReservationPartyPanel from './ReservationPartyPanel';
+import ReservationCommercialActions from './ReservationCommercialActions';
 import { ReservationOpsNotes, ReservationMessageCompose } from './ReservationCommunication';
 import type { Reservation } from './types';
 import ReservationLifecycleActions from './ReservationLifecycleActions';
@@ -186,7 +187,8 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
           </div>}
           {readinessQuery.isError ? <QueryError onRetry={() => void readinessQuery.refetch()}/> : readiness && <div className="rounded-xl border p-4"><p className="mb-2 text-sm font-semibold">{t('reservationWorkspace.readiness')}</p><div className="flex flex-wrap gap-2">{['roomAssigned','roomOperational','housekeepingReady','depositReceived','guestInformationComplete','operationalTasksComplete'].map(key => <span key={key} className={'rounded-lg px-3 py-2 text-xs ' + (readiness.checks[key] ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.' + (readiness.checks[key] ? 'checks.' : 'checksMissing.') + key)}</span>)}</div>{readiness.notes && <p className="mt-3 text-sm">{readiness.notes}</p>}</div>}
           {propertyId && <>
-            {<ReservationPartyPanel readOnly={mode === 'drawer' || !hasPermission('reservations.write')} reservationId={reservation.id} propertyId={propertyId} roomTypeId={reservation.roomTypeId} ratePlanId={reservation.ratePlanId} totalAmount={reservation.totalAmount != null ? String(reservation.totalAmount) : undefined} currencyCode={reservation.currencyCode ?? null}/>}
+            {<ReservationPartyPanel readOnly={!hasPermission('reservations.write') || CLOSED_STATUSES.includes(reservation.status)} readOnlyReason={hasPermission('reservations.write') ? t('reservations.guestsLockedClosed', { defaultValue: 'Состав гостей нельзя менять у закрытой брони' }) : t('reservations.guestsLockedPermission', { defaultValue: 'Нет права изменять бронь' })} reservationId={reservation.id} propertyId={propertyId} roomTypeId={reservation.roomTypeId} ratePlanId={reservation.ratePlanId} totalAmount={reservation.totalAmount != null ? String(reservation.totalAmount) : undefined} currencyCode={reservation.currencyCode ?? null}/>}
+            <ReservationCommercialActions key={reservation.id + ':' + String(reservation.totalAmount)} reservation={reservation} propertyId={propertyId} canWrite={hasPermission('reservations.write')}/>
           </>}
           <div className="flex flex-wrap gap-2 border-t pt-4">
             {guestId && hasPermission('guests.read') && <button className="rounded-lg border px-3 py-2 text-sm font-semibold" onClick={viewGuest}>{t('guestQuickView.title')}</button>}
@@ -202,6 +204,7 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
     </aside>
   </div>;
 }
+const CLOSED_STATUSES = ['checked_out', 'no_show', 'cancelled'];
 function Detail({ label, value }: { label: string; value: string }) { return <div><p className="text-xs text-telivity-mid-grey">{label}</p><p className="mt-1 break-words text-sm font-medium text-telivity-navy">{value}</p></div>; }
 
 function QueryRows({ query, children }: { query: { isError: boolean; isPending: boolean; data?: any; refetch: () => Promise<any> }; children: (rows: any[]) => React.ReactNode }) {

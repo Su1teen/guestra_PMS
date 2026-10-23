@@ -33,6 +33,7 @@ function makeService(overrides: Partial<Record<string, any>> = {}) {
   };
   const ratePlan = {
     calculateDerivedRate: vi.fn().mockResolvedValue({ effectiveRate: 100, currency: 'USD' }),
+    occupancySupplement: vi.fn().mockResolvedValue('0.00'),
     assertSellable: vi.fn().mockResolvedValue(undefined),
     findById: vi.fn().mockResolvedValue({ id: RP, roomTypeId: RT, currencyCode: 'USD' }),
   };

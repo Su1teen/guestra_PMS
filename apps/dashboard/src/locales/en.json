@@ -1,15 +1,92 @@
 {
   "guestInbox": {
-    "title":"Guest Inbox","disabled":"Guest Inbox is not enabled for this account.","selectProperty":"Select a property.",
-    "unavailable":"Guest messages are temporarily unavailable. Try again shortly.","loading":"Loading…","empty":"No guest conversations yet.",
-    "ai":"AI assistant","human":"Staff","selectConversation":"Select a conversation.","takeover":"Take over",
-    "recentMessages":"Showing the most recent 100 messages.","context":"Guest context","noStay":"No verified stay is linked yet.",
-    "services":"Services","requests":"Guest requests","finance":"Account","balance":"Balance","received":"Received","attachment":"Attachment",
-    "states":{"pending":"Pending","confirmed":"Confirmed","assigned":"Room assigned","checked_in":"In house","stayover":"In house","checked_out":"Checked out","cancelled":"Cancelled","no_show":"No show","completed":"Completed","open":"Open","in_progress":"In progress","done":"Completed","sent":"Sent","delivered":"Delivered","failed":"Failed","received":"Received","processing":"Processing","ready":"Ready","rejected":"Rejected"}
+    "title": "Guest Inbox",
+    "disabled": "Guest Inbox is not enabled for this account.",
+    "selectProperty": "Select a property.",
+    "unavailable": "Guest messages are temporarily unavailable. Try again shortly.",
+    "loading": "Loading…",
+    "empty": "No guest conversations yet.",
+    "ai": "AI assistant",
+    "human": "Staff",
+    "selectConversation": "Select a conversation.",
+    "takeover": "Take over",
+    "recentMessages": "Showing the most recent 100 messages.",
+    "context": "Guest context",
+    "noStay": "No verified stay is linked yet.",
+    "services": "Services",
+    "requests": "Guest requests",
+    "finance": "Account",
+    "balance": "Balance",
+    "received": "Received",
+    "attachment": "Attachment",
+    "states": {
+      "pending": "Pending",
+      "confirmed": "Confirmed",
+      "assigned": "Room assigned",
+      "checked_in": "In house",
+      "stayover": "In house",
+      "checked_out": "Checked out",
+      "cancelled": "Cancelled",
+      "no_show": "No show",
+      "completed": "Completed",
+      "open": "Open",
+      "in_progress": "In progress",
+      "done": "Completed",
+      "sent": "Sent",
+      "delivered": "Delivered",
+      "failed": "Failed",
+      "received": "Received",
+      "processing": "Processing",
+      "ready": "Ready",
+      "rejected": "Rejected"
+    }
   },
   "reservationActions": {
     "reason": "Cancellation reason",
-    "back": "Back without changes"
+    "back": "Back without changes",
+    "title": "Booking",
+    "confirmation": "Confirmation",
+    "sendConfirmation": "Send to guest",
+    "send": "Send confirmation",
+    "confirmationSent": "Confirmation sent to {{to}}",
+    "confirmationNotSent": "Email is not configured: nothing was sent. Open the confirmation and send it manually.",
+    "occupancy": "Guests: {{adults}} + {{children}}",
+    "occupancyTitle": "Number of guests",
+    "occupancyHint": "Before arrival the price follows the rate unless it was changed manually.",
+    "repriced": "Guests updated, new total {{total}}",
+    "price": "Price / discount",
+    "priceTitle": "Change price",
+    "currentTotal": "Current",
+    "mode": "Change",
+    "modes": {
+      "discount_percent": "Discount, % of rate",
+      "discount_amount": "Discount, amount",
+      "total": "New total",
+      "reset": "Back to rate price"
+    },
+    "priceChanged": "New total: {{total}}",
+    "upgrade": "Room upgrade",
+    "upgradeTitle": "Room upgrade",
+    "upgradePricing": {
+      "keep": "Complimentary — total unchanged",
+      "reprice": "Rate of the new category",
+      "custom": "Custom total"
+    },
+    "applyUpgrade": "Upgrade",
+    "upgraded": "Category changed, total {{total}}",
+    "reassignRoom": "assign a room of the new category",
+    "tariff": "Rate price",
+    "addRoom": "Add room",
+    "addRoomTitle": "Add a room to this booking",
+    "roomGuestHint": "Room guest (optional — defaults to the booker)",
+    "addRoomConfirm": "Add room · {{total}}",
+    "roomAdded": "Room added to the booking",
+    "notRepriced": {
+      "MANUAL_PRICE": "Guests updated; the manual price was kept",
+      "STAY_STARTED": "Guests updated; in-house prices are changed manually",
+      "UNCHANGED": "Guests updated; price unchanged",
+      "NO_ACCEPTED_PRICE": "Guests updated; this reservation has no rate snapshot"
+    }
   },
   "staffRecovery": {
     "close": "Close attempt and create a new booking",
@@ -951,7 +1028,15 @@
       "travel_agent": "Travel Agent",
       "wholesale": "Wholesale"
     },
-    "uploadRoomingList": "Upload Rooming List"
+    "uploadRoomingList": "Upload Rooming List",
+    "statusFilter": "Status",
+    "statusActive": "Active",
+    "statusInactive": "Deactivated",
+    "statusAll": "All",
+    "inactive": "deactivated",
+    "reactivate": "Reactivate",
+    "remove": "Delete",
+    "removeConfirm": "Delete this company? If reservations, blocks, rates or invoices reference it, it will be deactivated and history kept."
   },
   "guests": {
     "ageYears": "{{age}} years",
@@ -1548,7 +1633,12 @@
     "type": "Type",
     "calendar": "Rate Calendar",
     "calendarEmpty": "Select a valid date range",
-    "effectiveRate": "Effective Rate"
+    "effectiveRate": "Effective Rate",
+    "supplements": "Extra guest supplements",
+    "supplementsHint": "Per night, per guest above the room category standard occupancy. Empty or 0 keeps per-room pricing.",
+    "extraAdult": "Adult",
+    "extraChild": "Child",
+    "changeReason": "Reason for change"
   },
   "reports": {
     "addFavorite": "Add favorite",
@@ -1766,7 +1856,17 @@
       "balanceDue": "Ledger balance due",
       "paymentRecorded": "Payments recorded",
       "noPaymentRecorded": "No recorded payments"
-    }
+    },
+    "guestsLockedClosed": "Guests cannot be changed on a closed reservation",
+    "guestsLockedPermission": "You do not have permission to change reservations",
+    "roomsLeft": "{{count}} left",
+    "noSellableRate": "No rate is sellable for these dates",
+    "perNightAverage": "{{nights}} nights · ~{{amount}} / night",
+    "guestAddedRepriced": "Guest added. New total: {{total}}",
+    "availabilitySummary": "Availability by room category",
+    "availabilityLegend": "free · booked/total · ✕ out of order",
+    "summaryTotal": "Whole property",
+    "summaryCell": "Free {{free}} · Booked {{sold}} · Out of order {{ooo}} · Total {{all}}"
   },
   "revenue": {
     "activeAgents": "Active Agents",

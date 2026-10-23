@@ -22,6 +22,7 @@ interface GroupProfile {
   paymentTermsDays?: string;
   notes?: string;
   status?: string;
+  isActive?: boolean;
 }
 
 const GROUP_TYPES = ['corporate', 'travel_agent', 'wholesale', 'event', 'other'] as const;
@@ -278,10 +279,11 @@ function GroupList() {
   const [type, setType] = useState('corporate');
   const [contactName, setContactName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
+  const [status, setStatus] = useState<'active' | 'inactive' | 'all'>('active');
 
   const { data } = useQuery({
-    queryKey: ['groups', propertyId],
-    queryFn: () => api.get('/v1/groups/profiles', { params: { propertyId } }).then((r) => r.data),
+    queryKey: ['groups', propertyId, status],
+    queryFn: () => api.get('/v1/groups/profiles', { params: { propertyId, status, limit: 100 } }).then((r) => r.data),
     enabled: !!propertyId,
   });
 
@@ -322,6 +324,12 @@ function GroupList() {
       <div className="flex items-center gap-3 mb-6">
         <UsersRound size={24} className="text-telivity-teal" />
         <h1 className="text-2xl font-semibold text-telivity-navy">{t('groups.title')}</h1>
+        <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} aria-label={t('groups.statusFilter', { defaultValue: 'Статус' })}
+          className="ml-4 rounded-lg border border-gray-200 px-3 py-2 text-sm">
+          <option value="active">{t('groups.statusActive', { defaultValue: 'Активные' })}</option>
+          <option value="inactive">{t('groups.statusInactive', { defaultValue: 'Деактивированные' })}</option>
+          <option value="all">{t('groups.statusAll', { defaultValue: 'Все' })}</option>
+        </select>
         <button
           onClick={() => processCutoffs.mutate()}
           disabled={processCutoffs.isPending}
@@ -346,7 +354,7 @@ function GroupList() {
           <tbody>
             {profiles.map((p, i) => (
               <tr key={p.id} onClick={() => navigate(`/groups/${p.id}`)} className={`border-b border-gray-50 cursor-pointer hover:bg-telivity-light-grey/50 ${i % 2 === 1 ? 'bg-gray-50/50' : ''}`}>
-                <td className="px-4 py-3 text-sm font-medium text-telivity-navy">{p.name}</td>
+                <td className="px-4 py-3 text-sm font-medium text-telivity-navy">{p.name}{p.isActive === false && <span className="ml-2 text-xs text-telivity-mid-grey">({t('groups.inactive', { defaultValue: 'деактивирована' })})</span>}</td>
                 <td className="px-4 py-3"><StatusBadge status="info" label={t(`groups.types.${p.type}`, { defaultValue: p.type })} /></td>
                 <td className="px-4 py-3 text-sm text-telivity-slate">{p.contactName ?? p.contactEmail ?? '—'}</td>
               </tr>
@@ -480,6 +488,18 @@ function GroupDetail() {
     },
   });
 
+  const setActive = useMutation({
+    mutationFn: (isActive: boolean) => api.patch(`/v1/groups/profiles/${id}`, { isActive }, { params: { propertyId } }),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['groups'] }); },
+  });
+  const removeProfile = useMutation({
+    mutationFn: () => api.delete(`/v1/groups/profiles/${id}`, { params: { propertyId } }).then((r) => r.data?.data ?? r.data),
+    onSuccess: (result: { result: 'deleted' | 'deactivated' }) => {
+      queryClient.invalidateQueries({ queryKey: ['groups'] });
+      if (result.result === 'deleted') navigate('/groups');
+    },
+  });
+
   if (!profile) return <div className="flex items-center justify-center h-64 text-telivity-mid-grey">{t('common.loading')}</div>;
 
   const folio = folioData?.data ?? folioData;
@@ -498,9 +518,27 @@ function GroupDetail() {
           >
             <Pencil size={14} /> {t('groups.editProfile')}
           </button>
+          {profile.isActive === false ? (
+            <button
+              onClick={() => setActive.mutate(true)}
+              disabled={setActive.isPending}
+              className="flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-telivity-light-grey disabled:opacity-50"
+            >
+              {t('groups.reactivate', { defaultValue: 'Активировать' })}
+            </button>
+          ) : (
+            <button
+              onClick={() => { if (window.confirm(t('groups.removeConfirm', { defaultValue: 'Удалить компанию? Если по ней есть брони, блоки, тарифы или счета, она будет деактивирована, история сохранится.' }))) removeProfile.mutate(); }}
+              disabled={removeProfile.isPending}
+              className="flex items-center gap-1 border border-red-200 text-red-700 rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-red-50 disabled:opacity-50"
+            >
+              {t('groups.remove', { defaultValue: 'Удалить' })}
+            </button>
+          )}
           <button
             onClick={() => setLinkOpen(true)}
-            className="flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-telivity-light-grey"
+            disabled={profile.isActive === false}
+            className="flex items-center gap-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs font-semibold hover:bg-telivity-light-grey disabled:opacity-40"
           >
             <Link2 size={14} /> {t('groups.linkReservation')}
           </button>

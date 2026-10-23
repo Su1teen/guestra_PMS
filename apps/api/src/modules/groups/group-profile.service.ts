@@ -13,6 +13,7 @@ import {
   charges,
   arLedgers,
   ratePlans,
+  allotmentBlocks,
 } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { WebhookService } from '../webhook/webhook.service';
@@ -116,6 +117,7 @@ export class GroupProfileService {
   async listProfiles(dto: ListGroupProfilesDto) {
     const conditions: any[] = [eq(groupProfiles.propertyId, dto.propertyId)];
     if (dto.type) conditions.push(eq(groupProfiles.type, dto.type as any));
+    if (dto.status !== 'all') conditions.push(eq(groupProfiles.isActive, dto.status !== 'inactive'));
 
     const page = dto.page ?? 1;
     const limit = dto.limit ?? 20;
@@ -155,12 +157,36 @@ export class GroupProfileService {
   }
 
   /**
+   * Remove a company. A profile that nothing references is deleted; once reservations, blocks,
+   * negotiated rates, receivables or a master folio point at it, it is deactivated instead so
+   * history and invoices stay intact.
+   */
+  async removeProfile(id: string, propertyId: string) {
+    const profile = await this.findProfileById(id, propertyId);
+    const refs = async (table: any) => Number((await this.db.select({ count: sql<number>`count(*)` }).from(table)
+      .where(and(eq(table.groupProfileId, id), eq(table.propertyId, propertyId))))[0]?.count ?? 0);
+    const usage = {
+      reservations: await refs(reservations), blocks: await refs(allotmentBlocks),
+      ratePlans: await refs(ratePlans), receivables: await refs(arLedgers),
+    };
+    const referenced = profile.masterFolioId != null || Object.values(usage).some(count => count > 0);
+    if (referenced) {
+      const [updated] = await this.db.update(groupProfiles).set({ isActive: false, updatedAt: new Date() })
+        .where(and(eq(groupProfiles.id, id), eq(groupProfiles.propertyId, propertyId))).returning();
+      return { result: 'deactivated' as const, usage, profile: updated };
+    }
+    await this.db.delete(groupProfiles).where(and(eq(groupProfiles.id, id), eq(groupProfiles.propertyId, propertyId)));
+    return { result: 'deleted' as const, usage };
+  }
+
+  /**
    * Link a member reservation to a group profile (KB 14.3). The reservation
    * must belong to the same property — propertyId comes from the request, never
    * inferred from the reservation, to avoid a confused-deputy scoping bypass.
    */
   async linkReservation(profileId: string, propertyId: string, reservationId: string) {
-    await this.findProfileById(profileId, propertyId);
+    const profile = await this.findProfileById(profileId, propertyId);
+    if (profile.isActive === false) throw new BadRequestException('Company is deactivated; reactivate it before linking reservations');
 
     const [reservation] = await this.db
       .select()
