@@ -232,6 +232,7 @@ export class ConnectSearchService {
           property,
           dto.checkIn,
           dto.checkOut,
+          { adults: dto.adults ?? 1, children: dto.children ?? 0 },
         );
         if (rateResult) rates.push(rateResult);
       }
@@ -278,6 +279,7 @@ export class ConnectSearchService {
     property: any,
     checkIn: string,
     checkOut: string,
+    occupancy: { adults: number; children: number },
   ) {
     // Get restrictions for the date range
     const restrictions = await this.db
@@ -323,6 +325,7 @@ export class ConnectSearchService {
       isTaxInclusive: plan.isTaxInclusive,
       ratePlanService: this.ratePlanService,
       taxService: this.taxService,
+      occupancy,
     });
     const nightlyBreakdown = pricing.lineItems.map((line) => ({
       date: line.date,

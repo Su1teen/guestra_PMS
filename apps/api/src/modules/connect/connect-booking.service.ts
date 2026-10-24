@@ -197,6 +197,7 @@ export class ConnectBookingService {
         propertyId: dto.propertyId, ratePlanId: dto.ratePlanId, checkIn: dto.checkIn, checkOut: dto.checkOut,
         nights, isTaxInclusive: ratePlan.isTaxInclusive, ratePlanService: this.ratePlanService,
         taxService: this.taxService, db: tx, lockForUpdate: true,
+        occupancy: { adults: dto.adults, children: dto.children ?? 0 },
       }) : undefined;
       if (acceptedQuote && (Date.parse(acceptedQuote.expiresAt) <= Date.now() ||
           quoteFingerprint({ totalAmount: pricing!.totalAmount, currency: pricing!.currency, lineItems: pricing!.lineItems }) !==
