@@ -88,6 +88,7 @@ describe('ConnectSearchService', () => {
 
     mockRatePlanService = {
       calculateDerivedRate: vi.fn().mockResolvedValue({ effectiveRate: 199.99, currency: 'USD' }),
+      occupancySupplement: vi.fn().mockResolvedValue(0),
     };
     mockTaxService = {
       calculateTaxes: vi.fn().mockImplementation((amount: string) => Promise.resolve([{

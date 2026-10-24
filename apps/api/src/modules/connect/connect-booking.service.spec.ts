@@ -67,7 +67,7 @@ describe('ConnectBookingService', () => {
     };
 
     mockWebhookService = { emit: vi.fn().mockResolvedValue(undefined) };
-    mockRatePlanService = { assertSellable: vi.fn().mockResolvedValue(undefined) };
+    mockRatePlanService = { assertSellable: vi.fn().mockResolvedValue(undefined), occupancySupplement: vi.fn().mockResolvedValue(0) };
     mockReservationService = {
       lockInventory: vi.fn().mockResolvedValue(undefined),
       cancel: vi.fn().mockResolvedValue({
