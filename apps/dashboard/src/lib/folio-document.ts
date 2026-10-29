@@ -1,5 +1,4 @@
 import { api } from './api';
-import { errorMessage } from './error-message';
 
 /**
  * Opens the printable folio (interim or final receipt) in a new tab.
@@ -18,6 +17,6 @@ export async function openFolioDocument(folioId: string, propertyId: string) {
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   } catch (error) {
     if (tab) tab.close();
-    throw new Error(errorMessage(error), { cause: error });
+    throw error;
   }
 }

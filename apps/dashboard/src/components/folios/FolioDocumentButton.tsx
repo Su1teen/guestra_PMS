@@ -3,6 +3,7 @@ import { FileText } from 'lucide-react';
 import { api } from '../../lib/api';
 import { openFolioDocument } from '../../lib/folio-document';
 import { useAuth } from '../../context/AuthContext';
+import { errorMessage } from '../../lib/error-message';
 
 /** Opens the printable folio / receipt. Resolves the guest folio of a reservation when no folio id is given. */
 export default function FolioDocumentButton({ propertyId, folioId, reservationId, label, className }: {
@@ -23,7 +24,7 @@ export default function FolioDocumentButton({ propertyId, folioId, reservationId
         if (!id) throw new Error('У брони ещё нет фолио.');
       }
       await openFolioDocument(id, propertyId);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : String(failure)); }
+    } catch (failure) { setError(errorMessage(failure)); }
     finally { setBusy(false); }
   }
   return <span className="inline-flex flex-col">
