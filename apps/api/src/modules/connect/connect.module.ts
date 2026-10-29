@@ -27,10 +27,12 @@ import { AccountingModule } from '../accounting/accounting.module';
 import { FolioModule } from '../folio/folio.module';
 import { ServiceRequestsModule } from '../service-requests/service-requests.module';
 import { ConnectServiceBookingService } from './connect-service-booking.service';
+import { CrmSyncController } from './crm-sync.controller';
+import { CrmSyncService } from './crm-sync.service';
 
 @Module({
   imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule],
-  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController],
+  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController],
   providers: [
     CredentialAdminGuard,
     ConnectV2Service, ConnectV2Guard, ConnectInboxService, ConnectSandboxService,
@@ -41,6 +43,7 @@ import { ConnectServiceBookingService } from './connect-service-booking.service'
     ConnectInsightsService,
     ConnectCredentialsService,
     ConnectServiceBookingService,
+    CrmSyncService,
   ],
   exports: [ConnectSearchService, ConnectBookingService],
 })
