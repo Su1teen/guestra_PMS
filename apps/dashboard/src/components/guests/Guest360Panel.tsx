@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import GuestServiceBookingButton from '../services/GuestServiceBookingButton';
 import { useProperty } from '../../context/PropertyContext';
 import { useAuth } from '../../context/AuthContext';
 import { useState } from 'react';
@@ -67,7 +68,7 @@ export default function Guest360Panel({ data, propertyId }: { data: Guest360; pr
 
   return (
     <section className="mb-6 space-y-4">
-      {(hasPermission('services.read') && (hasPermission('reservations.write') || hasPermission('folios.manage'))) && <Link className="inline-block rounded-lg border px-3 py-2 text-sm" to={`/services?action=book&guestId=${guest.id}&propertyId=${propertyId}`}>Записать на услугу</Link>}
+      {hasPermission('services.read') && <GuestServiceBookingButton propertyId={propertyId} guestId={guest.id}/>}
       {duplicates.length > 0 && hasPermission('guests.write') && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex flex-wrap items-center gap-3">
           <Merge size={18} className="text-amber-700" />

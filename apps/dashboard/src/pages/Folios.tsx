@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Routes, Route, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import FolioDocumentButton from '../components/folios/FolioDocumentButton';
 import { Receipt, ChevronLeft, Plus, Lock, RotateCcw, Split, ArrowRightLeft, CreditCard } from 'lucide-react';
 import { api } from '../lib/api';
 import { moneyString, requirePropertyId, requireCurrency } from '../lib/api-helpers';
@@ -701,6 +702,7 @@ function FolioDetail() {
           {context?.reservation && <p className="mt-0.5 text-sm text-telivity-slate">{context.reservation.roomTypeName ?? 'Проживание'}{context.reservation.roomNumber ? ` · № ${context.reservation.roomNumber}` : ''} · {context.reservation.arrivalDate} — {context.reservation.departureDate}</p>}
         </div>
         <StatusBadge status={folio.status === 'open' ? 'pending' : 'success'} label={t(`folios.${folio.status}`, { defaultValue: folio.status })} />
+        {propertyId && <FolioDocumentButton propertyId={propertyId} folioId={folio.id} label={folio.status === 'open' ? 'Предварительное фолио (PDF)' : 'Квитанция (PDF)'}/>}
         <div className="ml-auto text-right">
           <p className="text-xs text-telivity-mid-grey">{context?.reservation ? 'Осталось оплатить' : t('folios.balance')}</p>
           <p className="text-2xl font-semibold text-telivity-navy">{formatMoney(context?.reservation ? remainingForStay : folio.balance ?? 0, folio.currencyCode)}</p>

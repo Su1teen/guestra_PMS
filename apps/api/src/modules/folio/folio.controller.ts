@@ -7,6 +7,7 @@ import {
   Body,
   Query,
   ParseUUIDPipe,
+  Header,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { RequirePermissions } from '../auth/permissions.decorator';
@@ -27,6 +28,7 @@ import {
   VoidFiscalDocumentDto,
 } from './dto/fiscal-document.dto';
 import { FiscalDocumentService } from './fiscal-document.service';
+import { FolioDocumentService } from './folio-document.service';
 
 @ApiTags('folios')
 @Controller('folios')
@@ -35,6 +37,7 @@ export class FolioController {
     private readonly folioService: FolioService,
     private readonly folioRoutingService: FolioRoutingService,
     private readonly fiscalDocumentService: FiscalDocumentService,
+    private readonly folioDocumentService: FolioDocumentService,
   ) {}
 
   // --- Split-folio routing rules (KB 14.2) ---
@@ -91,6 +94,19 @@ export class FolioController {
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
   ) {
     return this.folioService.getContext(id, propertyId);
+  }
+
+  @Get(':id/document')
+  @RequirePermissions('folios.read')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({ summary: 'Printable guest folio: interim while open, final receipt once settled or closed' })
+  @ApiQuery({ name: 'propertyId', type: String })
+  getFolioDocument(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+  ) {
+    return this.folioDocumentService.render(id, propertyId);
   }
 
   @Get(':id')

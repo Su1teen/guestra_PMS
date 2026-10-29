@@ -1,0 +1,15 @@
+{
+ "crmCred": "U0wDaJorzJ6DNWtl",
+ "studioBearerCred": "3bC3Wd4QsfeqdHSm",
+ "secretsTableId": "tWLc35OS9rbLXggB",
+ "signerId": "zZiN7gA2BtRFN9pN",
+ "gatewayId": "dwIE0EA4dqV2fwPk",
+ "runsTableId": "R1BqevbljNlvltIb",
+ "errorWorkflowId": "5K7h5mVjcsLUrphv",
+ "agentWorkflowId": "eYOraX7blGzT5PiG",
+ "capabilitiesWorkflowId": "pzvnT6XOtjL3Qq1V",
+ "deploymentId": "aidana-agent-1.0.0+6bad4cb02da0",
+ "llmCred": "IrjYiPK5vGq3OBkj",
+ "llmCredName": "GUESTRA-STUDIO",
+ "llmModel": "gpt-4.1"
+}
