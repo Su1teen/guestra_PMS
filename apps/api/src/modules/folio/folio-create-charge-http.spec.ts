@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FiscalDocumentService } from './fiscal-document.service';
+import { FolioDocumentService } from './folio-document.service';
 import { FolioController } from './folio.controller';
 import { FolioRoutingService } from './folio-routing.service';
 import { FolioService } from './folio.service';
@@ -24,6 +25,7 @@ describe('POST /folios/:id/charges public provenance boundary', () => {
         { provide: FolioService, useValue: folioService },
         { provide: FolioRoutingService, useValue: {} },
         { provide: FiscalDocumentService, useValue: {} },
+        { provide: FolioDocumentService, useValue: {} },
       ],
     }).compile();
     app = module.createNestApplication();

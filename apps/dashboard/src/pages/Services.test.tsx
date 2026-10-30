@@ -92,3 +92,19 @@ it('lets a financial operator record actual consumption without a time/resource 
   for (const field of ['startAt','endAt','resourceId','participants']) expect(posted).not.toHaveProperty(field);
   expect(screen.getByRole('link', { name: 'Открыть фолио' })).toHaveAttribute('href', '/folios/folio?propertyId=hotel-a');
 });
+it('shows bookings on the hourly chessboard and books a free hour on click', async () => {
+  vi.mocked(api.get).mockImplementation(async path => {
+    if (path.endsWith('/history')) return { data: [] };
+    if (path.includes('/bookings/')) return { data: { id: 'booked', serviceId: 'svc', startAt: '2027-01-01T05:00:00Z', endAt: '2027-01-01T06:00:00Z', status: 'scheduled', revision: 1, participants: 1, quantity: 1, totalAmount: '100.00', currencyCode: 'KZT', allocations: [{ resourceId: 'resource' }] } };
+    return { data: { ...calendar, bookings: [{ id: 'booked', serviceId: 'svc', guestName: 'Айгерим', startAt: '2027-01-01T05:00:00Z', endAt: '2027-01-01T06:00:00Z', status: 'scheduled', participants: 1, quantity: 1, totalAmount: '100.00', currencyCode: 'KZT' }], allocations: [{ serviceBookingId: 'booked', resourceId: 'resource' }] } };
+  });
+  renderWithProviders(<Services/>);
+  // 10:00 Asia/Almaty is 05:00Z.
+  const booked = await screen.findByRole('button', { name: /Кабинет 10:00: Айгерим/ });
+  await userEvent.click(booked);
+  expect(await screen.findByRole('dialog', { name: 'Карточка услуги' })).toBeInTheDocument();
+  await userEvent.keyboard('{Escape}');
+  await userEvent.click(screen.getByRole('button', { name: /Кабинет 12:00: Свободно/ }));
+  expect(await screen.findByRole('dialog', { name: 'Запись на услугу' })).toBeInTheDocument();
+  expect(screen.getByLabelText('Начало')).toHaveValue('2027-01-01T12:00');
+});

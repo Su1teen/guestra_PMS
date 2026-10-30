@@ -1,0 +1,168 @@
+{
+ "id": "5K7h5mVjcsLUrphv",
+ "name": "GUESTRA-STUDIO · Error & Recovery (sandbox)",
+ "active": true,
+ "nodes": [
+  {
+   "id": "890f16fd-da1f-4768-8464-f97d1ccb50f3",
+   "name": "Error Trigger",
+   "type": "n8n-nodes-base.errorTrigger",
+   "typeVersion": 1,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {}
+  },
+  {
+   "id": "3fb9aed9-57e5-427e-b07a-601a0ed69e9a",
+   "name": "Find claimed run",
+   "type": "n8n-nodes-base.dataTable",
+   "typeVersion": 1,
+   "position": [
+    220,
+    0
+   ],
+   "parameters": {
+    "resource": "row",
+    "operation": "get",
+    "dataTableId": {
+     "__rl": true,
+     "mode": "id",
+     "value": "R1BqevbljNlvltIb"
+    },
+    "matchType": "allConditions",
+    "filters": {
+     "conditions": [
+      {
+       "keyName": "executionId",
+       "condition": "eq",
+       "keyValue": "={{ String($json.execution.id) }}"
+      }
+     ]
+    },
+    "returnAll": false,
+    "limit": 1
+   },
+   "alwaysOutputData": true
+  },
+  {
+   "id": "0331ecef-e613-486a-99b8-e4d4fe2d9962",
+   "name": "Build failed callback",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    440,
+    0
+   ],
+   "parameters": {
+    "jsCode": "const e = $('Error Trigger').first().json;\nconst row = $input.first().json;\nconst msg = String(e.execution?.error?.message ?? '').toUpperCase();\nconst code = msg.includes('AGENT_EMPTY') ? 'AGENT_EMPTY_REPLY' : msg.includes('CRM_INBOUND') ? 'CRM_INBOUND_REJECTED' : 'WORKFLOW_EXECUTION_FAILED';\nif (!row || !row.runId) return [{ json: { skip: true, reason: 'run_not_claimed', executionId: e.execution?.id } }];\nreturn [{ json: { workspaceId: row.workspaceId, runId: row.runId, correlationId: row.correlationId, executionId: String(e.execution.id), sequence: 90, state: 'failed', errorCode: code, workflowVersion: 'aidana-agent-1.0.0', deploymentId: 'aidana-agent-1.0.0+6bad4cb02da0' } }];"
+   }
+  },
+  {
+   "id": "d65b4a21-fad2-4c74-8cfe-d8b0e8edf4ce",
+   "name": "Run was claimed?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    660,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "c45",
+       "leftValue": "={{ $json.skip !== true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "28459e72-2b6d-478e-a625-e1084e7f98aa",
+   "name": "CB failed",
+   "type": "n8n-nodes-base.executeWorkflow",
+   "typeVersion": 1.2,
+   "position": [
+    880,
+    -80
+   ],
+   "parameters": {
+    "source": "database",
+    "workflowId": {
+     "__rl": true,
+     "mode": "id",
+     "value": "zZiN7gA2BtRFN9pN"
+    },
+    "options": {
+     "waitForSubWorkflow": true
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Error Trigger": {
+   "main": [
+    [
+     {
+      "node": "Find claimed run",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find claimed run": {
+   "main": [
+    [
+     {
+      "node": "Build failed callback",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build failed callback": {
+   "main": [
+    [
+     {
+      "node": "Run was claimed?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Run was claimed?": {
+   "main": [
+    [
+     {
+      "node": "CB failed",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    []
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1"
+ }
+}

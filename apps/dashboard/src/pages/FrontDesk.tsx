@@ -18,6 +18,7 @@ import GuestDetailsModal from '../components/front-desk/GuestDetailsModal';
 import type { ParsedIdDocument } from '../lib/id-document-swipe';
 import type { Guest } from '../types/guest';
 import { formatMoney } from '../lib/money';
+import FolioDocumentButton from '../components/folios/FolioDocumentButton';
 
 type Tab = 'arrivals' | 'in-house' | 'departures';
 
@@ -141,6 +142,7 @@ export default function FrontDesk() {
   const [tab, setTab] = useState<Tab>('arrivals');
   const [checkInModal, setCheckInModal] = useState<Reservation | null>(null);
   const [checkOutModal, setCheckOutModal] = useState<Reservation | null>(null);
+  const [checkedOut, setCheckedOut] = useState<Reservation | null>(null);
   const [moveModal, setMoveModal] = useState<Reservation | null>(null);
   const [walkInOpen, setWalkInOpen] = useState(false);
   const [notesModal, setNotesModal] = useState<Reservation | null>(null);
@@ -403,8 +405,10 @@ export default function FrontDesk() {
   const checkOutMutation = useMutation({
     mutationFn: (id: string) =>
       api.patch(`/v1/reservations/${id}/check-out`, {}, { params: { propertyId } }),
-    onSuccess: () => {
+    onSuccess: (_result, id) => {
       invalidateAll();
+      // Keep the guest on screen so staff can hand over the final receipt.
+      setCheckedOut(checkOutModal?.id === id ? checkOutModal : null);
       setCheckOutModal(null);
     },
   });
@@ -1944,6 +1948,19 @@ export default function FrontDesk() {
         )}
       </Modal>
 
+      <Modal open={!!checkedOut} onClose={() => setCheckedOut(null)} title="Гость выселен">
+        {checkedOut && propertyId && (
+          <div className="space-y-4">
+            <p className="text-sm text-telivity-slate">{guestName(checkedOut)} · {checkedOut.confirmationNumber}. Итоговое фолио сформировано — распечатайте или сохраните квитанцию в PDF.</p>
+            <div className="flex gap-3">
+              <FolioDocumentButton propertyId={propertyId} reservationId={checkedOut.id} label="Квитанция об оплате (PDF)"
+                className="flex items-center gap-2 rounded-lg bg-telivity-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"/>
+              <button onClick={() => setCheckedOut(null)} className="rounded-lg border px-4 py-2 text-sm font-semibold">{t('common.close')}</button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
       {/* Check-Out Modal */}
       <Modal
         open={!!checkOutModal}
@@ -1965,6 +1982,7 @@ export default function FrontDesk() {
                 {formatMoney(checkOutModal.balance ?? 0, currencyCode)}
               </p>
             </div>
+            {propertyId && <FolioDocumentButton propertyId={propertyId} reservationId={checkOutModal.id} label="Проверить фолио перед выездом"/>}
             <div className="flex gap-3 pt-2">
               <button
                 onClick={() => setCheckOutModal(null)}
