@@ -116,6 +116,7 @@ export interface ReservationPullParams {
   channelConnectionId: string;
   connectionConfig?: Record<string, unknown>;
   since?: Date;
+  externalRevisionId?: string;
 }
 
 export interface ChannelReservation {
@@ -139,6 +140,7 @@ export interface ChannelReservation {
   guestPhone?: string;
   channelRoomCode: string;
   channelRateCode: string;
+  channelParentRateCode?: string;
   arrivalDate: string;
   departureDate: string;
   adults: number;
@@ -169,6 +171,7 @@ export interface CancelReservationParams {
 
 export interface ChannelSyncResult {
   success: boolean;
+  retryAfterMs?: number;
   itemsSynced: number;
   errors: Array<{ item: string; message: string }>;
   /** Vendor task / job ids from the response (e.g. Channex certification evidence). */

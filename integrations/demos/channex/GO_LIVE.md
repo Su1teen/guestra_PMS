@@ -4,11 +4,11 @@
 ```bash
 ./integrations/demos/run.sh channex
 ```
-Creates a channel connection with `adapterType=channex`. Missing credentials → console stub (logged, no vendor HTTP).
+Creates a channel connection with `adapterType=channex`. The staging connection requires an API key and property UUID.
 
 ## Staging / certification
 1. Sign up at https://staging.channex.io and create a test property + API key.
-2. PATCH connection `config` with `apiKey`, `propertyId`, `baseUrl=https://staging.channex.io/api/v1`, and `inboundAuth.secret`.
+2. Set `CHANNEX_STAGING_ONLY=true`, `CHANNEX_API_KEY` and `CHANNEX_PROPERTY_ID` in the staging environment. PATCH connection `config` with `propertyId`, `baseUrl=https://staging.channex.io/api/v1`, and `inboundAuth.secret`.
 3. Map room types / rate plans to Channex UUIDs.
 4. Register webhook → `POST /api/v1/channels/inbound/channex/bookings` with `X-Channex-Webhook-Secret`.
 5. Drive ARI from the Rate Plans / Reservations UI (not Postman) and collect `taskIds` from sync logs.

@@ -12,9 +12,8 @@ import type {
   ChannelSyncResult,
   ChannelReservationResult,
 } from '../../channel-adapter.interface';
-import { createConsoleChannelStub } from '../console-channel.stub';
 import { channelJsonRequest, type ChannelFetchFn } from '../channel-http.util';
-import { DEFAULT_CHANNEX_CONFIG, type ChannexConfig } from './channex.config';
+import { CHANNEX_STAGING_BASE_URL, DEFAULT_CHANNEX_CONFIG, type ChannexConfig } from './channex.config';
 import {
   extractChannexTaskIds,
   mapAvailabilityToChannex,
@@ -23,7 +22,7 @@ import {
   mapRestrictionsToChannex,
 } from './channex.mapper';
 
-type ConsoleStub = ReturnType<typeof createConsoleChannelStub>;
+const unavailable = 'Channex configuration is missing or outside the permitted environment';
 
 /**
  * Channex channel manager — ARI push via /availability and /restrictions,
@@ -40,29 +39,31 @@ type ConsoleStub = ReturnType<typeof createConsoleChannelStub>;
 export class ChannexAdapter implements ChannelAdapter {
   readonly adapterType = 'channex';
   private readonly logger = new Logger(ChannexAdapter.name);
-  private readonly consoleStub: ConsoleStub;
   private readonly fetchFn: ChannelFetchFn = fetch;
   /** Sliding window of outbound ARI request timestamps (rate limit ≈ 20/min). */
   private readonly ariRequestTimes: number[] = [];
 
-  constructor(private readonly configService: ConfigService) {
-    this.consoleStub = createConsoleChannelStub('Channex');
-  }
+  constructor(private readonly configService: ConfigService) {}
 
   private resolveConfig(connectionConfig?: Record<string, unknown>): ChannexConfig | null {
-    const apiKey =
-      (connectionConfig?.['apiKey'] as string | undefined)?.trim() ||
-      this.configService.get<string>('CHANNEX_API_KEY')?.trim();
-    const propertyId =
-      (connectionConfig?.['propertyId'] as string | undefined)?.trim() ||
-      (connectionConfig?.['hotelId'] as string | undefined)?.trim() ||
-      this.configService.get<string>('CHANNEX_PROPERTY_ID')?.trim();
+    const value = (key: string) => {
+      const entry = connectionConfig?.[key];
+      return typeof entry === 'string' ? entry.trim() : undefined;
+    };
+    const stagingOnly = this.configService.get<string>('CHANNEX_STAGING_ONLY') === 'true' ||
+      this.configService.get<string>('NODE_ENV') === 'staging';
+    const allowedProperty = this.configService.get<string>('CHANNEX_PROPERTY_ID')?.trim();
+    const envKey = this.configService.get<string>('CHANNEX_API_KEY')?.trim();
+    const apiKey = stagingOnly ? envKey : value('apiKey') || envKey;
+    const propertyId = value('propertyId') || value('hotelId') || allowedProperty;
     if (!apiKey || !propertyId) return null;
 
     const baseUrl = (
-      (connectionConfig?.['baseUrl'] as string | undefined) ||
-      this.configService.get<string>('CHANNEX_BASE_URL', DEFAULT_CHANNEX_CONFIG.baseUrl)
+      value('baseUrl') ||
+      this.configService.get<string>('CHANNEX_BASE_URL')?.trim() ||
+      (stagingOnly ? CHANNEX_STAGING_BASE_URL : DEFAULT_CHANNEX_CONFIG.baseUrl)
     ).replace(/\/$/, '');
+    if (stagingOnly && (baseUrl !== CHANNEX_STAGING_BASE_URL || propertyId !== allowedProperty)) return null;
 
     return {
       apiKey,
@@ -72,6 +73,10 @@ export class ChannexAdapter implements ChannelAdapter {
       maxRetries: DEFAULT_CHANNEX_CONFIG.maxRetries,
       ariRateLimitPerMinute: DEFAULT_CHANNEX_CONFIG.ariRateLimitPerMinute,
     };
+  }
+
+  private failed(item: string, message = unavailable): ChannelSyncResult {
+    return { success: false, itemsSynced: 0, errors: [{ item, message }] };
   }
 
   private headers(apiKey: string): Record<string, string> {
@@ -129,26 +134,29 @@ export class ChannexAdapter implements ChannelAdapter {
         const warnings = res.data?.meta?.warnings;
         if (Array.isArray(warnings) && warnings.length > 0) {
           this.logger.warn(`Channex ${path}: ${warnings.length} warning(s)`);
+          return { ...this.failed(itemLabel, 'Channex returned ARI warnings'), taskIds };
         }
         this.logger.log(`Channex ${path}: ${values.length} value(s), taskIds=${taskIds.join(',') || 'none'}`);
         return { success: true, itemsSynced: values.length, errors: [], taskIds };
       }
 
-      lastError = res.errorMessage ?? `HTTP ${res.status}`;
+      lastError = res.status ? `Channex HTTP ${res.status}` : 'Channex transport failure';
       const retryable = res.status === 429 || res.status >= 500 || res.status === 0;
-      if (!retryable || attempt === maxRetries) {
+      if (!retryable || attempt === maxRetries || (res.retryAfterMs ?? 0) > 30_000) {
         return {
           success: false,
           itemsSynced: 0,
           errors: [{ item: itemLabel, message: lastError }],
           taskIds: [],
+          retryAfterMs: res.retryAfterMs,
         };
       }
 
-      const backoffMs =
+      const retryDelay =
         res.status === 429
           ? Math.min(2_000 * attempt, 15_000)
           : Math.min(500 * 2 ** (attempt - 1), 8_000);
+      const backoffMs = Math.max(retryDelay, res.retryAfterMs ?? 0);
       this.logger.warn(
         `Channex ${path} failed (${lastError}) attempt ${attempt}/${maxRetries}; retry in ${backoffMs}ms`,
       );
@@ -165,76 +173,103 @@ export class ChannexAdapter implements ChannelAdapter {
 
   async pushAvailability(params: AvailabilityPushParams): Promise<ChannelSyncResult> {
     const config = this.resolveConfig(params.connectionConfig);
-    if (!config) return this.consoleStub.pushAvailability(params);
+    if (!config) return this.failed('availability');
     const values = mapAvailabilityToChannex(config.propertyId, params.items);
     return this.postValues(config, 'availability', values, 'availability');
   }
 
   async pushRates(params: RatePushParams): Promise<ChannelSyncResult> {
     const config = this.resolveConfig(params.connectionConfig);
-    if (!config) return this.consoleStub.pushRates(params);
+    if (!config) return this.failed('rate');
     const values = mapRatesToChannex(config.propertyId, params.items);
     return this.postValues(config, 'restrictions', values, 'rate');
   }
 
   async pushRestrictions(params: RestrictionPushParams): Promise<ChannelSyncResult> {
     const config = this.resolveConfig(params.connectionConfig);
-    if (!config) return this.consoleStub.pushRestrictions(params);
+    if (!config) return this.failed('restrictions');
     const values = mapRestrictionsToChannex(config.propertyId, params.items);
     return this.postValues(config, 'restrictions', values, 'restrictions');
   }
 
-  /** Channex property/room content is managed in Channex UI — stub success. */
+  /** Channex property/room content is managed in Channex UI. */
   async pushContent(params: ContentPushParams): Promise<ChannelSyncResult> {
     const config = this.resolveConfig(params.connectionConfig);
-    if (!config) return this.consoleStub.pushContent(params);
-    this.logger.log(
-      `Channex pushContent skipped (manage content in Channex): ${params.property.name}`,
-    );
-    return { success: true, itemsSynced: 0, errors: [] };
+    if (!config) return this.failed('content');
+    return this.failed('content', 'Manage property and room content in Channex');
   }
 
   async pullReservations(params: ReservationPullParams): Promise<ChannelReservationResult> {
     const config = this.resolveConfig(params.connectionConfig);
-    if (!config) return this.consoleStub.pullReservations(params);
+    if (!config) {
+      return { success: false, reservations: [], errors: [{ externalId: '', message: unavailable }] };
+    }
+
+    if (params.externalRevisionId) {
+      const revisionId = params.externalRevisionId;
+      const res = await channelJsonRequest<{ data?: Record<string, unknown> }>(
+        `${config.baseUrl}/booking_revisions/${encodeURIComponent(revisionId)}`,
+        {
+          method: 'GET',
+          headers: this.headers(config.apiKey),
+          signal: AbortSignal.timeout(config.timeoutMs ?? 30_000),
+        },
+        this.fetchFn,
+      );
+      const revision = res.ok && res.data?.data ? mapChannexRevisionToHaip(res.data.data, config.propertyId) : null;
+      if (revision?.externalRevisionId === revisionId) return { success: true, reservations: [revision], errors: [] };
+      return {
+        success: false, reservations: [],
+        errors: [{ externalId: revisionId, message: `Channex revision verification failed (HTTP ${res.status})` }],
+      };
+    }
 
     const query = new URLSearchParams({
       'filter[property_id]': config.propertyId,
       'order[inserted_at]': 'asc',
     });
-    const url = `${config.baseUrl}/booking_revisions/feed?${query.toString()}`;
-    const res = await channelJsonRequest<{ data?: Array<Record<string, unknown>> }>(
-      url,
-      {
-        method: 'GET',
-        headers: this.headers(config.apiKey),
-        signal: AbortSignal.timeout(config.timeoutMs ?? 30_000),
-      },
-      this.fetchFn,
-    );
-
-    if (!res.ok) {
-      return {
-        success: false,
-        reservations: [],
-        errors: [{ externalId: '', message: res.errorMessage ?? 'Feed request failed' }],
-      };
+    const result: ChannelReservationResult = { success: true, reservations: [], errors: [] };
+    query.set('pagination[limit]', '100');
+    for (let page = 1; page <= 20; page++) {
+      query.set('pagination[page]', String(page));
+      const res = await channelJsonRequest<{
+        data?: Array<Record<string, unknown>>;
+        meta?: { total?: number; limit?: number };
+      }>(
+        `${config.baseUrl}/booking_revisions/feed?${query}`,
+        {
+          method: 'GET',
+          headers: this.headers(config.apiKey),
+          signal: AbortSignal.timeout(config.timeoutMs ?? 30_000),
+        },
+        this.fetchFn,
+      );
+      const rows = res.data?.data;
+      if (!res.ok || !Array.isArray(rows)) {
+        result.errors.push({ externalId: '', message: `Channex feed failed (HTTP ${res.status})` });
+        break;
+      }
+      for (const row of rows) {
+        const reservation = mapChannexRevisionToHaip(row, config.propertyId);
+        if (reservation) result.reservations.push(reservation);
+        else result.errors.push({ externalId: '', message: 'Channex feed contains an invalid or unsupported revision' });
+      }
+      const limit = res.data?.meta?.limit ?? 100;
+      const total = res.data?.meta?.total;
+      if (rows.length === 0 || (total !== undefined ? page * limit >= total : rows.length < limit)) break;
+      if (page === 20) result.errors.push({ externalId: '', message: 'Channex feed page limit reached' });
     }
-
-    const rows = res.data?.data ?? [];
-    const reservations = rows
-      .map((row) => mapChannexRevisionToHaip(row, config.propertyId))
-      .filter((r): r is NonNullable<typeof r> => r != null);
-
-    return { success: true, reservations, errors: [] };
+    result.success = result.errors.length === 0;
+    return result;
   }
 
   async confirmReservation(params: ConfirmReservationParams): Promise<ChannelSyncResult> {
     const config = this.resolveConfig(params.connectionConfig);
-    if (!config) return this.consoleStub.confirmReservation(params);
+    if (!config) return this.failed('ack');
 
     // ACK the revision id (not the stable booking id).
-    const revisionId = params.externalRevisionId ?? params.externalConfirmation;
+    const revisionId = params.externalRevisionId;
+    if (!revisionId) return this.failed('ack', 'Channex revision ID is required');
     const url = `${config.baseUrl}/booking_revisions/${encodeURIComponent(revisionId)}/ack`;
     const res = await channelJsonRequest(
       url,
@@ -251,7 +286,8 @@ export class ChannexAdapter implements ChannelAdapter {
       return {
         success: false,
         itemsSynced: 0,
-        errors: [{ item: 'ack', message: res.errorMessage ?? 'Ack failed' }],
+        errors: [{ item: 'ack', message: `Channex ACK failed (HTTP ${res.status})` }],
+        retryAfterMs: res.retryAfterMs,
       };
     }
     return { success: true, itemsSynced: 1, errors: [] };
@@ -259,17 +295,16 @@ export class ChannexAdapter implements ChannelAdapter {
 
   async cancelReservation(params: CancelReservationParams): Promise<ChannelSyncResult> {
     const config = this.resolveConfig(params.connectionConfig);
-    if (!config) return this.consoleStub.cancelReservation(params);
-    this.logger.log(`Channex cancelReservation delegated to inbound feed: ${params.externalConfirmation}`);
-    return { success: true, itemsSynced: 1, errors: [] };
+    if (!config) return this.failed('cancel');
+    return this.failed('cancel', 'Cancel on the OTA and receive its Channex revision');
   }
 
   async testConnection(config: Record<string, unknown>): Promise<{ connected: boolean; message: string }> {
     const resolved = this.resolveConfig(config);
-    if (!resolved) return this.consoleStub.testConnection();
+    if (!resolved) return { connected: false, message: unavailable };
 
     const url = `${resolved.baseUrl}/properties/${encodeURIComponent(resolved.propertyId)}`;
-    const res = await channelJsonRequest(
+    const res = await channelJsonRequest<{ data?: { id?: string } }>(
       url,
       {
         method: 'GET',
@@ -279,8 +314,8 @@ export class ChannexAdapter implements ChannelAdapter {
       this.fetchFn,
     );
 
-    if (!res.ok) {
-      return { connected: false, message: res.errorMessage ?? 'Connection test failed' };
+    if (!res.ok || res.data?.data?.id !== resolved.propertyId) {
+      return { connected: false, message: `Channex property verification failed (HTTP ${res.status})` };
     }
     return { connected: true, message: `Channex property reachable (${resolved.baseUrl})` };
   }

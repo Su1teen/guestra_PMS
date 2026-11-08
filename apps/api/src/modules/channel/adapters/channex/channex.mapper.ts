@@ -144,36 +144,45 @@ export function mapChannexRevisionToHaip(
   revision: Record<string, unknown>,
   propertyId: string,
 ): ChannelReservation | null {
+  if (!revision || typeof revision !== 'object') return null;
   const attributes = (revision['attributes'] ?? revision) as Record<string, unknown>;
   const booking = (attributes['booking'] ?? attributes) as Record<string, unknown>;
   const customer = (booking['customer'] ?? {}) as Record<string, unknown>;
   const rooms = (booking['rooms'] ?? []) as Array<Record<string, unknown>>;
+  if (!Array.isArray(rooms) || rooms.length > 1) return null;
   const room = rooms[0] ?? {};
 
   const revisionId = String(revision['id'] ?? attributes['id'] ?? '');
-  const bookingId = String(booking['id'] ?? '');
-  // Stable booking id for PMS dedup; fall back to revision when booking payload is sparse.
-  const externalConfirmation = bookingId || revisionId;
-  if (!externalConfirmation) return null;
+  const bookingId = String(attributes['booking_id'] ?? booking['booking_id'] ??
+    (attributes['booking'] ? booking['id'] : '') ?? '');
+  const incomingProperty = String(attributes['property_id'] ?? booking['property_id'] ?? '');
+  if (!revisionId || !bookingId || incomingProperty !== propertyId) return null;
 
-  const statusRaw = String(attributes['status'] ?? booking['status'] ?? 'new').toLowerCase();
-  const status: ChannelReservation['status'] =
-    statusRaw === 'cancelled' ? 'cancelled' : statusRaw === 'modified' ? 'modified' : 'new';
+  const status = String(attributes['status'] ?? booking['status'] ?? '').toLowerCase();
+  if (status !== 'new' && status !== 'modified' && status !== 'cancelled') return null;
 
   const arrivalDate = String(booking['arrival_date'] ?? room['checkin_date'] ?? '');
   const departureDate = String(booking['departure_date'] ?? room['checkout_date'] ?? '');
+  const roomCode = String(room['room_type_id'] ?? room['room_type'] ?? '');
+  const rateCode = String(room['rate_plan_id'] ?? room['rate_plan'] ?? room['parent_rate_plan_id'] ?? '');
+  if (status !== 'cancelled' && (!roomCode || !rateCode || !arrivalDate || departureDate <= arrivalDate)) {
+    return null;
+  }
+  const insertedAt = String(attributes['inserted_at'] ?? booking['inserted_at'] ?? '');
+  const channelBookingDate = new Date(/(?:Z|[+-]\d\d:\d\d)$/i.test(insertedAt) ? insertedAt : `${insertedAt}Z`);
 
   return {
-    externalConfirmation,
-    externalRevisionId: revisionId || undefined,
+    externalConfirmation: bookingId,
+    externalRevisionId: revisionId,
     channelCode: 'channex',
-    channelHotelId: String(booking['property_id'] ?? propertyId),
+    channelHotelId: incomingProperty,
     guestFirstName: String(customer['name'] ?? customer['first_name'] ?? 'Guest'),
     guestLastName: String(customer['surname'] ?? customer['last_name'] ?? ''),
     guestEmail: customer['mail'] != null ? String(customer['mail']) : undefined,
     guestPhone: customer['phone'] != null ? String(customer['phone']) : undefined,
-    channelRoomCode: String(room['room_type_id'] ?? room['room_type'] ?? ''),
-    channelRateCode: String(room['rate_plan_id'] ?? room['rate_plan'] ?? ''),
+    channelRoomCode: roomCode,
+    channelRateCode: rateCode,
+    channelParentRateCode: typeof room['parent_rate_plan_id'] === 'string' ? room['parent_rate_plan_id'] : undefined,
     arrivalDate,
     departureDate,
     adults: Number(
@@ -189,8 +198,7 @@ export function mapChannexRevisionToHaip(
     totalAmount: Number(booking['amount'] ?? booking['total_price'] ?? 0),
     currencyCode: String(booking['currency'] ?? 'USD'),
     status,
-    channelBookingDate: new Date(String(attributes['inserted_at'] ?? Date.now())),
-    rawPayload: revision,
+    channelBookingDate,
   };
 }
 
