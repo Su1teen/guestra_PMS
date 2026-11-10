@@ -20,6 +20,19 @@ Content-Type: application/json
 
 Role: `admin` or `night_auditor`
 
+## Expired booking options
+
+Tentative (option) bookings whose deadline passed are released or reported to staff, per the property's
+booking policy (`optionExpiryAction`). The night audit runs the same sweep; schedule it more often
+(for example every 15 minutes) so rooms are released during the day.
+
+```
+POST /reservations/options/sweep?propertyId=<uuid>
+Authorization: Bearer <token>
+```
+
+Permission: `reservations.write`
+
 ## AI agent training
 
 Train all enabled agents on property history (recommended nightly).

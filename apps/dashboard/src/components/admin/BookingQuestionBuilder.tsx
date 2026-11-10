@@ -271,7 +271,7 @@ export default function BookingQuestionBuilder({
           <p className="text-xs text-telivity-slate mt-1 max-w-2xl">
             {t('bookingEngine.questions.description')}
           </p>
-          <p className="text-[11px] font-medium text-telivity-slate mt-2">
+          <p className="text-[12px] font-medium text-telivity-slate mt-2">
             {t('bookingEngine.questions.count', { count: questions.length, max: MAX_QUESTIONS })}
           </p>
         </div>
@@ -370,15 +370,15 @@ function QuestionList({
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium text-telivity-navy break-words">{question.label}</span>
-                  <span className="rounded-full bg-telivity-deep-blue/10 px-2 py-0.5 text-[11px] font-medium text-telivity-deep-blue">
+                  <span className="rounded-full bg-telivity-deep-blue/10 px-2 py-0.5 text-[12px] font-medium text-telivity-deep-blue">
                     {supported
                       ? t(`bookingEngine.questions.types.${question.type}`)
                       : t('bookingEngine.questions.unsupportedType')}
                   </span>
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${question.isRequired ? 'bg-telivity-orange/10 text-telivity-navy' : 'bg-gray-100 text-telivity-slate'}`}>
+                  <span className={`rounded-full px-2 py-0.5 text-[12px] font-medium ${question.isRequired ? 'bg-telivity-orange/10 text-telivity-navy' : 'bg-gray-100 text-telivity-slate'}`}>
                     {question.isRequired ? t('bookingEngine.questions.required') : t('bookingEngine.questions.optional')}
                   </span>
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${question.isActive ? 'bg-telivity-deep-blue/10 text-telivity-deep-blue' : 'bg-gray-100 text-telivity-slate'}`}>
+                  <span className={`rounded-full px-2 py-0.5 text-[12px] font-medium ${question.isActive ? 'bg-telivity-deep-blue/10 text-telivity-deep-blue' : 'bg-gray-100 text-telivity-slate'}`}>
                     {question.isActive ? t('bookingEngine.questions.active') : t('bookingEngine.questions.inactive')}
                   </span>
                 </div>

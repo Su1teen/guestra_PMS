@@ -283,7 +283,7 @@ export default function CreateGuestModal({
                 <span>{t('guests.labels.dateOfBirth')}</span>
                 {age !== null && (
                   <span
-                    className={`text-[11px] font-bold ${isMinor ? 'text-purple-700' : 'text-slate-500'}`}
+                    className={`text-[12px] font-bold ${isMinor ? 'text-purple-700' : 'text-slate-500'}`}
                   >
                     {t('guests.ageYears', { age })}{' '}
                     {isMinor ? `(${t('guests.minorBadgeShort')})` : ''}
@@ -340,7 +340,7 @@ export default function CreateGuestModal({
                   {minorGuardianRequired ? '*' : ''}
                 </span>
                 <span
-                  className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${minorGuardianRequired
+                  className={`text-[12px] font-bold px-2 py-0.5 rounded-md ${minorGuardianRequired
                     ? 'text-purple-800 bg-purple-100 border border-purple-200'
                     : 'text-slate-700 bg-slate-100'
                     }`}
@@ -373,7 +373,7 @@ export default function CreateGuestModal({
                     </span>
                     {isBR && guardianTaxId && (
                       <span
-                        className={`text-[10px] font-semibold ${isGuardianCpfValid
+                        className={`text-[12px] font-semibold ${isGuardianCpfValid
                           ? 'text-green-700'
                           : 'text-amber-700'
                           }`}

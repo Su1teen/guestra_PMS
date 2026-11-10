@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Reflector } from '@nestjs/core';
 import { renderFolioDocument, type FolioDocumentData } from './folio-document.renderer';
 import { FolioController } from './folio.controller';
+import { stayNights } from './folio-document.service';
 import { PERMISSIONS_KEY } from '../auth/permissions.decorator';
 
 const base: FolioDocumentData = {
@@ -43,6 +44,29 @@ describe('renderFolioDocument', () => {
     const html = renderFolioDocument({ ...base, final: false, balance: '10000.00', totalPayments: '50000.00' });
     expect(html).toContain('Предварительное фолио');
     expect(html).not.toContain('class="paid"');
+  });
+
+  it('shows price per night with the head count and child ages', () => {
+    const html = renderFolioDocument({ ...base, party: { adults: 2, children: 1, childAges: [7] }, guests: 3, nights: [
+      { date: '2026-10-26', guests: 3, amount: '25000.00', tax: '0.00', posted: true },
+      { date: '2026-10-27', guests: 3, amount: '25000.00', tax: '0.00', posted: false },
+    ] });
+    expect(html).toContain('Проживание по ночам');
+    expect(html).toContain('Цена за ночь');
+    expect(html).toContain('2 взр., 1 дет. (7 лет)');
+    expect(html).toContain('по тарифу брони');
+    expect(html).toContain('2 ночи');
+  });
+
+  it('builds nights from posted room charges and the tariff, netting reversals', () => {
+    const nights = stayNights([
+      { serviceDate: '2026-10-26T12:00:00.000Z', amount: '25000.00', taxAmount: '0' },
+      { serviceDate: '2026-10-26T12:00:00.000Z', amount: '-5000.00', taxAmount: '0' },
+    ], [{ date: '2026-10-26', roomAmount: '25000.00', taxAmount: '0.00' }, { date: '2026-10-27', roomAmount: '26000.00', taxAmount: '100.00' }], 3);
+    expect(nights).toEqual([
+      { date: '2026-10-26', guests: 3, posted: true, amount: '20000.00', tax: '0.00' },
+      { date: '2026-10-27', guests: 3, posted: false, amount: '26000.00', tax: '100.00' },
+    ]);
   });
 
   it('escapes guest supplied text', () => {

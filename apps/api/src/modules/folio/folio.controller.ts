@@ -29,6 +29,8 @@ import {
 } from './dto/fiscal-document.dto';
 import { FiscalDocumentService } from './fiscal-document.service';
 import { FolioDocumentService } from './folio-document.service';
+import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
+import { SendFolioDocumentDto } from './dto/send-folio-document.dto';
 
 @ApiTags('folios')
 @Controller('folios')
@@ -107,6 +109,15 @@ export class FolioController {
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
   ) {
     return this.folioDocumentService.render(id, propertyId);
+  }
+
+  @Post(':id/document/send')
+  @RequirePermissions('folios.read')
+  @ApiOperation({ summary: 'Email the folio / receipt to the guest (audited)' })
+  @ApiQuery({ name: 'propertyId', type: String })
+  sendFolioDocument(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: SendFolioDocumentDto, @AuditActorCtx() actor: AuditActor) {
+    return this.folioDocumentService.send(id, propertyId, dto.email, actor);
   }
 
   @Get(':id')

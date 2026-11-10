@@ -51,7 +51,7 @@ export default function WorkspaceReportWidget({ widget }: { widget: WorkspaceWid
   return <div className={widget.settings.density === 'compact' ? 'p-3' : 'p-5'}>
     <p className="text-xs text-gray-500 truncate" title={`${property.name} · ${start}${end !== start ? ' — '+end : ''}`}>{start}{end !== start && ' — ' + end} · {property.name}</p>
     <p className="my-2 workspace-kpi-value text-telivity-navy">{formatted}</p>
-    <p className="text-[10px] text-gray-500 line-clamp-1" title={widget.type==='earnedRevenue'?'Подписанные проводки по дате услуги; налоги и депозиты исключены.':t('workspace.reportBasis.' + widget.type, { date: today })}>{widget.type==='earnedRevenue'?'Подписанные проводки по дате услуги; налоги и депозиты исключены.':t('workspace.reportBasis.' + widget.type, { date: today })}</p>
+    <p className="text-[12px] text-gray-500 line-clamp-1" title={widget.type==='earnedRevenue'?'Подписанные проводки по дате услуги; налоги и депозиты исключены.':t('workspace.reportBasis.' + widget.type, { date: today })}>{widget.type==='earnedRevenue'?'Подписанные проводки по дате услуги; налоги и депозиты исключены.':t('workspace.reportBasis.' + widget.type, { date: today })}</p>
     {widget.type === 'bookingPace' && <ul className="mt-3 space-y-1 text-xs">{(data?.daily ?? []).map((row: { date: string; roomsOnBooks: number }) => <li key={row.date} className="flex justify-between"><span>{row.date}</span><span>{row.roomsOnBooks}</span></li>)}</ul>}
   </div>;
 }

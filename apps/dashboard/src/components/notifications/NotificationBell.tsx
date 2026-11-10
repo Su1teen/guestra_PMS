@@ -129,7 +129,7 @@ export default function NotificationBell({ className }: NotificationBellProps) {
       >
         <Bell size={18} className="text-telivity-slate" />
         {unreadCount > 0 && (
-          <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-telivity-orange text-white text-[10px] font-bold flex items-center justify-center">
+          <span className="absolute top-1 right-1 min-w-[16px] h-4 px-1 rounded-full bg-telivity-orange text-white text-[12px] font-bold flex items-center justify-center">
             {unreadCount > 9 ? '9+' : unreadCount}
           </span>
         )}
@@ -178,7 +178,7 @@ export default function NotificationBell({ className }: NotificationBellProps) {
                         <p className="text-sm font-medium text-telivity-navy">{staffNotificationText(n).title}</p>
                         <p className="text-xs text-telivity-mid-grey mt-0.5 line-clamp-2">{staffNotificationText(n).message}</p>
                         {notificationAction(n, hasPermission) && <span className="mt-2 block text-xs font-semibold text-telivity-teal">{t('staffNotifications.open')} →</span>}
-                        <p className="text-[10px] text-telivity-mid-grey mt-1">
+                        <p className="text-[12px] text-telivity-mid-grey mt-1">
                           {format(new Date(n.createdAt), 'd MMM, HH:mm', { locale: getDateLocale(i18n.resolvedLanguage) })}
                         </p>
                       </button>

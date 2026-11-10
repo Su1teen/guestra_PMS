@@ -42,7 +42,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
   return (
     <>
-      <header className="h-14 bg-white border-b border-gray-200 flex items-center justify-between px-3 sm:px-6">
+      <header className="h-16 bg-white border-b border-line flex items-center justify-between px-3 sm:px-6">
         <div className="flex min-w-0 items-center gap-2 sm:gap-4">
           <button
             onClick={onMenuClick}
@@ -55,7 +55,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
           <div className="relative min-w-0">
             <button
               onClick={() => setOpen(!open)}
-              className="flex min-w-0 w-full max-w-[120px] sm:max-w-[260px] items-center gap-1 px-2 sm:px-3 py-1.5 rounded-lg border border-gray-200 hover:border-telivity-teal text-sm font-medium transition-colors"
+              className="flex min-w-0 w-full max-w-[120px] sm:max-w-[260px] items-center gap-1 h-9 px-2 sm:px-3 rounded-lg border border-gray-300 hover:border-telivity-teal text-sm font-semibold transition-colors"
               aria-haspopup="listbox"
               aria-expanded={open}
             >
@@ -97,11 +97,11 @@ export default function Header({ onMenuClick }: HeaderProps) {
 
           <button
             onClick={() => setSearchOpen(true)}
-            className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-gray-200 hover:border-telivity-teal text-sm text-telivity-mid-grey transition-colors min-w-[180px]"
+            className="hidden sm:flex items-center gap-2 h-9 px-3 rounded-lg border border-gray-300 hover:border-telivity-teal text-sm text-telivity-mid-grey transition-colors min-w-[220px]"
           >
             <Search size={14} />
             <span className="flex-1 text-left">{t('header.search')}</span>
-            <kbd className="text-[10px] bg-telivity-light-grey px-1.5 py-0.5 rounded">⌘K</kbd>
+            <kbd className="text-[12px] bg-telivity-light-grey px-1.5 py-0.5 rounded">⌘K</kbd>
           </button>
 
           <span className="whitespace-nowrap text-sm text-telivity-mid-grey hidden xl:inline">
@@ -173,7 +173,7 @@ export default function Header({ onMenuClick }: HeaderProps) {
             <div className="flex items-center gap-2 ml-2 pl-3 border-l border-gray-200">
               <div className="hidden sm:block text-right">
                 <p className="text-xs font-medium text-telivity-slate">{user.name || user.email}</p>
-                <p className="text-[10px] text-telivity-mid-grey capitalize">
+                <p className="text-[12px] text-telivity-mid-grey capitalize">
                   {roles.filter(r => !r.startsWith('default-')).join(', ') || t('header.user')}
                 </p>
               </div>

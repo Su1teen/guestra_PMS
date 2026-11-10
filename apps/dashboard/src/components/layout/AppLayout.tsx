@@ -1,4 +1,5 @@
 import { useState, useEffect, useLayoutEffect, useCallback, type ReactNode, useMemo } from 'react';
+import { actionColorTokens, ACTION_TOKEN_NAMES } from '../../lib/theme';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import { useAuth } from '../../context/AuthContext';
@@ -37,6 +38,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       root.style.setProperty('--staff-primary', activeProperty.staffPrimaryColor);
     } else {
       root.style.removeProperty('--staff-primary');
+    }
+    // The hotel accent becomes the action colour when it keeps button labels readable.
+    const tokens = actionColorTokens(activeProperty?.staffAccentColor);
+    for (const name of ACTION_TOKEN_NAMES) {
+      if (tokens) root.style.setProperty(name, tokens[name]);
+      else root.style.removeProperty(name);
     }
     if (activeProperty?.staffAccentColor) {
       root.style.setProperty('--staff-accent', activeProperty.staffAccentColor);

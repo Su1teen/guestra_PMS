@@ -11,6 +11,7 @@ describe('ReservationStateMachine', () => {
     const validTransitions: [ReservationStatus, ReservationStatus][] = [
       ['pending', 'confirmed'],
       ['pending', 'cancelled'],
+      ['pending', 'assigned'], // tentative stay holding a room is confirmed
       ['confirmed', 'assigned'],
       ['confirmed', 'cancelled'],
       ['confirmed', 'no_show'],
@@ -35,7 +36,6 @@ describe('ReservationStateMachine', () => {
       ['pending', 'checked_in'],
       ['pending', 'checked_out'],
       ['pending', 'no_show'],
-      ['pending', 'assigned'],
       ['confirmed', 'checked_in'],
       ['confirmed', 'checked_out'],
       ['assigned', 'confirmed'],
@@ -83,7 +83,7 @@ describe('ReservationStateMachine', () => {
 
   describe('getValidTransitions', () => {
     it('should return valid transitions for pending', () => {
-      expect(getValidTransitions('pending')).toEqual(['confirmed', 'cancelled']);
+      expect(getValidTransitions('pending')).toEqual(['confirmed', 'assigned', 'cancelled']);
     });
 
     it('should return empty array for terminal states', () => {

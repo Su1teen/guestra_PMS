@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 import type { RatePlanService } from './rate-plan.service';
 import type { TaxService } from '../tax/tax.service';
+import { occupancySupplementDetail, type OccupancySupplement } from './child-pricing';
 
 type CanonicalRoomPricingInput = {
   propertyId: string;
@@ -15,12 +16,12 @@ type CanonicalRoomPricingInput = {
   db?: any;
   lockForUpdate?: boolean;
   /** Party size; applies the rate plan's occupancy supplements when the plan defines them. */
-  occupancy?: { adults: number; children: number };
+  occupancy?: { adults: number; children: number; childAges?: number[] | null };
 };
 
 /**
- * Supplement per night for guests above the room type default occupancy.
- * Adults fill the included places first; every further adult or child pays the plan's supplement.
+ * Supplement per night for guests above the room type default occupancy (count-based, no ages).
+ * Kept for callers that only know head counts; see `occupancySupplementDetail` for age bands.
  */
 export function occupancySupplementAmount(
   plan: { extraAdultAmount?: string | null; extraChildAmount?: string | null },
@@ -28,10 +29,13 @@ export function occupancySupplementAmount(
   adults: number,
   children: number,
 ): string {
-  const extraAdults = Math.max(0, adults - includedOccupancy);
-  const extraChildren = Math.max(0, Math.min(children, adults + children - includedOccupancy));
-  return new Decimal(plan.extraAdultAmount ?? 0).times(extraAdults)
-    .plus(new Decimal(plan.extraChildAmount ?? 0).times(extraChildren)).toFixed(2);
+  return occupancySupplementDetail(plan, includedOccupancy, adults, children, null, null).amount;
+}
+
+/** Accepts the detailed result and the plain amount older test doubles return. */
+function asSupplement(value: OccupancySupplement | string | number | undefined): OccupancySupplement {
+  if (value && typeof value === 'object') return value;
+  return { amount: new Decimal(value ?? 0).toFixed(2), lines: [] };
 }
 
 /** Canonical room-only pricing shared by Booking Engine Search and Quote. */
@@ -41,10 +45,11 @@ export async function calculateCanonicalRoomPricing(input: CanonicalRoomPricingI
   let roomTotal = new Decimal(0);
   let taxTotal = new Decimal(0);
   const arrival = new Date(input.checkIn);
-  const supplement = new Decimal(input.occupancy
+  const occupancy = asSupplement(input.occupancy
     ? await input.ratePlanService.occupancySupplement(input.ratePlanId, input.propertyId,
-      input.occupancy.adults, input.occupancy.children, input.db)
-    : 0);
+      input.occupancy.adults, input.occupancy.children, input.db, input.occupancy.childAges)
+    : undefined);
+  const supplement = new Decimal(occupancy.amount);
 
   for (let i = 0; i < input.nights; i++) {
     const date = new Date(arrival);
@@ -108,5 +113,7 @@ export async function calculateCanonicalRoomPricing(input: CanonicalRoomPricingI
     roomTotal: roomTotal.toFixed(2),
     taxTotal: taxTotal.toFixed(2),
     totalAmount: roomTotal.plus(taxTotal).toFixed(2),
+    /** Per-night supplement included in every night's rate, with the guests it is charged for. */
+    occupancySupplement: occupancy,
   };
 }

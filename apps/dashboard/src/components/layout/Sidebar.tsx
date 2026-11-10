@@ -76,15 +76,15 @@ export default function Sidebar({ mobileOpen, onClose, collapsed, onToggleCollap
         {sections.map(section => <div key={section.labelKey}>
           {section.advanced ? <button type="button" onClick={() => setAdvancedOpen(!showAdvanced)}
             aria-expanded={showAdvanced} aria-controls="advanced-navigation" title={t(section.labelKey)}
-            className={`sidebar-link flex items-center gap-3 w-full px-4 py-3 text-xs font-semibold text-white/70 hover:bg-white/5 ${advancedActive ? 'text-telivity-teal' : ''}`}>
+            className={`sidebar-link flex items-center gap-3 w-full px-4 py-3 text-xs font-semibold text-white/70 hover:bg-white/5 ${advancedActive ? 'text-white' : ''}`}>
             <Settings2 size={18} className="shrink-0" aria-hidden="true" />
             <span className="sidebar-label flex-1 text-left">{t(section.labelKey)}</span>
             <span className="sidebar-label">{showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-          </button> : <p className="sidebar-section px-4 pt-4 pb-1 text-[10px] font-semibold uppercase tracking-wider text-white/40">{t(section.labelKey)}</p>}
+          </button> : <p className="sidebar-section px-4 pt-4 pb-1 text-[12px] font-semibold uppercase tracking-wider text-white/55">{t(section.labelKey)}</p>}
           {(!section.advanced || showAdvanced) && <div id={section.advanced ? 'advanced-navigation' : undefined}>
             {section.items.map(({ to, icon: Icon, labelKey }) => <NavLink key={to} to={propertyHref(to, propertyId)}
               onClick={onClose} title={t(labelKey)} aria-label={t(labelKey)} aria-current={active === to ? 'page' : false}
-              className={`sidebar-link flex items-center gap-3 px-4 py-2.5 text-sm font-medium border-r-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-telivity-teal ${active === to ? 'bg-telivity-teal/15 text-telivity-teal border-telivity-teal' : 'text-white/70 hover:text-white hover:bg-white/5 border-transparent'}`}>
+              className={`sidebar-link flex items-center gap-3 px-4 py-2.5 text-sm font-medium border-r-2 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-telivity-teal ${active === to ? 'bg-white/10 text-white border-transparent shadow-[inset_3px_0_0_rgb(var(--color-primary-soft))]' : 'text-white/75 hover:text-white hover:bg-white/5 border-transparent'}`}>
               <Icon size={18} className="shrink-0" aria-hidden="true" /><span className="sidebar-label truncate">{t(labelKey)}</span>
             </NavLink>)}
           </div>}

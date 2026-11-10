@@ -675,11 +675,11 @@ function RateParity() {
                               label={ch.isParity ? t('channels.inParity') : t('channels.violation')}
                             />
                             {ch.hasOverride && (
-                              <span className="text-[10px] text-telivity-mid-grey uppercase">{t('channels.override')}</span>
+                              <span className="text-[12px] text-telivity-mid-grey uppercase">{t('channels.override')}</span>
                             )}
                           </div>
                           {!ch.isParity && (
-                            <div className="text-[10px] text-amber-600 mt-0.5">
+                            <div className="text-[12px] text-amber-600 mt-0.5">
                               {t('channels.variance')}: {formatMoney(ch.variance, currencyCode)}
                             </div>
                           )}

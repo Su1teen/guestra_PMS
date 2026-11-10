@@ -161,7 +161,7 @@ export default function IdSwipeCapture({ active, onParsed }: IdSwipeCaptureProps
 
   if (status === 'idle') {
     return (
-      <p className="text-[11px] text-telivity-mid-grey flex items-center gap-1.5">
+      <p className="text-[12px] text-telivity-mid-grey flex items-center gap-1.5">
         <CreditCard size={12} className="text-telivity-teal shrink-0" />
         {t('guests.idSwipeHint')}
       </p>
@@ -188,7 +188,7 @@ export default function IdSwipeCapture({ active, onParsed }: IdSwipeCaptureProps
             defaultValue: 'Swipe not read',
           })}
         </p>
-        <p className="text-[11px] text-telivity-mid-grey mt-0.5">{summary}</p>
+        <p className="text-[12px] text-telivity-mid-grey mt-0.5">{summary}</p>
       </div>
     </div>
   );

@@ -15,7 +15,7 @@ export default function PortfolioRevenue({ data, names }: { data: any; names: Ma
         <p className="text-xs text-telivity-mid-grey">{group.actual?.status} · {group.actual?.closedDays}/{group.actual?.expectedDays} · ADR {formatMoney(kpis.adr, group.currencyCode)} · RevPAR {formatMoney(kpis.revpar, group.currencyCode)}</p>
         <ResponsiveContainer width="100%" height={200}><BarChart data={rows}>
           <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 11 }} />
-          <Tooltip formatter={(value: number) => formatMoney(value, group.currencyCode)} /><Bar dataKey="revenue" fill="#06bdb4" radius={[4, 4, 0, 0]} />
+          <Tooltip formatter={(value: number) => formatMoney(value, group.currencyCode)} /><Bar dataKey="revenue" fill="#3657E8" radius={[4, 4, 0, 0]} />
         </BarChart></ResponsiveContainer>
         <div className="text-xs">{rows.map((row: any) => <p key={row.name}>{row.name} · {row.date} · {row.actualStatus} · {formatMoney(row.revenue, group.currencyCode)} · {group.currencyCode}</p>)}</div>
       </section>;

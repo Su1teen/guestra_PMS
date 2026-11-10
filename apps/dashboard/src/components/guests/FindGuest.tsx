@@ -96,7 +96,7 @@ export default function FindGuest({
                   {selectedGuest.firstName} {selectedGuest.lastName}
                 </span>
                 {isBR && checkFnrhComplete(selectedGuest) && (
-                  <span className="inline-flex items-center gap-0.5 text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
+                  <span className="inline-flex items-center gap-0.5 text-[12px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 rounded">
                     <ShieldCheck size={11} /> FNRH
                   </span>
                 )}
@@ -171,7 +171,7 @@ export default function FindGuest({
                           {g.firstName} {g.lastName}
                         </span>
                         {isBR && checkFnrhComplete(g) && (
-                          <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
+                          <span className="text-[12px] font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100">
                             FNRH
                           </span>
                         )}

@@ -1,6 +1,6 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { and, asc, eq, gt, lt, notInArray, sql } from 'drizzle-orm';
-import { bookings, guests, reservations, rooms, roomTypes, icalBlocks, icalFeeds, folios, roomInventoryBlocks, properties } from '@telivityhaip/database';
+import { bookings, guests, reservations, rooms, roomTypes, icalBlocks, icalFeeds, folios, roomInventoryBlocks, properties, ratePlans } from '@telivityhaip/database';
 import { activeInventoryBlockConditions } from '../room/room-inventory-policy';
 import { DRIZZLE } from '../../database/database.module';
 import { AvailabilityService, stayDates } from './availability.service';
@@ -33,8 +33,15 @@ export class ReservationCalendarService {
         status: reservations.status, totalAmount: reservations.totalAmount, currencyCode: reservations.currencyCode,
         firstName: guests.firstName, lastName: guests.lastName,
         confirmationNumber: bookings.confirmationNumber, source: bookings.source,
+        // Hover card on the tape chart: party, tentative terms, group and request — no extra request per hover.
+        bookingId: reservations.bookingId, groupName: bookings.groupName, nights: reservations.nights,
+        adults: reservations.adults, children: reservations.children, childAges: reservations.childAges,
+        optionUntil: reservations.optionUntil, requiredDeposit: reservations.requiredDeposit, guaranteeType: reservations.guaranteeType,
+        confirmedAt: reservations.confirmedAt, proposalSentAt: reservations.proposalSentAt, confirmationSentAt: reservations.confirmationSentAt,
+        specialRequests: reservations.specialRequests, ratePlanName: ratePlans.name,
       }).from(reservations)
         .innerJoin(bookings, and(eq(bookings.id, reservations.bookingId), eq(bookings.propertyId, property)))
+        .leftJoin(ratePlans, and(eq(ratePlans.id, reservations.ratePlanId), eq(ratePlans.propertyId, property)))
         .innerJoin(guests, eq(guests.id, reservations.guestId))
         .where(and(eq(reservations.propertyId, property), lt(reservations.arrivalDate, dto.checkOut), gt(reservations.departureDate, dto.checkIn), notInArray(reservations.status, ['cancelled', 'no_show', 'checked_out'] as any)))
         .orderBy(asc(reservations.arrivalDate), asc(reservations.id));

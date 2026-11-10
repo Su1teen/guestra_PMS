@@ -41,14 +41,14 @@ import PortfolioRevenue from '../components/revenue/PortfolioRevenue';
 import ReceivablesCurrencyNotice from '../components/revenue/ReceivablesCurrencyNotice';
 
 const ROOM_STATUS_COLORS: Record<string, string> = {
-  occupied: '#06bdb4',
-  vacant_clean: '#00a692',
-  vacant_dirty: '#f2641b',
-  out_of_order: '#eec517',
-  out_of_service: '#bbbbc4',
-  clean: '#00a692',
-  inspected: '#016491',
-  guest_ready: '#2cd1b9',
+  occupied: '#3657E8',
+  vacant_clean: '#12B76A',
+  vacant_dirty: '#F79009',
+  out_of_order: '#D92D20',
+  out_of_service: '#98A2B3',
+  clean: '#12B76A',
+  inspected: '#027A48',
+  guest_ready: '#32D583',
 };
 
 interface ActivityEvent {
@@ -581,7 +581,7 @@ function PropertyDashboard() {
 }
 
 function ManagementMetric({ label, value }: { label: string; value: string | number }) {
-  return <div className="rounded-lg bg-gray-50 p-3 min-w-0"><p className="text-[11px] text-telivity-mid-grey truncate">{label}</p><p className="mt-1 text-sm font-semibold text-telivity-navy truncate">{value}</p></div>;
+  return <div className="rounded-lg bg-gray-50 p-3 min-w-0"><p className="text-[12px] text-telivity-mid-grey truncate">{label}</p><p className="mt-1 text-sm font-semibold text-telivity-navy truncate">{value}</p></div>;
 }
 
 function formatDelta(value: number | null | undefined) {

@@ -14,14 +14,19 @@ beforeEach(() => {
   sessionStorage.clear();
   vi.mocked(api.get).mockImplementation(async url => ({ data: url.includes('/360')
     ? { guest: { id: 'guest-a', firstName: 'Анна', lastName: 'Иванова' }, stays: [], bookedServices: [] }
-    : [{ id: 'plan-a', name: 'Тариф A', roomTypeId: 'type-a' }] }));
+    : url.includes('/booking-policy')
+      ? { childAgeBands: [{ code: 'child_0_5', label: '0–5', minAge: 0, maxAge: 5, occupiesBed: true }], childAgeBandsConfigured: true,
+        optionHoldHours: null, optionExpiryAction: null, depositPercentage: 30, autoSendConfirmation: true }
+      : url.includes('/confirmation')
+        ? { kind: 'proposal', status: 'pending', guest: { name: 'Анна', email: null, phone: null }, sent: { proposalAt: null, confirmationAt: null }, guarantee: {} }
+        : [{ id: 'plan-a', name: 'Тариф A', roomTypeId: 'type-a' }] }));
   vi.mocked(api.post).mockImplementation(async (url) => ({ data: url === '/v1/reservations/quote' ? price : { id: 'reservation-a' } }));
   vi.mocked(api.patch).mockResolvedValue({ data: {} });
 });
 async function start() {
   renderWithProviders(<CreateReservationModal open prefill={prefill} onClose={vi.fn()}/>);
   await userEvent.click(screen.getByRole('button', { name: 'Select test guest' }));
-  const button = await screen.findByRole('button', { name: /Create and confirm/ });
+  const button = await screen.findByRole('button', { name: /Create option/ });
   await waitFor(() => expect(button).toBeEnabled());
   return button;
 }
@@ -29,6 +34,30 @@ describe('calendar booking server price', () => {
   it('creates using server decimals and the selected property', async () => {
     await userEvent.click(await start());
     await waitFor(() => expect(api.post).toHaveBeenCalledWith('/v1/reservations/staff-create', expect.objectContaining({ expectedTotal: '2640.02', currencyCode: 'KZT', propertyId: 'hotel-a', ratePlanId: 'plan-a' }), expect.anything()));
+  });
+  it('starts as a tentative option with the policy guarantee and offers the guest document next', async () => {
+    await userEvent.click(await start());
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/v1/reservations/staff-create',
+      expect.objectContaining({ confirmation: 'tentative', requiredDeposit: '792.01', optionUntil: null }), expect.anything()));
+    expect(await screen.findByText('Guest document')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Send to guest/ })).toBeInTheDocument();
+  });
+  it('prices children by age and blocks pricing until every age is set', async () => {
+    renderWithProviders(<CreateReservationModal open prefill={prefill} onClose={vi.fn()}/>);
+    await userEvent.click(screen.getByRole('button', { name: 'Select test guest' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Children +' }));
+    expect(await screen.findByText('Enter the age of every child to price the stay.')).toBeInTheDocument();
+    await userEvent.selectOptions(screen.getByLabelText('Age of child 1'), '4');
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/v1/reservations/quote', expect.objectContaining({ childAges: [4] }), expect.anything()));
+  });
+  it('sends the guarantee type when created as confirmed', async () => {
+    const button = await start();
+    await userEvent.click(screen.getByRole('radio', { name: /Confirmed now/ }));
+    await userEvent.selectOptions(screen.getByLabelText('Guarantee'), 'card');
+    await userEvent.click(await screen.findByRole('button', { name: /Create and confirm/ }));
+    expect(button).toBeDefined();
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/v1/reservations/staff-create',
+      expect.objectContaining({ confirmation: 'confirmed', guaranteeType: 'card' }), expect.anything()));
   });
   it('refuses creation when the fresh quote changes', async () => {
     const button = await start();

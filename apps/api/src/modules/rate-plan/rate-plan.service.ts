@@ -19,7 +19,8 @@ import type { PricingMutationDto } from './dto/pricing-mutation.dto';
 import type { LiveRateChangeDto, LiveCalendarQueryDto } from './dto/live-rate.dto';
 import type { WebhookEvent } from '@telivityhaip/shared';
 import { TaxService } from '../tax/tax.service';
-import { calculateCanonicalRoomPricing, occupancySupplementAmount } from './canonical-room-pricing';
+import { calculateCanonicalRoomPricing } from './canonical-room-pricing';
+import { normaliseBands, occupancySupplementDetail, planHasSupplements, validateChildSupplements, type ChildAgeBand, type OccupancySupplement } from './child-pricing';
 import { CreateRatePlanDto } from './dto/create-rate-plan.dto';
 import { UpdateRatePlanDto } from './dto/update-rate-plan.dto';
 import { CreateRateRestrictionDto } from './dto/create-rate-restriction.dto';
@@ -183,12 +184,25 @@ export class RatePlanService {
   }
 
   /** Per-night occupancy supplement for a party on this rate plan ('0.00' when the plan prices per room only). */
-  async occupancySupplement(ratePlanId: string, propertyId: string, adults: number, children: number, db?: any): Promise<string> {
+  /**
+   * Per-night supplement for the party on this plan, with one line per charged guest.
+   * Child ages are priced by the property's age bands when given; otherwise the count-based rule applies.
+   */
+  async occupancySupplement(ratePlanId: string, propertyId: string, adults: number, children: number, db?: any,
+    childAges?: number[] | null): Promise<OccupancySupplement> {
     const plan = await this.findById(ratePlanId, propertyId, db);
-    if (plan.extraAdultAmount == null && plan.extraChildAmount == null) return '0.00';
-    const [type] = await (db ?? this.db).select({ defaultOccupancy: roomTypes.defaultOccupancy }).from(roomTypes)
+    if (!planHasSupplements(plan)) return { amount: '0.00', lines: [] };
+    const conn = db ?? this.db;
+    const [type] = await conn.select({ defaultOccupancy: roomTypes.defaultOccupancy }).from(roomTypes)
       .where(and(eq(roomTypes.id, plan.roomTypeId), eq(roomTypes.propertyId, propertyId)));
-    return occupancySupplementAmount(plan, type?.defaultOccupancy ?? 1, adults, children);
+    const bands = childAges?.length ? await this.childAgeBands(propertyId, conn) : null;
+    return occupancySupplementDetail(plan, type?.defaultOccupancy ?? 1, adults, children, childAges, bands);
+  }
+
+  /** The property's child age bands (defaults when not configured). */
+  async childAgeBands(propertyId: string, db?: any): Promise<ChildAgeBand[]> {
+    const [row] = await (db ?? this.db).select({ settings: properties.settings }).from(properties).where(eq(properties.id, propertyId));
+    return normaliseBands(row?.settings?.childAgeBands);
   }
 
   async update(id: string, propertyId: string, dto: UpdateRatePlanDto & Partial<PricingMutationDto>, actor?: AuditActor) {
@@ -620,6 +634,8 @@ export class RatePlanService {
     if (plan.validFrom) reportDate(plan.validFrom);
     if (plan.validTo) reportDate(plan.validTo);
     if (plan.validFrom && plan.validTo && plan.validTo < plan.validFrom) throw new BadRequestException('Invalid plan validity interval');
+    const childError = validateChildSupplements(plan.childSupplements, normaliseBands(property.settings?.childAgeBands));
+    if (childError) throw new BadRequestException(childError);
     for (const [table, value, label] of [[roomTypes, plan.roomTypeId, 'room type'], [cancellationPolicies, plan.cancellationPolicyId, 'cancellation policy'], [groupProfiles, plan.groupProfileId, 'group profile']] as const) {
       if (!value) continue;
       const [row] = await tx.select().from(table).where(and(eq(table.id, value), eq(table.propertyId, propertyId)));

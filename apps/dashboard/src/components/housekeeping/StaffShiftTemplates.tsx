@@ -190,7 +190,7 @@ export default function StaffShiftTemplates({
         сменах.
       </p>
       {notice && (
-        <p role="status" className="text-sm text-teal-700">
+        <p role="status" className="text-sm text-primary-700">
           {notice}
         </p>
       )}

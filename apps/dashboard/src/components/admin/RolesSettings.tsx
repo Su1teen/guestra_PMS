@@ -143,7 +143,7 @@ function PermissionMatrix({
         <div>
           <h2 className="text-sm font-semibold text-telivity-navy flex items-center gap-2">
             {role.name}
-            {readOnly && <span className="text-[10px] text-telivity-mid-grey uppercase tracking-wide flex items-center gap-1"><Lock size={11} /> {t('admin.systemRoleReadOnly')}</span>}
+            {readOnly && <span className="text-[12px] text-telivity-mid-grey uppercase tracking-wide flex items-center gap-1"><Lock size={11} /> {t('admin.systemRoleReadOnly')}</span>}
           </h2>
           {role.description && <p className="text-xs text-telivity-mid-grey mt-0.5">{role.description}</p>}
         </div>

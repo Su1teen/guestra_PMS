@@ -21,6 +21,7 @@ import { AccountingModule } from '../accounting/accounting.module';
 import { PolicyModule } from '../policy/policy.module';
 import { ReservationPricingService } from './reservation-pricing.service';
 import { ReservationConfirmationService } from './reservation-confirmation.service';
+import { ReservationGuaranteeService } from './reservation-guarantee.service';
 import { RatePlanModule } from '../rate-plan/rate-plan.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map.module';
@@ -54,12 +55,15 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     ReservationImportService,
     ReservationPricingService,
     ReservationConfirmationService,
+    ReservationGuaranteeService,
   ],
   exports: [
     ReservationService,
     ReservationPartyService,
     AvailabilityService,
     ReservationImportService,
+    ReservationGuaranteeService,
+    ReservationConfirmationService,
   ],
 })
 export class ReservationModule {}

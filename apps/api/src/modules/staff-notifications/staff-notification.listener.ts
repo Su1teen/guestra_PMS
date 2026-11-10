@@ -18,6 +18,8 @@ export class StaffNotificationListener {
   constructor(private readonly staffNotifications: StaffNotificationService) {}
 
   @OnEvent('reservation.created')
+  @OnEvent('reservation.confirmed')
+  @OnEvent('reservation.option_expired')
   @OnEvent('reservation.checked_in')
   @OnEvent('reservation.checked_out')
   @OnEvent('reservation.cancelled')
@@ -30,7 +32,7 @@ export class StaffNotificationListener {
   @OnEvent('payment.failed')
   async onHotelEvent(payload: WebhookPayload) {
     if (!payload.propertyId) return;
-    const titles: Record<string, string> = { 'reservation.created': 'Новая бронь', 'reservation.checked_in': 'Гость заселён',
+    const titles: Record<string, string> = { 'reservation.created': 'Новая бронь', 'reservation.confirmed': 'Бронь подтверждена', 'reservation.option_expired': 'Истёк срок опции — нет гарантии', 'reservation.checked_in': 'Гость заселён',
       'reservation.checked_out': 'Выезд оформлен', 'reservation.cancelled': 'Бронь отменена', 'reservation.room_moved': 'Номер изменён',
       'room.status_changed': 'Обновлён статус номера', 'guest_request.created': 'Новый запрос гостя', 'guest_request.completed': 'Запрос гостя выполнен',
       'maintenance.created': 'Новая заявка на ремонт', 'maintenance.completed': 'Ремонт завершён', 'payment.failed': 'Не удалось принять оплату' };
@@ -39,7 +41,7 @@ export class StaffNotificationListener {
     const title = titles[payload.event];
     if (!title) return;
     await this.staffNotifications.create({ propertyId: payload.propertyId, type: 'hotel_event', title,
-      message: 'Откройте событие, чтобы проверить детали и дальнейшие действия.', severity: payload.event === 'payment.failed' ? 'warning' : 'info',
+      message: 'Откройте событие, чтобы проверить детали и дальнейшие действия.', severity: ['payment.failed', 'reservation.option_expired'].includes(payload.event) ? 'warning' : 'info',
       sourceEvent: payload.event, sourceEntityType: payload.entityType, sourceEntityId: payload.entityId,
       requiredPermission: permission, deduplicationKey: key });
   }

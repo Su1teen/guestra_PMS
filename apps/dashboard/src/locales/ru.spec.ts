@@ -57,6 +57,8 @@ const UNTRANSLATED_BY_DESIGN = new Set([
   'reservationWorkspace.sources.ota',
   'reservationWorkspace.sources.gds',
   'guests.placeholders.email',
+  'booking.doc.email',
+  'booking.doc.sms',
   'houseAccounts.paymentMethods.pix',
   'reservations.messageChannelSms',
   'reservations.siblingUnassignedLine',

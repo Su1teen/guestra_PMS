@@ -120,7 +120,7 @@ export default function CommandPalette({ open, onClose }: CommandPaletteProps) {
                     }}
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-[10px] uppercase font-semibold text-telivity-teal bg-telivity-teal/10 px-1.5 py-0.5 rounded">
+                      <span className="text-[12px] uppercase font-semibold text-telivity-teal bg-telivity-teal/10 px-1.5 py-0.5 rounded">
                         {r.type}
                       </span>
                       <span className="text-sm font-medium text-telivity-navy truncate">{r.title}</span>

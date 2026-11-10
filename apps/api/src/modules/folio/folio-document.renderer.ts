@@ -19,6 +19,15 @@ export interface FolioDocumentPayment {
   amount: string;
 }
 
+/** One room night: billed charges when posted, otherwise the accepted tariff. */
+export interface FolioDocumentNight {
+  date: string;
+  guests: number;
+  amount: string;
+  tax: string;
+  posted: boolean;
+}
+
 export interface FolioDocumentData {
   final: boolean;
   folioNumber: string;
@@ -34,6 +43,10 @@ export interface FolioDocumentData {
   arrivalDate?: string | null;
   departureDate?: string | null;
   guests?: number | null;
+  /** Party of the stay; child ages are printed when recorded. */
+  party?: { adults: number; children: number; childAges: number[] } | null;
+  /** Price per night with the head count (checkout invoice requirement). */
+  nights?: FolioDocumentNight[];
   currencyCode: string;
   lines: FolioDocumentLine[];
   payments: FolioDocumentPayment[];
@@ -86,8 +99,10 @@ export function renderFolioDocument(data: FolioDocumentData): string {
   const stay = [
     data.arrivalDate && `Заезд ${formatDate(data.arrivalDate)}`,
     data.departureDate && `Выезд ${formatDate(data.departureDate)}`,
-    data.guests ? `${data.guests} гост.` : null,
+    partyText(data) ?? (data.guests ? `${data.guests} гост.` : null),
   ].filter(Boolean).join(' · ');
+  const nights = data.nights ?? [];
+  const nightsTotal = nights.reduce((sum, n) => sum + Number(n.amount) + Number(n.tax), 0);
   const room = [data.roomTypeName, data.roomNumber && `№ ${data.roomNumber}`].filter(Boolean).join(' · ');
   const subtitle = data.final
     ? Number(data.balance) === 0
@@ -116,10 +131,28 @@ th,td{padding:11px 7px;vertical-align:top}td{border-bottom:1px solid #e3e6e9}th.
 <h1>${esc(title)}</h1><p class="muted">${esc(subtitle)}</p>${data.final && Number(data.balance) === 0 ? '<span class="paid">Оплачено</span>' : ''}
 <section class="summary"><div>${row('Гость', esc(data.guestName))}${data.guestContact ? row('Контакт', esc(data.guestContact)) : ''}${data.confirmationNumber ? row('Бронь', esc(data.confirmationNumber)) : ''}</div>
 <div>${room ? row('Номер', esc(room)) : ''}${stay ? row('Проживание', esc(stay)) : ''}</div></section>
+${nights.length ? `<h2>Проживание по ночам</h2><table><thead><tr><th>Дата</th><th class="num">Гостей</th><th class="num">Цена за ночь</th><th class="num">Налог</th><th class="num">Сумма</th></tr></thead><tbody>
+${nights.map((n) => `<tr><td>${formatDate(n.date)}${n.posted ? '' : ' <span class="muted small">· по тарифу брони</span>'}</td><td class="num">${n.guests}</td><td class="num">${money(n.amount)}</td><td class="num">${Number(n.tax) !== 0 ? money(n.tax) : '—'}</td><td class="num">${money(Number(n.amount) + Number(n.tax))}</td></tr>`).join('')}
+<tr><td><strong>${nights.length} ${nightWord(nights.length)}</strong></td><td></td><td></td><td></td><td class="num"><strong>${money(nightsTotal)}</strong></td></tr></tbody></table>` : ''}
 <h2>Начисления</h2><table><thead><tr><th>Дата / позиция</th><th class="num">Налог</th><th class="num">Сумма</th></tr></thead><tbody>
 ${data.lines.length ? data.lines.map((line) => `<tr><td>${line.date ? `<span class="muted small">${formatDate(line.date, data.timeZone)}</span><br>` : ''}${esc(line.description)}</td><td class="num">${line.tax && Number(line.tax) !== 0 ? money(line.tax) : '—'}</td><td class="num">${money(line.amount)}</td></tr>`).join('') : '<tr><td colspan="3" class="muted">Начислений нет</td></tr>'}
 </tbody></table>
 <section class="totals">${row('Начислено', money(data.totalCharges))}${row('Оплачено', money(data.totalPayments))}<div class="meta-row total"><span>Остаток к оплате</span><strong>${money(data.balance)}</strong></div></section>
 ${data.payments.length ? `<h2>Оплаты</h2><table><thead><tr><th>Дата</th><th>Способ / номер</th><th class="num">Сумма</th></tr></thead><tbody>${data.payments.map((p) => `<tr><td>${formatDate(p.date, data.timeZone)}</td><td>${esc(p.method)}${p.reference ? ` · ${esc(p.reference)}` : ''}</td><td class="num">${money(p.amount)}</td></tr>`).join('')}</tbody></table>` : ''}
 <footer class="footer">${esc(data.propertyName)} · Фолио ${esc(data.folioNumber)} · ${formatDate(data.issueDate, data.timeZone)}</footer></main></body></html>`;
+}
+
+function nightWord(n: number) {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return 'ночь';
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'ночи';
+  return 'ночей';
+}
+
+/** "2 взр., 2 дет. (4, 9 лет)" when the party is known. */
+function partyText(data: FolioDocumentData): string | null {
+  const party = data.party;
+  if (!party) return null;
+  const kids = party.children ? `, ${party.children} дет.${party.childAges.length ? ` (${party.childAges.join(', ')} лет)` : ''}` : '';
+  return `${party.adults} взр.${kids}`;
 }

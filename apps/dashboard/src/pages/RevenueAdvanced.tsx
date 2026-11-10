@@ -256,7 +256,7 @@ function OrchestrationGraphSection({ propertyId }: { propertyId: string }) {
       >
         {agentLabel(t, agentType)}
         {node?.lastRunAt && (
-          <div className="mt-0.5 text-[10px] font-normal text-telivity-mid-grey">
+          <div className="mt-0.5 text-[12px] font-normal text-telivity-mid-grey">
             {new Date(node.lastRunAt).toLocaleString()}
           </div>
         )}
@@ -573,14 +573,14 @@ function PerformanceSection({ propertyId }: { propertyId: string }) {
               <span className="font-medium text-telivity-navy">{rm.averageHorizonDays}</span>
             </div>
           </div>
-          <p className="text-[10px] uppercase text-telivity-mid-grey mb-1">
+          <p className="text-[12px] uppercase text-telivity-mid-grey mb-1">
             {t('revenue.orchestrationLevers')}
           </p>
           <div className="flex flex-wrap gap-2">
             {Object.entries(rm.leverParticipation ?? {}).map(([k, v]) => (
               <span
                 key={k}
-                className="text-[10px] px-2 py-0.5 rounded bg-white border border-gray-100 text-telivity-slate"
+                className="text-[12px] px-2 py-0.5 rounded bg-white border border-gray-100 text-telivity-slate"
               >
                 {agentLabel(t, k)}: {v}
               </span>
@@ -764,7 +764,7 @@ function RevenueManagementSummary({ propertyId, currencyCode }: { propertyId: st
         <div><h2 className="font-semibold text-telivity-navy">{ru ? 'Состояние спроса и дохода' : 'Demand and revenue health'}</h2><p className="text-xs text-telivity-mid-grey">{ru ? 'Единые метрики с Dashboard и Reports' : 'The same metrics used by Dashboard and Reports'}</p></div>
         <span className="ml-auto rounded-full bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">{ru ? 'Данные PMS' : 'PMS data'}</span>
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">{metrics.map(([label, value]) => <div key={label} className="rounded-lg bg-telivity-light-grey/60 p-3"><p className="text-[11px] text-telivity-mid-grey">{label}</p><p className="mt-1 font-semibold text-telivity-navy">{value}</p></div>)}</div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">{metrics.map(([label, value]) => <div key={label} className="rounded-lg bg-telivity-light-grey/60 p-3"><p className="text-[12px] text-telivity-mid-grey">{label}</p><p className="mt-1 font-semibold text-telivity-navy">{value}</p></div>)}</div>
     </section>
   );
 }

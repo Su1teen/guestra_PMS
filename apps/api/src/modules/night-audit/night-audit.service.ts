@@ -4,6 +4,8 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  Optional,
+  Logger,
 } from '@nestjs/common';
 import { eq, and, inArray, sql, lte } from 'drizzle-orm';
 import Decimal from 'decimal.js';
@@ -20,6 +22,7 @@ import { DRIZZLE } from '../../database/database.module';
 import { withAcceptedPricingLock } from '../../common/database/accepted-pricing-lock';
 import { FolioService } from '../folio/folio.service';
 import { ReservationService } from '../reservation/reservation.service';
+import { ReservationGuaranteeService } from '../reservation/reservation-guarantee.service';
 import { HousekeepingService } from '../housekeeping/housekeeping.service';
 import { RoomStatusService } from '../room/room-status.service';
 import { WebhookService } from '../webhook/webhook.service';
@@ -36,6 +39,8 @@ import type {
 
 @Injectable()
 export class NightAuditService {
+  private readonly logger = new Logger(NightAuditService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: any,
     private readonly folioService: FolioService,
@@ -46,6 +51,7 @@ export class NightAuditService {
     private readonly ancillaryService: AncillaryService,
     private readonly policyService: PolicyService,
     private readonly depositSettlementService: DepositSettlementService,
+    @Optional() private readonly guaranteeService?: ReservationGuaranteeService,
   ) {}
 
   /**
@@ -87,6 +93,16 @@ export class NightAuditService {
         dto.propertyId,
         dto.businessDate,
       );
+
+      // 4b. Expired options (tentative bookings without guarantee): released or reported per property setting.
+      // Never blocks the audit; the result is logged with the run.
+      if (this.guaranteeService) {
+        try {
+          await this.guaranteeService.sweepExpiredOptions(dto.propertyId);
+        } catch (err: any) {
+          this.logger.warn(`Option sweep failed during night audit: ${err?.message ?? err}`);
+        }
+      }
 
       // 5. Process no-shows
       const noShowResult = await this.processNoShows(dto.propertyId, dto.businessDate);
