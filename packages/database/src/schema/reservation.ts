@@ -167,6 +167,10 @@ export const reservations = pgTable('reservations', {
   confirmedBy: uuid('confirmed_by'),
   confirmationSentAt: timestamp('confirmation_sent_at', { withTimezone: true }),
   proposalSentAt: timestamp('proposal_sent_at', { withTimezone: true }),
+  /** Guest confirmed the booking details sent to them (chat reply or staff record). */
+  detailsConfirmedAt: timestamp('details_confirmed_at', { withTimezone: true }),
+  detailsConfirmedBy: varchar('details_confirmed_by', { length: 120 }),
+  detailsConfirmationRef: varchar('details_confirmation_ref', { length: 120 }),
 
   // Special requests & preferences
   specialRequests: text('special_requests'),

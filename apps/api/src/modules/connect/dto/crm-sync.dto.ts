@@ -59,3 +59,14 @@ export class CrmSyncLinkDto {
   @ApiPropertyOptional() @IsOptional() @IsUUID() pmsReservationId?: string;
   @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) crmReservationId?: string;
 }
+
+/** CRM -> PMS: the guest (or a staff member) confirmed the booking details sent into a chat. */
+export class CrmDetailsConfirmationDto {
+  @ApiProperty() @IsUUID() propertyId!: string;
+  @ApiProperty() @IsString() @MaxLength(200) customerId!: string;
+  @ApiProperty() @IsString() @MaxLength(120) confirmationId!: string;
+  @ApiProperty({ enum: ['proposal', 'confirmation'] }) @IsString() @MaxLength(20) kind!: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(40) confirmedAt?: string;
+  @ApiPropertyOptional({ description: 'guest | staff:<reference>' }) @IsOptional() @IsString() @MaxLength(200) confirmedBy?: string;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(200) channelMessageId?: string;
+}

@@ -243,7 +243,7 @@ export class ReservationConfirmationService {
       newValue: { to: recipient, channel, status: result.status, sent: result.sent, total: data.price.total, confirmationNumber: data.confirmationNumber } });
     await this.webhooks.emit('reservation.message_sent', 'reservation', reservationId,
       { reservationId, channel, kind: data.reminder ? 'booking_option_reminder' : data.kind === 'proposal' ? 'booking_proposal' : 'booking_confirmation', to: recipient,
-        subject, sent: result.sent, isMarketing: false }, propertyId);
+        subject, sent: result.sent, isMarketing: false, text: (channel === 'sms' ? smsText(data) : confirmationText(data)).slice(0, 8000) }, propertyId);
     return { kind: data.kind, channel, to: recipient, sent: result.sent, status: result.status, sentAt: result.sent ? now.toISOString() : null };
   }
 }

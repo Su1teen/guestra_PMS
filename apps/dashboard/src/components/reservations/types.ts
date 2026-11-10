@@ -21,6 +21,8 @@ export interface Reservation {
   groupName?: string | null;
   /** Tentative booking terms */
   optionUntil?: string | null;
+  /** Guest confirmed the booking details sent into a chat. */
+  detailsConfirmedAt?: string | null;
   requiredDeposit?: string | null;
   guaranteeType?: string | null;
   confirmedAt?: string | null;

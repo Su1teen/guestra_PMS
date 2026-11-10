@@ -58,6 +58,8 @@ const UNTRANSLATED_BY_DESIGN = new Set([
   'reservationWorkspace.sources.gds',
   'guests.placeholders.email',
   'booking.doc.email',
+  'guestInbox.queues.follow_up', 'guestInbox.channels.telegram', 'guestInbox.channels.whatsapp', 'guestInbox.channels.instagram',
+  'guestInbox.channels.email', 'guestInbox.channels.sms',
   'booking.doc.sms',
   'houseAccounts.paymentMethods.pix',
   'reservations.messageChannelSms',

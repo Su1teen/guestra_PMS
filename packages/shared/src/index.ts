@@ -67,6 +67,7 @@ export const WEBHOOK_EVENTS = {
   'reservation.confirmed': 'reservation.confirmed',
   'reservation.option_expired': 'reservation.option_expired',
   'reservation.document_sent': 'reservation.document_sent',
+  'reservation.details_confirmed': 'reservation.details_confirmed',
   'reservation.modified': 'reservation.modified',
   'reservation.cancelled': 'reservation.cancelled',
   'reservation.checked_in': 'reservation.checked_in',
