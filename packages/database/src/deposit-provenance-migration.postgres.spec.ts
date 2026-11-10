@@ -49,7 +49,7 @@ describe.runIf(process.env['PMS_LIVE_PG'] === '1')('0040 historical provenance a
     // Same for reservations: later migrations (0045) add columns the pre-0040 table does not have.
     for (const id of [resA, resB]) await client`INSERT INTO reservations (id, property_id, booking_id, guest_id, room_type_id, rate_plan_id,
       arrival_date, departure_date, nights, status, cancelled_at, updated_at, total_amount, currency_code)
-      VALUES (${id}, ${p}, ${booking}, ${guest}, ${type}, ${rate}, '2027-05-01', '2027-05-02', 1, 'cancelled', ${date}, ${date}, '100', 'KZT')`;
+      VALUES (${id}, ${p}, ${booking}, ${guest}, ${type}, ${rate}, '2027-05-01', '2027-05-02', 1, 'cancelled', ${date.toISOString()}, ${date.toISOString()}, '100', 'KZT')`;
     await db.insert(folios).values([{ id: folioA, propertyId: p, reservationId: resA, guestId: guest, folioNumber: 'A', currencyCode: 'KZT' },
       { id: folioB, propertyId: p, reservationId: resB, guestId: guest, folioNumber: 'B', currencyCode: 'KZT' }]);
     const base = { propertyId: p, currencyCode: 'KZT', recognizedAt: date, isRefundable: false };
