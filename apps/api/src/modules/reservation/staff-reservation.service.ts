@@ -111,6 +111,15 @@ export class StaffReservationService {
    */
   private async applyStartState(tx: any, row: any, options: BookingConfirmationOptionsDto, settings: any,
     actor: AuditActor | undefined, requiredDepositOverride?: string | null) {
+    if (options.confirmation === undefined) {
+      // API callers that predate options keep the previous contract: the booking is confirmed (assigned when a
+      // room was picked) with only `reservation.created`, no extra event and no guest message.
+      const status = row.roomId ? 'assigned' : 'confirmed';
+      const [legacy] = await tx.update(reservations).set({ status, confirmedAt: new Date(), confirmedBy: actor?.userId ?? null, updatedAt: new Date() })
+        .where(and(eq(reservations.id, row.id), eq(reservations.propertyId, row.propertyId), eq(reservations.status, 'pending'))).returning();
+      if (!legacy) throw new ConflictException('Reservation changed while confirming');
+      return { row: legacy, confirmed: false, legacyConfirmed: true };
+    }
     if (options.confirmation === 'confirmed') {
       if (options.guaranteeType === 'none' && !options.guaranteeReason?.trim()) {
         throw new BadRequestException('A reason is required to confirm without a guarantee');
@@ -183,7 +192,7 @@ export class StaffReservationService {
       const withRoom = dto.roomId ? await this.reservationsService.assignRoom(created.id, dto.propertyId, { roomId: dto.roomId }, tx) : created;
       const start = await this.applyStartState(tx, withRoom, dto, await this.propertySettings(tx, dto.propertyId), actor);
       await tx.insert(auditLogs).values({ propertyId: dto.propertyId, entityType: 'reservation', entityId: created.id, action: 'create',
-        ...actorFields(actor), description: start.confirmed ? 'Бронь создана и подтверждена' : 'Создана предварительная бронь (опция)',
+        ...actorFields(actor), description: start.confirmed || 'legacyConfirmed' in start ? 'Бронь создана и подтверждена' : 'Создана предварительная бронь (опция)',
         newValue: { status: start.row.status, totalAmount: quote.totalAmount, optionUntil: start.row.optionUntil ?? null,
           requiredDeposit: start.row.requiredDeposit ?? null, adults: party.adults, children: party.children, childAges: party.childAges } });
       await this.outbox.persist(tx, { event: 'reservation.created', entityType: 'reservation', entityId: created.id,
@@ -334,7 +343,7 @@ export class StaffReservationService {
             .where(and(eq(reservations.id, created.id), eq(reservations.propertyId, dto.propertyId)));
         }
         const withRoom = unit.roomId ? await this.reservationsService.assignRoom(created.id, dto.propertyId, { roomId: unit.roomId }, tx) : created;
-        const start = await this.applyStartState(tx, withRoom, dto, settings, actor, deposits ? deposits[index] : undefined);
+        const start = await this.applyStartState(tx, withRoom, { ...dto, confirmation: dto.confirmation ?? 'tentative' }, settings, actor, deposits ? deposits[index] : undefined);
         if (start.confirmed) confirmedIds.push(created.id);
         rows.push(start.row);
         await this.outbox.persist(tx, { event: 'reservation.created', entityType: 'reservation', entityId: created.id,

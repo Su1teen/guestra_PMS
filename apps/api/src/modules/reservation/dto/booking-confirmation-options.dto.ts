@@ -4,8 +4,9 @@ import { GUARANTEE_TYPES, type GuaranteeType } from '../guarantee';
 
 /** How a new staff booking starts: tentative (option, waiting for a guarantee) or confirmed right away. */
 export class BookingConfirmationOptionsDto {
-  @ApiPropertyOptional({ enum: ['tentative', 'confirmed'], default: 'tentative',
-    description: 'tentative = option waiting for a guarantee; confirmed = guarantee already received' })
+  @ApiPropertyOptional({ enum: ['tentative', 'confirmed'],
+    description: 'tentative = option waiting for a guarantee; confirmed = guarantee already received. '
+      + 'Omitted on staff-create keeps the previous contract (confirmed, no guest message); group bookings default to tentative.' })
   @IsOptional() @IsIn(['tentative', 'confirmed']) confirmation?: 'tentative' | 'confirmed';
 
   @ApiPropertyOptional({ enum: GUARANTEE_TYPES, description: 'Guarantee of a confirmed booking' })
