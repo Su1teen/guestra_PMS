@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
-import { CalendarDays, Clock3, CreditCard, MessageSquareText, Users } from 'lucide-react';
+import { CalendarDays, CheckCircle2, Clock3, CreditCard, MessageSquareText, Users } from 'lucide-react';
 import { formatMoney } from '../../lib/money';
 import { CHIP_CLASSES, compactParty, optionState, statusTone } from '../../lib/booking';
 import type { Reservation } from './types';
@@ -70,6 +70,7 @@ export default function ReservationHoverCard({ target, roomNumber, roomTypeName,
             {r.requiredDeposit && <span className="block text-xs text-telivity-mid-grey">{t('booking.hover.guarantee', { amount: formatMoney(r.requiredDeposit, r.currencyCode) })}</span>}
           </Row>
         )}
+        {r.detailsConfirmedAt && <Row icon={<CheckCircle2 size={14} />} label={t('booking.hover.guestCheck')}><span className="text-emerald-700">{t('booking.hover.guestConfirmed')}</span></Row>}
         {r.specialRequests && <Row icon={<MessageSquareText size={14} />} label={t('booking.hover.requests')}><span className="line-clamp-2">{r.specialRequests}</span></Row>}
       </dl>
 

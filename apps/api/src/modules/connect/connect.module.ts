@@ -29,13 +29,18 @@ import { ServiceRequestsModule } from '../service-requests/service-requests.modu
 import { ConnectServiceBookingService } from './connect-service-booking.service';
 import { CrmSyncController } from './crm-sync.controller';
 import { CrmSyncService } from './crm-sync.service';
+import { GuestInboxModule } from '../guest-inbox/guest-inbox.module';
+import { ReservationChatController } from './reservation-chat.controller';
+import { ReservationChatService } from './reservation-chat.service';
+import { EmailModule } from '../agent/guest-comms/email.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule],
-  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController],
+  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule, GuestInboxModule, EmailModule, NotificationsModule],
+  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController, ReservationChatController],
   providers: [
     CredentialAdminGuard,
-    ConnectV2Service, ConnectV2Guard, ConnectInboxService, ConnectSandboxService,
+    ConnectV2Service, ConnectV2Guard, ConnectInboxService, ConnectSandboxService, ReservationChatService,
     ConnectSearchService,
     ConnectContentService,
     ConnectBookingService,

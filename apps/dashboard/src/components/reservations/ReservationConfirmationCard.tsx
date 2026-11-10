@@ -24,7 +24,7 @@ interface DocumentData {
  * one-click confirmation (guarantee type, optional reason, guest notification), and the rooms of a group.
  */
 export default function ReservationConfirmationCard({ reservation, propertyId, canWrite }: {
-  reservation: { id: string; status: string; confirmedAt?: string | null; guaranteeType?: string | null; optionUntil?: string | null };
+  reservation: { id: string; status: string; confirmedAt?: string | null; guaranteeType?: string | null; optionUntil?: string | null; detailsConfirmedAt?: string | null };
   propertyId: string; canWrite: boolean;
 }) {
   const { t, i18n } = useTranslation();
@@ -74,6 +74,7 @@ export default function ReservationConfirmationCard({ reservation, propertyId, c
             <p className="flex flex-wrap items-center gap-2 text-sm font-semibold text-telivity-navy">
               {tone === 'tentative' ? t('booking.status.tentativeTitle') : t('booking.status.confirmedTitle')}
               <span className={`chip ${CHIP_CLASSES[tone]}`}>{t(`reservations.statuses.${reservation.status}`, { defaultValue: reservation.status })}</span>
+              {reservation.detailsConfirmedAt && <span className="chip bg-emerald-100 text-emerald-900" title={fmtTime(reservation.detailsConfirmedAt)}>{t('booking.hover.guestConfirmed')}</span>}
             </p>
             {tone === 'tentative' ? (
               <p className={`mt-1 text-sm ${deadline === 'expired' ? 'font-semibold text-red-700' : deadline === 'soon' ? 'text-amber-900' : 'text-telivity-slate'}`}>

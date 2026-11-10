@@ -6,7 +6,7 @@ import { ConnectScopeGuard } from '../auth/connect-scope.guard';
 import { ConnectV2Guard } from './connect-v2.guard';
 import { ServiceCapability } from './service-capability.decorator';
 import { CrmSyncService } from './crm-sync.service';
-import { CrmSyncApplyDto, CrmSyncLinkDto } from './dto/crm-sync.dto';
+import { CrmDetailsConfirmationDto, CrmSyncApplyDto, CrmSyncLinkDto } from './dto/crm-sync.dto';
 
 const ENTITY_TYPES = ['reservation', 'folio', 'payment', 'service_booking'];
 
@@ -32,4 +32,8 @@ export class CrmSyncController {
 
   @Post('links') @ServiceCapability('integration.write') @ApiOperation({ summary: 'Record the CRM customer / reservation created for a mirrored PMS stay' })
   link(@Body() dto: CrmSyncLinkDto) { return this.sync.linkGuest(dto); }
+
+  @Post('reservations/:id/details-confirmation') @ServiceCapability('integration.write')
+  @ApiOperation({ summary: 'Record that the guest confirmed the booking details sent into a CRM chat' })
+  detailsConfirmation(@Param('id', ParseUUIDPipe) id: string, @Body() dto: CrmDetailsConfirmationDto) { return this.sync.confirmDetails(id, dto); }
 }

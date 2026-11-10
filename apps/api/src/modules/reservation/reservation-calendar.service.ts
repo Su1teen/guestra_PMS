@@ -38,6 +38,7 @@ export class ReservationCalendarService {
         adults: reservations.adults, children: reservations.children, childAges: reservations.childAges,
         optionUntil: reservations.optionUntil, requiredDeposit: reservations.requiredDeposit, guaranteeType: reservations.guaranteeType,
         confirmedAt: reservations.confirmedAt, proposalSentAt: reservations.proposalSentAt, confirmationSentAt: reservations.confirmationSentAt,
+        detailsConfirmedAt: reservations.detailsConfirmedAt,
         specialRequests: reservations.specialRequests, ratePlanName: ratePlans.name,
       }).from(reservations)
         .innerJoin(bookings, and(eq(bookings.id, reservations.bookingId), eq(bookings.propertyId, property)))

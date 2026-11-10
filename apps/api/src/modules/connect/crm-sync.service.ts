@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import {
-  bookings, charges, folios, guests, integrationLinks, payments, properties, ratePlans, reservations, rooms, roomTypes,
+  auditLogs, bookings, charges, folios, guests, integrationLinks, payments, properties, ratePlans, reservations, rooms, roomTypes,
   serviceBookings, services,
 } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
@@ -12,7 +12,7 @@ import { FolioService } from '../folio/folio.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { folioPaymentSumWhere } from '../payment/payment-ledger';
 import { matchCategory, parseCategoryOverrides } from './crm-sync.matching';
-import type { CrmSyncApplyDto, CrmSyncLinkDto } from './dto/crm-sync.dto';
+import type { CrmDetailsConfirmationDto, CrmSyncApplyDto, CrmSyncLinkDto } from './dto/crm-sync.dto';
 
 const SOURCE = 'guestra_crm';
 /** CRM-originated ledger rows carry these prefixes so the mirror never echoes them back. */
@@ -91,6 +91,10 @@ export class CrmSyncService {
       totalAmount: String(reservation.totalAmount), currencyCode: reservation.currencyCode,
       specialRequests: reservation.specialRequests ?? null,
       checkedInAt: reservation.checkedInAt ?? null, checkedOutAt: reservation.checkedOutAt ?? null,
+      // Option / confirmation state and party details, so the CRM mirror follows the same lifecycle.
+      childAges: reservation.childAges ?? [], optionUntil: reservation.optionUntil ?? null, requiredDeposit: reservation.requiredDeposit ?? null,
+      guaranteeType: reservation.guaranteeType ?? null, confirmedAt: reservation.confirmedAt ?? null,
+      detailsConfirmedAt: reservation.detailsConfirmedAt ?? null, groupName: row.booking.groupName ?? null,
       roomType: row.roomType ? { id: row.roomType.id, code: row.roomType.code, name: row.roomType.name, maxOccupancy: row.roomType.maxOccupancy } : null,
       roomNumber: row.roomNumber ?? null,
       guest: { id: guest.id, firstName: guest.firstName, lastName: guest.lastName, phone: guest.phone ?? null, email: guest.email ?? null },
@@ -158,13 +162,42 @@ export class CrmSyncService {
         if (!stay) throw new NotFoundException('RESERVATION_NOT_FOUND');
         if (dto.crmReservationId) await this.ensureLink(tx, dto.propertyId, 'reservation', dto.crmReservationId, 'reservation', dto.pmsReservationId);
       } else {
-        const [booking] = await tx.select({ id: serviceBookings.id }).from(serviceBookings)
+        // Any stay or service booking at this property proves the guest belongs here.
+        const [stay] = await tx.select({ id: reservations.id }).from(reservations)
+          .where(and(eq(reservations.propertyId, dto.propertyId), eq(reservations.guestId, dto.pmsGuestId))).limit(1);
+        const [booking] = stay ? [stay] : await tx.select({ id: serviceBookings.id }).from(serviceBookings)
           .where(and(eq(serviceBookings.propertyId, dto.propertyId), eq(serviceBookings.guestId, dto.pmsGuestId))).limit(1);
         if (!booking) throw new NotFoundException('GUEST_NOT_AT_PROPERTY');
       }
       await this.ensureLink(tx, dto.propertyId, 'customer', dto.customerId, 'guest', dto.pmsGuestId);
     });
     return { linked: true };
+  }
+
+  /**
+   * The guest confirmed the booking details (chat reply recognised by the CRM, or recorded by staff there).
+   * The CRM customer must be the stay's guest: a mismatching identity link is refused, never re-pointed.
+   * Idempotent per CRM confirmation id.
+   */
+  async confirmDetails(reservationId: string, dto: CrmDetailsConfirmationDto) {
+    const result = await this.db.transaction(async (tx: any) => {
+      const [row] = await tx.select().from(reservations).where(and(eq(reservations.id, reservationId), eq(reservations.propertyId, dto.propertyId))).for('update');
+      if (!row) throw new NotFoundException('RESERVATION_NOT_FOUND');
+      await this.ensureLink(tx, dto.propertyId, 'customer', dto.customerId, 'guest', row.guestId);
+      if (row.detailsConfirmationRef === dto.confirmationId) return { row, changed: false };
+      const at = dto.confirmedAt && !Number.isNaN(Date.parse(dto.confirmedAt)) ? new Date(dto.confirmedAt) : new Date();
+      const by = (dto.confirmedBy ?? 'guest').slice(0, 120);
+      // Every room of the booking was in the same document.
+      await tx.update(reservations).set({ detailsConfirmedAt: at, detailsConfirmedBy: by, detailsConfirmationRef: dto.confirmationId, updatedAt: new Date() })
+        .where(and(eq(reservations.bookingId, row.bookingId), eq(reservations.propertyId, dto.propertyId)));
+      await tx.insert(auditLogs).values({ propertyId: dto.propertyId, entityType: 'reservation', entityId: row.id, action: 'details_confirmed',
+        description: by === 'guest' ? 'Гость подтвердил данные брони в чате' : 'Данные брони подтверждены (отмечено сотрудником в CRM)',
+        newValue: { confirmationId: dto.confirmationId, kind: dto.kind, confirmedBy: by, confirmedAt: at.toISOString(), channelMessageId: dto.channelMessageId ?? null } });
+      return { row, changed: true, at };
+    });
+    if (result.changed) await this.webhookService.emit('reservation.details_confirmed', 'reservation', reservationId,
+      { reservationId, bookingId: result.row.bookingId, kind: dto.kind, confirmedBy: dto.confirmedBy ?? 'guest', confirmationId: dto.confirmationId }, dto.propertyId);
+    return { reservationId, detailsConfirmed: true, duplicate: !result.changed };
   }
 
   private async categoryFor(db: any, propertyId: string, name: string) {

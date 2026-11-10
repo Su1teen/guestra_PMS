@@ -118,7 +118,7 @@ export class FolioDocumentService {
     await this.db.insert(auditLogs).values({ propertyId, entityType: 'folio', entityId: id, action: 'document_sent', ...actorFields(actor),
       description: `Фолио отправлено на ${recipient}`, newValue: { to: recipient, sent: result.sent, balance: data.balance, final: data.final } });
     await this.webhooks.emit('reservation.message_sent', 'folio', id,
-      { folioId: id, channel: 'email', kind: 'folio_document', to: recipient, subject, sent: result.sent, isMarketing: false }, propertyId);
+      { folioId: id, channel: 'email', kind: 'folio_document', to: recipient, subject, sent: result.sent, isMarketing: false, text }, propertyId);
     return { to: recipient, sent: result.sent, status: result.status };
   }
 }

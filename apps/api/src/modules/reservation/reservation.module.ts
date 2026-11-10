@@ -22,6 +22,8 @@ import { PolicyModule } from '../policy/policy.module';
 import { ReservationPricingService } from './reservation-pricing.service';
 import { ReservationConfirmationService } from './reservation-confirmation.service';
 import { ReservationGuaranteeService } from './reservation-guarantee.service';
+import { DocumentLinkService } from './document-link.service';
+import { PublicDocumentController } from './public-document.controller';
 import { RatePlanModule } from '../rate-plan/rate-plan.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map.module';
@@ -42,7 +44,7 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     EmailModule,
     MigrationLegacyIdMapModule,
   ],
-  controllers: [ReservationController],
+  controllers: [ReservationController, PublicDocumentController],
   providers: [
     ReservationService,
     ReservationQuoteService,
@@ -56,6 +58,7 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     ReservationPricingService,
     ReservationConfirmationService,
     ReservationGuaranteeService,
+    DocumentLinkService,
   ],
   exports: [
     ReservationService,
@@ -64,6 +67,7 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     ReservationImportService,
     ReservationGuaranteeService,
     ReservationConfirmationService,
+    DocumentLinkService,
   ],
 })
 export class ReservationModule {}

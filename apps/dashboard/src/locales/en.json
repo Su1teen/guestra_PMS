@@ -1,11 +1,11 @@
 {
   "guestInbox": {
-    "title": "Guest Inbox",
+    "title": "Guest chats",
     "disabled": "Guest Inbox is not enabled for this account.",
     "selectProperty": "Select a property.",
     "unavailable": "Guest messages are temporarily unavailable. Try again shortly.",
     "loading": "Loading…",
-    "empty": "No guest conversations yet.",
+    "empty": "No conversations in this queue.",
     "ai": "AI assistant",
     "human": "Staff",
     "selectConversation": "Select a conversation.",
@@ -39,6 +39,94 @@
       "processing": "Processing",
       "ready": "Ready",
       "rejected": "Rejected"
+    },
+    "search": "Guest, phone, email or text",
+    "channel": "Channel",
+    "allChannels": "All channels",
+    "modeFilter": "Handled by",
+    "unreadOnly": "Unread",
+    "newChat": "New chat",
+    "queue": "Queue",
+    "conversations": "Conversations",
+    "thread": "Conversation",
+    "you": "You",
+    "unread": "Unread",
+    "queues": {
+      "focus": "Focus",
+      "payment": "Payment",
+      "follow_up": "Follow-up",
+      "waiting_guest": "Waiting for guest",
+      "all": "All",
+      "archive": "Archive"
+    },
+    "channels": {
+      "telegram": "Telegram",
+      "whatsapp": "WhatsApp",
+      "instagram": "Instagram",
+      "simulator": "AI Studio (test)",
+      "email": "Email",
+      "sms": "SMS",
+      "phone": "Phone",
+      "website": "Website",
+      "other": "Other"
+    },
+    "modes": {
+      "all": "AI and staff",
+      "ai": "AI handles",
+      "needs_human": "Needs staff",
+      "human": "Staff handles"
+    },
+    "sender": {
+      "ai": "AI assistant",
+      "system": "Hotel (automatic)",
+      "staff": "Staff"
+    },
+    "delivery": {
+      "sent": "delivered",
+      "pending": "sending",
+      "failed": "not delivered",
+      "received": "received"
+    },
+    "deliveryFailed": "Not delivered: check the channel settings",
+    "resumeAi": "Hand back to AI",
+    "close": "Close",
+    "reopen": "Reopen",
+    "takenOver": "You own the conversation: the AI stops replying",
+    "aiResumed": "The AI handles the conversation again",
+    "closed": "Conversation closed",
+    "reopened": "Conversation reopened",
+    "statusClosed": "Closed",
+    "handoff": "The AI handed the conversation to staff",
+    "replyTab": "Reply to guest",
+    "noteTab": "Team note",
+    "subject": "Email subject (optional)",
+    "replyPlaceholder": "Write to the guest",
+    "notePlaceholder": "Only the team sees notes",
+    "aiOwnsReply": "The AI is replying. Take over to write to the guest, or leave a note.",
+    "sendHint": "Ctrl+Enter to send",
+    "send": "Send",
+    "saveNote": "Save note",
+    "replySent": "Message sent",
+    "noteSaved": "Note saved",
+    "note": "Note",
+    "documents": "Documents awaiting confirmation",
+    "openDocument": "Open document",
+    "stays": "Guest bookings",
+    "detailsConfirmed": "Guest confirmed the details",
+    "guest": "Guest",
+    "message": "Message",
+    "messengerExisting": "The message goes to the guest's existing chat in this messenger.",
+    "aiContinues": "The AI continues the conversation",
+    "reasonsHint": "Chats are stored in the CRM; PMS connects to it with a scoped key. Contact your administrator if the setup is not finished.",
+    "reasons": {
+      "INBOX_DISABLED": "Guest chats are not enabled in this environment.",
+      "AUTHENTICATED_STAFF_REQUIRED": "Sign in with your staff account to open the chats.",
+      "INBOX_SCOPE_DENIED": "You are not allowed to work with guest messages.",
+      "VERIFIED_PROPERTY_MAPPING_REQUIRED": "This hotel is not linked to the CRM yet.",
+      "CRM_ATTESTATION_FAILED": "The CRM did not confirm the link to this hotel.",
+      "CRM_NOT_CONFIGURED": "The CRM connection is not configured.",
+      "CRM_UNAVAILABLE": "The CRM is unavailable right now. Try again later.",
+      "CRM_SCOPE_DENIED": "The PMS key has no chat permissions in the CRM."
     }
   },
   "reservationActions": {
@@ -2951,7 +3039,13 @@
       "prepaidHint": "Record money received without a payment gateway: cash, bank transfer or a card terminal. It is posted to the folio; once the guarantee is covered the booking confirms itself.",
       "amount": "Amount, {{currency}}",
       "method": "Method",
-      "methods": { "bank_transfer": "Bank transfer", "cash": "Cash", "credit_card": "Card (terminal)", "debit_card": "Debit card (terminal)", "other": "Other" },
+      "methods": {
+        "bank_transfer": "Bank transfer",
+        "cash": "Cash",
+        "credit_card": "Card (terminal)",
+        "debit_card": "Debit card (terminal)",
+        "other": "Other"
+      },
       "reference": "Document number",
       "referencePlaceholder": "Transfer, receipt…",
       "prepaidSubmit": "Record payment",
@@ -3013,7 +3107,8 @@
       "invalidRecipient": "Check the recipient",
       "print": "Open to print / PDF",
       "preview": "Document preview",
-      "empty": "Press “Build” to review the document before sending."
+      "empty": "Press “Build” to review the document before sending.",
+      "chat": "Chat"
     },
     "hover": {
       "stay": "Dates",
@@ -3027,7 +3122,9 @@
       "expired": "expired {{at}}",
       "guarantee": "Guarantee: {{amount}}",
       "requests": "Requests",
-      "clickHint": "Click to open the booking"
+      "clickHint": "Click to open the booking",
+      "guestCheck": "Guest check",
+      "guestConfirmed": "Guest confirmed the details"
     },
     "legend": {
       "tentative": "Tentative",
@@ -3129,5 +3226,32 @@
     "takesPlace": "takes a place",
     "noPlace": "no place",
     "tableHint": "Per-night amount for the 1st, 2nd and each further child of this band. 0 means free."
+  },
+  "chatDoc": {
+    "mode": "How to send",
+    "ai": "Via AI",
+    "aiHint": "Into the AI assistant conversation; it answers questions and the guest's \"yes\" is recorded automatically",
+    "manual": "Manually, new chat",
+    "manualHint": "A new staff-handled chat with the prepared text",
+    "channel": "Channel",
+    "message": "Message to the guest",
+    "keepLink": "Keep the document link in the message.",
+    "sendAi": "Send via AI",
+    "sendManual": "Create chat and send",
+    "sent": "Document sent to the chat",
+    "notDelivered": "Chat created, but the message was not delivered: check the channel",
+    "openChat": "Open chat",
+    "disabled": "Guest chats are not connected: send the document by email or SMS.",
+    "guestConfirmed": "The guest confirmed the booking details · {{at}}",
+    "markConfirmed": "Guest confirmed",
+    "markedConfirmed": "Confirmation recorded",
+    "syncPending": "Not recorded on the booking yet: retried with the next confirmation",
+    "status": {
+      "awaiting": "Waiting for reply",
+      "confirmed": "Confirmed by guest",
+      "answered": "Guest replied — check the chat",
+      "declined": "Guest disagrees",
+      "superseded": "Replaced"
+    }
   }
 }

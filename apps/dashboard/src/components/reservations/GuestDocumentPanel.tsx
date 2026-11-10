@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle2, FileText, Mail, MessageSquare, Printer, Send } from 'lucide-react';
+import { CheckCircle2, FileText, Mail, MessageSquare, MessagesSquare, Printer, Send } from 'lucide-react';
 import { api } from '../../lib/api';
 import { errorMessage } from '../../lib/error-message';
 import { useToast } from '../ui/Toast';
+import ChatDocumentSender from './ChatDocumentSender';
 
 type Kind = 'proposal' | 'confirmation';
-type Channel = 'email' | 'sms';
+type Channel = 'email' | 'sms' | 'chat';
 
 interface DocumentData {
   kind: Kind;
@@ -19,7 +20,8 @@ interface DocumentData {
 
 /**
  * "Сформировать → Отправить": builds the guest document (proposal for a tentative booking, confirmation
- * otherwise) right next to the booking details, previews it, and sends it by email or SMS in one click.
+ * otherwise) right next to the booking details, previews it, and sends it by email, SMS or into a guest chat
+ * (AI conversation or a new staff chat) asking the guest to confirm the details.
  */
 export default function GuestDocumentPanel({ reservationId, propertyId, canSend, compact, onSent }: {
   reservationId: string; propertyId: string; canSend: boolean; compact?: boolean; onSent?: () => void;
@@ -106,13 +108,14 @@ export default function GuestDocumentPanel({ reservationId, propertyId, canSend,
 
           <div className="space-y-2">
             <div className="inline-flex w-full rounded-lg border border-gray-300 p-0.5" role="tablist" aria-label={t('booking.doc.channel')}>
-              {([['email', Mail], ['sms', MessageSquare]] as const).map(([c, Icon]) => (
+              {([['email', Mail], ['sms', MessageSquare], ['chat', MessagesSquare]] as const).map(([c, Icon]) => (
                 <button key={c} type="button" role="tab" aria-selected={channel === c} onClick={() => setChannel(c)}
                   className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1.5 text-xs font-semibold ${channel === c ? 'bg-primary-50 text-primary-800' : 'text-telivity-slate'}`}>
                   <Icon size={14} />{t(`booking.doc.${c}`)}
                 </button>
               ))}
             </div>
+            {channel === 'chat' ? <ChatDocumentSender reservationId={reservationId} propertyId={propertyId} kind={effectiveKind} canSend={canSend} /> : <>
             <label className="block">
               <span className="label">{channel === 'sms' ? t('booking.doc.phone') : t('booking.doc.email')}</span>
               <input value={recipient} onChange={(e) => setRecipient(e.target.value)} className="field"
@@ -123,6 +126,7 @@ export default function GuestDocumentPanel({ reservationId, propertyId, canSend,
               <Send size={16} />{send.isPending ? t('booking.doc.sending') : t('booking.doc.send')}
             </button>
             {!recipientValid && recipient && <p className="text-xs text-red-700">{t('booking.doc.invalidRecipient')}</p>}
+            </>}
           </div>
         </div>
 
