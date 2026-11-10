@@ -1,0 +1,64 @@
+{
+ "id": "pzvnT6XOtjL3Qq1V",
+ "name": "GUESTRA-STUDIO · Capabilities (sandbox)",
+ "active": true,
+ "nodes": [
+  {
+   "id": "a93944e3-ac6c-4d55-9409-e88b56ba900a",
+   "name": "Capabilities Webhook",
+   "type": "n8n-nodes-base.webhook",
+   "typeVersion": 2.1,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "httpMethod": "GET",
+    "path": "guestra-studio-capabilities-d300276a0f08be801b",
+    "authentication": "headerAuth",
+    "responseMode": "responseNode",
+    "options": {}
+   },
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "3bC3Wd4QsfeqdHSm",
+     "name": "GUESTRA-STUDIO · Studio sandbox bearer"
+    }
+   },
+   "webhookId": "326fa003-3492-4526-9f91-590c3128c0be"
+  },
+  {
+   "id": "72435e6c-5efb-4ee6-b50f-65f4323d3143",
+   "name": "Respond capabilities",
+   "type": "n8n-nodes-base.respondToWebhook",
+   "typeVersion": 1.4,
+   "position": [
+    240,
+    0
+   ],
+   "parameters": {
+    "respondWith": "json",
+    "responseBody": "={{ { contractVersion: 'studio-gateway-v1', environment: 'sandbox', inboundOwner: 'n8n', durableClaim: 'studio-claim-v1', workflowId: 'eYOraX7blGzT5PiG', deploymentId: 'aidana-agent-1.0.0+6bad4cb02da0', workflowVersion: 'aidana-agent-1.0.0', property: {\"crmPropertyId\":\"sandbox_les\",\"crmTenantId\":\"org_les_live\",\"pmsPropertyId\":\"b4d34b21-e0fb-47b4-9b53-72f4e2ba7d2a\",\"pmsTenantId\":\"b4d34b21-e0fb-47b4-9b53-72f4e2ba7d2a\"}, workspaceIds: ['les-sandbox'] } }}",
+    "options": {
+     "responseCode": 200
+    }
+   }
+  }
+ ],
+ "connections": {
+  "Capabilities Webhook": {
+   "main": [
+    [
+     {
+      "node": "Respond capabilities",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1"
+ }
+}

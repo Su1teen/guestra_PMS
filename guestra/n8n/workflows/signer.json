@@ -1,0 +1,201 @@
+{
+ "id": "zZiN7gA2BtRFN9pN",
+ "name": "GUESTRA-STUDIO · Signed callback (sub-workflow)",
+ "active": true,
+ "nodes": [
+  {
+   "id": "s1",
+   "name": "Execute Workflow Trigger",
+   "type": "n8n-nodes-base.executeWorkflowTrigger",
+   "typeVersion": 1.1,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "inputSource": "passthrough"
+   }
+  },
+  {
+   "id": "s2",
+   "name": "Build body",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    220,
+    0
+   ],
+   "parameters": {
+    "jsCode": "\n// Deterministic event id: retries of the same logical event reuse it (Studio treats event ids as immutable).\nconst inp = $input.first().json;\nfunction hash128(str) {\n  let h1 = 0xdeadbeef, h2 = 0x41c6ce57, h3 = 0x9e3779b9, h4 = 0x85ebca6b;\n  for (let i = 0; i < str.length; i++) {\n    const k = str.charCodeAt(i);\n    h1 = Math.imul(h1 ^ k, 2654435761); h2 = Math.imul(h2 ^ k, 1597334677); h3 = Math.imul(h3 ^ k, 2246822519); h4 = Math.imul(h4 ^ k, 3266489917);\n  }\n  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);\n  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h3 ^ (h3 >>> 13), 3266489909);\n  h3 = Math.imul(h3 ^ (h3 >>> 16), 2246822507) ^ Math.imul(h4 ^ (h4 >>> 13), 3266489909);\n  h4 = Math.imul(h4 ^ (h4 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);\n  return [h1, h2, h3, h4].map(n => (n >>> 0).toString(16).padStart(8, '0')).join('');\n}\nconst hex = hash128(inp.runId + ':' + inp.state + ':' + inp.sequence);\nconst eventId = hex.slice(0, 8) + '-' + hex.slice(8, 12) + '-4' + hex.slice(13, 16) + '-a' + hex.slice(17, 20) + '-' + hex.slice(20, 32);\nconst body = { eventId, workspaceId: inp.workspaceId, runId: inp.runId, correlationId: inp.correlationId };\nfor (const k of ['crmConversationId', 'crmCustomerId']) if (inp[k]) body[k] = inp[k];\nbody.state = inp.state; body.sequence = Number(inp.sequence); body.executionId = String(inp.executionId);\nfor (const k of ['workflowVersion', 'deploymentId', 'contextVersion', 'businessOperationId', 'errorCode']) if (inp[k]) body[k] = inp[k];\nreturn [{ json: { rawBody: JSON.stringify(body), timestamp: String(Math.floor(Date.now() / 1000)), eventId } }];"
+   }
+  },
+  {
+   "id": "s3",
+   "name": "Read callback secret",
+   "type": "n8n-nodes-base.dataTable",
+   "typeVersion": 1,
+   "position": [
+    440,
+    0
+   ],
+   "parameters": {
+    "resource": "row",
+    "operation": "get",
+    "dataTableId": {
+     "__rl": true,
+     "mode": "id",
+     "value": "tWLc35OS9rbLXggB"
+    },
+    "matchType": "allConditions",
+    "filters": {
+     "conditions": [
+      {
+       "keyName": "key",
+       "condition": "eq",
+       "keyValue": "studio_callback_secret"
+      }
+     ]
+    },
+    "returnAll": false,
+    "limit": 1
+   }
+  },
+  {
+   "id": "s4",
+   "name": "Sign",
+   "type": "n8n-nodes-base.crypto",
+   "typeVersion": 1,
+   "position": [
+    660,
+    0
+   ],
+   "parameters": {
+    "action": "hmac",
+    "type": "SHA256",
+    "value": "={{ $('Build body').item.json.timestamp + '.' + $('Build body').item.json.rawBody }}",
+    "dataPropertyName": "signature",
+    "secret": "={{ $json.value }}",
+    "encoding": "hex"
+   }
+  },
+  {
+   "id": "s5",
+   "name": "POST Studio event",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    880,
+    0
+   ],
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 1500,
+   "parameters": {
+    "method": "POST",
+    "url": "https://sandbox-studio-sandbox.up.railway.app/api/integrations/n8n/events",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "x-studio-timestamp",
+       "value": "={{ $('Build body').item.json.timestamp }}"
+      },
+      {
+       "name": "x-studio-signature",
+       "value": "={{ $json.signature }}"
+      }
+     ]
+    },
+    "sendBody": true,
+    "contentType": "raw",
+    "rawContentType": "application/json",
+    "body": "={{ $('Build body').item.json.rawBody }}",
+    "options": {
+     "response": {
+      "response": {
+       "neverError": true,
+       "responseFormat": "text"
+      }
+     },
+     "timeout": 10000
+    }
+   }
+  },
+  {
+   "id": "s6",
+   "name": "Result",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1100,
+    0
+   ],
+   "parameters": {
+    "jsCode": "\nconst j = $input.first().json;\nconst text = typeof j === 'string' ? j : (typeof j.data === 'string' ? j.data : JSON.stringify(j.data ?? j));\nconst ok = /\"accepted\"s*:s*true/.test(text);\nreturn [{ json: { ok, eventId: $('Build body').first().json.eventId, studio: String(text).slice(0, 300) } }];"
+   }
+  }
+ ],
+ "connections": {
+  "Execute Workflow Trigger": {
+   "main": [
+    [
+     {
+      "node": "Build body",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build body": {
+   "main": [
+    [
+     {
+      "node": "Read callback secret",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read callback secret": {
+   "main": [
+    [
+     {
+      "node": "Sign",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Sign": {
+   "main": [
+    [
+     {
+      "node": "POST Studio event",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "POST Studio event": {
+   "main": [
+    [
+     {
+      "node": "Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1",
+  "saveDataSuccessExecution": "none",
+  "saveDataErrorExecution": "none",
+  "saveManualExecutions": false
+ }
+}

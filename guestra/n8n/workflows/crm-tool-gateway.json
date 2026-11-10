@@ -1,0 +1,412 @@
+{
+ "id": "dwIE0EA4dqV2fwPk",
+ "name": "GUESTRA-STUDIO · CRM tool gateway (sub-workflow)",
+ "active": true,
+ "nodes": [
+  {
+   "id": "g1",
+   "name": "Execute Workflow Trigger",
+   "type": "n8n-nodes-base.executeWorkflowTrigger",
+   "typeVersion": 1.1,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "inputSource": "workflowInputs",
+    "workflowInputs": {
+     "values": [
+      {
+       "name": "tool",
+       "type": "string"
+      },
+      {
+       "name": "externalUserId",
+       "type": "string"
+      },
+      {
+       "name": "conversationId",
+       "type": "string"
+      },
+      {
+       "name": "correlationId",
+       "type": "string"
+      },
+      {
+       "name": "executionRef",
+       "type": "string"
+      },
+      {
+       "name": "promptVersion",
+       "type": "string"
+      },
+      {
+       "name": "runId",
+       "type": "string"
+      },
+      {
+       "name": "inboundMessageId",
+       "type": "string"
+      },
+      {
+       "name": "allowedActions",
+       "type": "string"
+      },
+      {
+       "name": "q",
+       "type": "string"
+      },
+      {
+       "name": "topic",
+       "type": "string"
+      },
+      {
+       "name": "checkIn",
+       "type": "string"
+      },
+      {
+       "name": "checkOut",
+       "type": "string"
+      },
+      {
+       "name": "adults",
+       "type": "string"
+      },
+      {
+       "name": "children",
+       "type": "string"
+      },
+      {
+       "name": "serviceId",
+       "type": "string"
+      },
+      {
+       "name": "startAt",
+       "type": "string"
+      },
+      {
+       "name": "endAt",
+       "type": "string"
+      },
+      {
+       "name": "quantity",
+       "type": "string"
+      },
+      {
+       "name": "participants",
+       "type": "string"
+      },
+      {
+       "name": "direction",
+       "type": "string"
+      },
+      {
+       "name": "category",
+       "type": "string"
+      },
+      {
+       "name": "specialRequest",
+       "type": "string"
+      },
+      {
+       "name": "reasonCode",
+       "type": "string"
+      },
+      {
+       "name": "summary",
+       "type": "string"
+      },
+      {
+       "name": "requestedAction",
+       "type": "string"
+      },
+      {
+       "name": "priority",
+       "type": "string"
+      },
+      {
+       "name": "requestId",
+       "type": "string"
+      },
+      {
+       "name": "roomTypeId",
+       "type": "string"
+      },
+      {
+       "name": "ratePlanId",
+       "type": "string"
+      },
+      {
+       "name": "offerId",
+       "type": "string"
+      },
+      {
+       "name": "operationId",
+       "type": "string"
+      },
+      {
+       "name": "guestConfirmed",
+       "type": "string"
+      },
+      {
+       "name": "activeProposal",
+       "type": "string"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "g2",
+   "name": "Build request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    220,
+    0
+   ],
+   "parameters": {
+    "jsCode": "\nconst i = $input.first().json;\nconst P = 'sandbox_les';\nconst fail = (code, message) => [{ json: { blocked: true, ok: false, code, message } }];\nconst TOOLS = {\n  get_property_knowledge: 'get_property_knowledge', search_accommodation: 'search_accommodation', get_service_catalog: 'book_service',\n  check_service_availability: 'book_service', create_or_update_request: 'create_or_update_request', handoff_to_human: 'handoff_to_human',\n  create_offer: 'create_pms_offer', book_accommodation: 'book_accommodation', get_operation_status: 'book_accommodation',\n};\nconst need = TOOLS[i.tool];\nif (!need) return fail('TOOL_NOT_ALLOWED', 'Неизвестный инструмент');\nlet allowed = []; try { allowed = JSON.parse(i.allowedActions || '[]'); } catch (e) { return fail('CONTEXT_INVALID', 'Нет списка разрешённых действий'); }\nif (!allowed.includes(need)) return fail('ACTION_NOT_ALLOWED', 'Действие сейчас недоступно для этого диалога');\nif (!i.externalUserId || !i.conversationId) return fail('IDENTITY_REQUIRED', 'Нет идентификатора диалога');\nconst id = { propertyId: P, channel: 'simulator', externalUserId: i.externalUserId, conversationId: i.conversationId };\nconst trace = { correlationId: i.correlationId, executionReference: i.executionRef, promptVersion: i.promptVersion };\nconst date = (v, name) => { if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(String(v || ''))) throw new Error(name + ' должен быть датой ГГГГ-ММ-ДД'); return v; };\nconst int = (v, name, min, max, def) => { if (v === undefined || v === null || v === '') { if (def !== undefined) return def; throw new Error(name + ' обязателен'); } const n = Number(v); if (!Number.isInteger(n) || n < min || n > max) throw new Error(name + ' должен быть целым от ' + min + ' до ' + max); return n; };\nconst today = new Date().toISOString().slice(0, 10);\nconst stay = () => {\n  const a = date(i.checkIn, 'checkIn'), b = date(i.checkOut, 'checkOut');\n  if (a < today) throw new Error('Дата заезда в прошлом');\n  const nights = (Date.parse(b) - Date.parse(a)) / 86400000;\n  if (!(nights >= 1 && nights <= 30)) throw new Error('Период проживания должен быть от 1 до 30 ночей');\n  return [a, b];\n};\nconst iso = d => d + 'T12:00:00+05:00';\nconst clip = (v, n) => (v === undefined || v === null || v === '' ? undefined : String(v).slice(0, n));\ntry {\n  let r;\n  switch (i.tool) {\n    case 'get_property_knowledge':\n      // The knowledge base is small: return it whole and let the model pick. A guessed q/topic filter would silently hide valid entries.\n      r = { method: 'GET', path: '/property-knowledge', qs: { propertyId: P, language: 'ru', limit: 20 } }; break;\n    case 'search_accommodation': {\n      const [a, b] = stay();\n      r = { method: 'POST', path: '/v2/accommodations/search', body: { ...id, checkIn: a, checkOut: b, adults: int(i.adults, 'adults', 1, 20), children: int(i.children, 'children', 0, 20, 0) } }; break; }\n    case 'get_service_catalog':\n      r = { method: 'GET', path: '/v2/services', qs: { ...id } }; break;\n    case 'check_service_availability': {\n      if (!/^[0-9a-f-]{36}$/i.test(String(i.serviceId || ''))) throw new Error('serviceId должен быть идентификатором из каталога услуг');\n      r = { method: 'POST', path: '/v2/services/availability', body: { ...id, serviceId: i.serviceId, startAt: new Date(i.startAt).toISOString(), endAt: new Date(i.endAt).toISOString(),\n        quantity: int(i.quantity, 'quantity', 1, 100, 1), participants: int(i.participants, 'participants', 1, 100, 1) } }; break; }\n    case 'create_or_update_request': {\n      const dir = ['accommodation', 'restaurant', 'spa', 'massage', 'bathhouse', 'karaoke', 'activities', 'transfer', 'corporate_event', 'wedding_or_banquet'];\n      if (!dir.includes(i.direction)) throw new Error('direction должен быть одним из: ' + dir.join(', '));\n      const body = { ...id, idempotencyKey: ('req:' + i.runId).slice(0, 120), direction: i.direction, quality: 'target', temperature: 'warm', probability: 30 };\n      if (i.checkIn && i.checkOut) { const [a, b] = stay(); body.checkIn = iso(a); body.checkOut = iso(b); }\n      if (i.adults !== undefined && i.adults !== '') body.adults = int(i.adults, 'adults', 0, 50);\n      if (i.children !== undefined && i.children !== '') body.children = int(i.children, 'children', 0, 50);\n      if (clip(i.category, 120)) body.category = clip(i.category, 120);\n      if (clip(i.specialRequest, 1000)) body.specialRequest = clip(i.specialRequest, 1000);\n      r = { method: 'POST', path: '/requests/upsert', body }; break; }\n    case 'create_offer': {\n      const uuidRe = /^[0-9a-f-]{36}$/i;\n      if (!i.requestId) throw new Error('requestId обязателен: сначала создайте запрос и возьмите его requestId');\n      if (!uuidRe.test(String(i.roomTypeId || '')) || !uuidRe.test(String(i.ratePlanId || ''))) throw new Error('roomTypeId и ratePlanId берите только из результата поиска размещения');\n      r = { method: 'POST', path: '/v2/offers', body: { ...id, requestId: String(i.requestId), roomTypeId: i.roomTypeId, ratePlanId: i.ratePlanId, idempotencyKey: ('offer:' + i.runId + ':' + i.roomTypeId.slice(0, 8) + ':' + i.ratePlanId.slice(0, 8)).slice(0, 120) } }; break; }\n    case 'book_accommodation': {\n      if (String(i.guestConfirmed).toLowerCase() !== 'true') throw new Error('Бронь возможна только после явного подтверждения гостем отправленного предложения');\n      let ap = null; try { ap = JSON.parse(i.activeProposal || 'null'); } catch (e) { ap = null; }\n      if (!ap || ap.actionType !== 'book_accommodation' || !ap.payload?.offerId || !ap.messageId) throw new Error('Нет доставленного предложения, ожидающего подтверждения. Сначала подготовьте предложение и дождитесь ответа гостя');\n      if (!i.inboundMessageId) throw new Error('Нет сообщения гостя с подтверждением');\n      r = { method: 'POST', path: '/v2/accommodations/book', body: { ...id, offerId: ap.payload.offerId, proposalMessageId: ap.messageId, confirmationMessageId: i.inboundMessageId,\n        idempotencyKey: ('book:' + ap.messageId + ':' + i.inboundMessageId).slice(0, 120) } }; break; }\n    case 'get_operation_status': {\n      if (!i.operationId) throw new Error('operationId обязателен');\n      r = { method: 'GET', path: '/v2/operations/' + encodeURIComponent(String(i.operationId)), qs: { ...id } }; break; }\n    case 'handoff_to_human': {\n      const codes = ['custom_discount', 'refund_or_payment_issue', 'complaint_or_conflict', 'uncertain_intent', 'unavailable_nonstandard_solution', 'corporate_or_event_complex', 'guest_requested_human', 'unsupported_action'];\n      if (!codes.includes(i.reasonCode)) throw new Error('reasonCode должен быть одним из: ' + codes.join(', '));\n      const pr = ['low', 'medium', 'high', 'urgent'].includes(i.priority) ? i.priority : 'medium';\n      r = { method: 'POST', path: '/handoff', body: { ...id, reasonCode: i.reasonCode, summary: clip(i.summary, 1000), requestedAction: clip(i.requestedAction, 500), priority: pr } }; break; }\n  }\n  const qs = { ...(r.qs || {}), ...trace };\n  return [{ json: { blocked: false, tool: i.tool, method: r.method, url: \"https://sandbox-crm-sandbox.up.railway.app/api/integrations/agent\" + r.path + '?' + Object.entries(qs).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => encodeURIComponent(k) + '=' + encodeURIComponent(String(v))).join('&'),\n    hasBody: !!r.body, bodyJson: r.body ? JSON.stringify(r.body) : '' } }];\n} catch (e) { return fail('VALIDATION_ERROR', String(e.message).slice(0, 300)); }"
+   }
+  },
+  {
+   "id": "g3",
+   "name": "Blocked?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    440,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "c1",
+       "leftValue": "={{ $json.blocked }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "g4",
+   "name": "Is POST?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.2,
+   "position": [
+    660,
+    100
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "combinator": "and",
+     "conditions": [
+      {
+       "id": "c2",
+       "leftValue": "={{ $json.hasBody }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ]
+    },
+    "options": {}
+   }
+  },
+  {
+   "id": "g5",
+   "name": "CRM POST",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    880,
+    40
+   ],
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "U0wDaJorzJ6DNWtl",
+     "name": "GUESTRA-STUDIO · CRM sandbox principal"
+    }
+   },
+   "parameters": {
+    "method": "POST",
+    "url": "={{ $json.url }}",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "sendBody": true,
+    "specifyBody": "json",
+    "jsonBody": "={{ $json.bodyJson }}",
+    "options": {
+     "timeout": 20000,
+     "response": {
+      "response": {
+       "neverError": true,
+       "fullResponse": true,
+       "responseFormat": "text"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "g6",
+   "name": "CRM GET",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    880,
+    180
+   ],
+   "retryOnFail": true,
+   "maxTries": 2,
+   "waitBetweenTries": 1000,
+   "credentials": {
+    "httpHeaderAuth": {
+     "id": "U0wDaJorzJ6DNWtl",
+     "name": "GUESTRA-STUDIO · CRM sandbox principal"
+    }
+   },
+   "parameters": {
+    "method": "GET",
+    "url": "={{ $json.url }}",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpHeaderAuth",
+    "options": {
+     "timeout": 20000,
+     "response": {
+      "response": {
+       "neverError": true,
+       "fullResponse": true,
+       "responseFormat": "text"
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "g7",
+   "name": "Shape result",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1100,
+    100
+   ],
+   "parameters": {
+    "jsCode": "\nconst b = $('Build request').first().json;\nif (b.blocked) return [{ json: { ok: false, code: b.code, message: b.message } }];\nconst r = $input.first().json;\nconst status = r.statusCode ?? 0;\nconst raw = r.data ?? r.body; let data; try { data = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (e) { data = undefined; }\nif (status < 200 || status >= 300) {\n  const code = data?.code || ('HTTP_' + status);\n  const msg = { SCOPE_DENIED: 'Нет прав на это действие', BUSINESS_WRITES_DISABLED: 'Изменения сейчас отключены', VALIDATION_ERROR: 'Некорректные параметры запроса', CONVERSATION_HUMAN_OWNED: 'Диалог ведёт сотрудник' }[code] || 'Запрос не выполнен';\n  return [{ json: { ok: false, status, code, retryable: !!data?.retryable || status >= 500, message: msg } }];\n}\nlet out = data;\nif (b.tool === 'search_accommodation') {\n  out = { source: data.source, results: (data.results || []).map(p => ({ property: p.propertyName, roomTypes: (p.roomTypes || []).map(t => ({\n    roomTypeId: t.roomTypeId, roomTypeName: t.roomTypeName, maxOccupancy: t.maxOccupancy, available: t.available,\n    rates: (t.rates || []).map(x => ({ ratePlanId: x.ratePlanId, ratePlanName: x.ratePlanName, totalAmount: x.totalAmount, currency: x.currencyCode, nights: (x.nightlyBreakdown || []).length })) })) })) };\n} else if (b.tool === 'get_property_knowledge') {\n  out = { items: (data.items || []).slice(0, 20).map(x => ({ topic: x.topic, title: x.title, content: x.content })) };\n} else if (b.tool === 'create_offer') {\n  const o = data.offer ?? {}; const p = data.pricing ?? {};\n  out = { offerId: o.id, offerCode: o.code, roomType: o.roomType, checkIn: o.checkIn, checkOut: o.checkOut, nights: o.nights, adults: o.adults, children: o.children, total: o.total, currency: p.currency ?? 'KZT', expiresAt: o.expiresAt, duplicate: data.duplicate };\n} else if (b.tool === 'book_accommodation' || b.tool === 'get_operation_status') {\n  const s = data.snapshot ?? data.result ?? {};\n  out = { operationId: data.operationId, status: data.status, errorCode: data.errorCode, confirmationNumber: s.confirmationNumber ?? s.reservation?.confirmationNumber, reservationStatus: s.status ?? s.reservation?.status, totalAmount: s.totalAmount, currency: s.currencyCode ?? s.currency, arrivalDate: s.arrivalDate, departureDate: s.departureDate, snapshotKeys: Object.keys(s).slice(0, 20), duplicate: data.duplicate };\n} else if (b.tool === 'create_or_update_request') {\n  out = { requestId: data.requestId, created: data.created, duplicate: data.duplicate };\n}\nreturn [{ json: { ok: true, status, data: out } }];"
+   }
+  }
+ ],
+ "connections": {
+  "Execute Workflow Trigger": {
+   "main": [
+    [
+     {
+      "node": "Build request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build request": {
+   "main": [
+    [
+     {
+      "node": "Blocked?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Blocked?": {
+   "main": [
+    [
+     {
+      "node": "Shape result",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Is POST?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Is POST?": {
+   "main": [
+    [
+     {
+      "node": "CRM POST",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "CRM GET",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "CRM POST": {
+   "main": [
+    [
+     {
+      "node": "Shape result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "CRM GET": {
+   "main": [
+    [
+     {
+      "node": "Shape result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "settings": {
+  "executionOrder": "v1"
+ }
+}
