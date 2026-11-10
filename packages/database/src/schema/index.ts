@@ -144,6 +144,7 @@ export {
   channelStatusEnum,
   syncDirectionEnum,
   channelConnections,
+  channelRevisionReceipts,
   ariSyncLogs,
   contentSyncLogs,
 } from './channel.js';

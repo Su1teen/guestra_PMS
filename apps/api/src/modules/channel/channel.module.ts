@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ChannelController } from './channel.controller';
+import { ChannelDemoController } from './channel-demo.controller';
 import { ChannelService } from './channel.service';
 import { AriService } from './ari.service';
 import { ContentSyncService } from './content-sync.service';
@@ -19,6 +20,7 @@ import { DerbySoftInboundController } from './adapters/derbysoft/derbysoft-inbou
 import { Beds24Adapter } from './adapters/beds24/beds24.adapter';
 import { ChannexAdapter } from './adapters/channex/channex.adapter';
 import { ChannexInboundController } from './adapters/channex/channex-inbound.controller';
+import { ChannexSyncService } from './adapters/channex/channex-sync.service';
 import {
   NamedConsoleChannelAdapter,
   WAVE_CHANNEL_ADAPTERS,
@@ -43,6 +45,7 @@ const waveChannelProviders = WAVE_CHANNEL_CONSOLE_PACKS.map((pack, index) => ({
   imports: [RoomModule, ReservationModule, WebhookModule, MediaModule, ReviewsModule],
   controllers: [
     ChannelController,
+    ChannelDemoController,
     BookingComInboundController,
     ExpediaInboundController,
     DerbySoftInboundController,
@@ -62,6 +65,7 @@ const waveChannelProviders = WAVE_CHANNEL_CONSOLE_PACKS.map((pack, index) => ({
     DerbySoftAdapter,
     Beds24Adapter,
     ChannexAdapter,
+    ChannexSyncService,
     ...waveChannelProviders,
     {
       provide: WAVE_CHANNEL_ADAPTERS,

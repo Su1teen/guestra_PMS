@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, boolean, timestamp, jsonb, date, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, boolean, timestamp, jsonb, date, pgEnum, integer, primaryKey, index } from 'drizzle-orm/pg-core';
 import { properties } from './property.js';
 
 /**
@@ -61,6 +61,26 @@ export const channelConnections = pgTable('channel_connections', {
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** Durable receipt and delivery work for a committed channel revision. */
+export const channelRevisionReceipts = pgTable('channel_revision_receipts', {
+  propertyId: uuid('property_id').notNull().references(() => properties.id, { onDelete: 'cascade' }),
+  channelConnectionId: uuid('channel_connection_id').notNull().references(() => channelConnections.id, { onDelete: 'cascade' }),
+  revisionId: varchar('revision_id', { length: 100 }).notNull(),
+  bookingId: uuid('booking_id').notNull(),
+  reservationId: uuid('reservation_id').notNull(),
+  insertedAt: timestamp('inserted_at', { withTimezone: true }).notNull(),
+  startDate: date('start_date'),
+  endDate: date('end_date'),
+  acknowledgedAt: timestamp('acknowledged_at', { withTimezone: true }),
+  completedAt: timestamp('completed_at', { withTimezone: true }),
+  retryAt: timestamp('retry_at', { withTimezone: true }).notNull().defaultNow(),
+  attempts: integer('attempts').notNull().default(0),
+}, (table) => ({
+  key: primaryKey({ columns: [table.propertyId, table.channelConnectionId, table.revisionId] }),
+  booking: index('channel_revision_receipts_booking_idx').on(table.propertyId, table.channelConnectionId, table.bookingId, table.insertedAt),
+  pending: index('channel_revision_receipts_pending_idx').on(table.completedAt, table.retryAt),
+}));
 
 /**
  * ARI Sync Log — tracks every push/pull for debugging and reconciliation (KB 6.1).

@@ -5,6 +5,7 @@ export interface ChannelHttpJsonResult<T = Record<string, unknown>> {
   status: number;
   data?: T;
   errorMessage?: string;
+  retryAfterMs?: number;
 }
 
 export type ChannelFetchFn = typeof fetch;
@@ -34,12 +35,19 @@ export async function channelJsonRequest<T = Record<string, unknown>>(
     }
 
     if (!response.ok) {
+      const retryAfter = response.headers.get('retry-after');
+      const retryAfterMs = retryAfter === null ? undefined
+        : /^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now();
       const message =
         (data as { message?: string } | undefined)?.message ??
         (data as { error?: string } | undefined)?.error ??
         (data as { errors?: { title?: string } } | undefined)?.errors?.title ??
         (text || `HTTP ${response.status}`);
-      return { ok: false, status: response.status, data, errorMessage: message };
+      return {
+        ok: false, status: response.status, data, errorMessage: message,
+        ...(retryAfterMs !== undefined && Number.isFinite(retryAfterMs)
+          ? { retryAfterMs: Math.max(0, retryAfterMs) } : {}),
+      };
     }
 
     return { ok: true, status: response.status, data };

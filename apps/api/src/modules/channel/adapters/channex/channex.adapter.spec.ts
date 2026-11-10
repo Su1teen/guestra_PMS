@@ -28,15 +28,30 @@ describe('ChannexAdapter', () => {
     expect(adapter.adapterType).toBe('channex');
   });
 
-  it('uses console mode when credentials are missing', async () => {
+  it('fails without credentials and never reports a console success', async () => {
     const adapter = new ChannexAdapter(mockConfig({ CHANNEX_API_KEY: '', CHANNEX_PROPERTY_ID: '' }));
     const result = await adapter.pushAvailability({
       propertyId: 'p1',
       channelConnectionId: 'c1',
       items: [{ channelRoomCode: 'RT1', date: '2026-04-01', available: 3, totalInventory: 5 }],
     });
-    expect(result.success).toBe(true);
+    expect(result).toMatchObject({ success: false, itemsSynced: 0 });
+    expect((await adapter.testConnection({})).connected).toBe(false);
+    expect((await adapter.pullReservations({ propertyId: 'p1', channelConnectionId: 'c1' })).success).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('restricts staging HTTP to the configured property and verifies its response', async () => {
+    const adapter = new ChannexAdapter(mockConfig({
+      CHANNEX_STAGING_ONLY: 'true',
+      CHANNEX_BASE_URL: 'https://staging.channex.io/api/v1',
+    }));
+    expect((await adapter.testConnection({ propertyId: 'another-property' })).connected).toBe(false);
+    expect((await adapter.testConnection({ baseUrl: 'https://api.channex.io/api/v1' })).connected).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: 'prop-uuid-1' } })));
+    expect((await adapter.testConnection({ apiKey: 'ignored-db-key' })).connected).toBe(true);
+    expect(new Headers(fetchMock.mock.calls[0]?.[1]?.headers).get('user-api-key')).toBe('test_channex_key');
   });
 
   it('pushAvailability posts values and captures task ids', async () => {
@@ -118,6 +133,16 @@ describe('ChannexAdapter', () => {
     expect(String(fetchMock.mock.calls[0]![0])).toContain('/restrictions');
   });
 
+  it('passes a long Retry-After to the recovery caller without retrying inline', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{}', { status: 429, headers: { 'Retry-After': '120' } }));
+    const result = await new ChannexAdapter(mockConfig()).pushAvailability({
+      propertyId: 'p1', channelConnectionId: 'c1',
+      items: [{ channelRoomCode: 'RT1', date: '2026-04-01', available: 3, totalInventory: 5 }],
+    });
+    expect(result).toMatchObject({ success: false, retryAfterMs: 120_000 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('pullReservations reads booking_revisions feed with revision id for ACK', async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(
@@ -178,5 +203,49 @@ describe('ChannexAdapter', () => {
 
     expect(result.success).toBe(true);
     expect(String(fetchMock.mock.calls[0]![0])).toContain('/booking_revisions/rev-99/ack');
+  });
+
+  it('refuses to ACK a stable booking id without a revision id', async () => {
+    const result = await new ChannexAdapter(mockConfig()).confirmReservation({
+      channelConnectionId: 'c1', externalConfirmation: 'booking', pmsConfirmationNumber: 'PMS',
+    });
+    expect(result.success).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('reads the authenticated revision by id for a booking notification', async () => {
+    const revision = {
+      id: 'revision-1', property_id: 'prop-uuid-1', booking_id: 'stable-booking',
+      status: 'cancelled', inserted_at: '2026-11-08T04:33:39Z',
+    };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: revision.id, attributes: revision } })));
+    const result = await new ChannexAdapter(mockConfig()).pullReservations({
+      propertyId: 'p1', channelConnectionId: 'c1', externalRevisionId: revision.id,
+    });
+    expect(result).toMatchObject({ success: true, reservations: [{ externalRevisionId: revision.id }] });
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://channex.example/api/v1/booking_revisions/revision-1');
+  });
+
+  it('reads paginated flat revisions and rejects a different property', async () => {
+    const revision = {
+      id: 'revision-1', property_id: 'prop-uuid-1', booking_id: 'stable-booking',
+      status: 'cancelled', inserted_at: '2026-11-08T04:33:39.123456',
+    };
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ id: revision.id, attributes: revision }], meta: { total: 2, limit: 1 },
+    }))).mockResolvedValueOnce(new Response(JSON.stringify({
+      data: [{ id: 'revision-2', attributes: { ...revision, property_id: 'other-property' } }],
+      meta: { total: 2, limit: 1 },
+    })));
+    const result = await new ChannexAdapter(mockConfig()).pullReservations({
+      propertyId: 'p1', channelConnectionId: 'c1',
+    });
+    expect(result.reservations).toMatchObject([{
+      externalConfirmation: 'stable-booking', externalRevisionId: 'revision-1',
+      status: 'cancelled', channelBookingDate: new Date('2026-11-08T04:33:39.123Z'),
+    }]);
+    expect(result.success).toBe(false);
+    expect(result.errors).toHaveLength(1);
+    expect(new URL(fetchMock.mock.calls[1]![0]).searchParams.get('pagination[page]')).toBe('2');
   });
 });

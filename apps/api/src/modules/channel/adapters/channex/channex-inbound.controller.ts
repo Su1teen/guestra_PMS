@@ -6,7 +6,6 @@ import { Public } from '../../../auth/public.decorator';
 import { InboundReservationService } from '../../inbound-reservation.service';
 import { ChannelService } from '../../channel.service';
 import { getInboundAuth, type InboundHmacAuth } from '../inbound-auth.util';
-import { mapChannexRevisionToHaip } from './channex.mapper';
 import { mapChannexReviewToIngest } from './channex-review.mapper';
 import { ReviewsIngestService } from '../../../reviews/reviews-ingest.service';
 
@@ -18,12 +17,11 @@ import { ReviewsIngestService } from '../../../reviews/reviews-ingest.service';
  *   Reviews callback_url: https://<haip-host>/api/v1/channels/inbound/channex/reviews
  *   event_mask: booking (bookings) or review (reviews)
  *   headers: { "X-Channex-Webhook-Secret": "<shared-secret>" }
- *   send_data: true  (preferred) — payload includes revision/booking attributes
- *   send_data: false — notification only; HAIP pulls booking_revisions/feed
+ *   send_data: true — pull the specified revision; notifications without an ID use the feed
  *
  * Auth: shared secret via `X-Channex-Webhook-Secret` matched to
  * `connection.config.inboundAuth.secret` for the property-routed connection.
- * `AUTH_ENABLED=false` skips secret checks (local demo).
+ * Booking notifications always require the shared secret.
  */
 @ApiTags('Channel Manager — Channex')
 @Controller('channels/inbound/channex')
@@ -48,8 +46,8 @@ export class ChannexInboundController {
     return timingSafeEqual(ha, hb);
   }
 
-  private isAuthorizedFor(connection: any, secretHeader: string | undefined): boolean {
-    if (!this.authEnabled) return true;
+  private isAuthorizedFor(connection: any, secretHeader: string | undefined, allowLocalBypass = true): boolean {
+    if (allowLocalBypass && !this.authEnabled) return true;
     const stored = getInboundAuth<InboundHmacAuth>(connection.config);
     if (!stored?.secret || !secretHeader) return false;
     return this.secretsEqual(secretHeader.trim(), stored.secret);
@@ -85,34 +83,24 @@ export class ChannexInboundController {
         return res.status(404).json({ error: 'No matching Channex connection' });
       }
 
-      if (!this.isAuthorizedFor(connection, secretHeader)) {
+      if (!this.isAuthorizedFor(connection, secretHeader, false)) {
         this.logger.warn(`Channex webhook unauthorized for connection ${connection.id}`);
         return res.status(401).json({ error: 'Unauthorized' });
       }
 
-      // Prefer embedded revision payload (send_data=true); otherwise pull the feed.
-      // Channex "Send test message" often posts a stub/data wrapper without a real
-      // booking revision — ACK those with 200 so webhook delivery succeeds.
-      const revision = this.extractRevision(body);
-      if (revision) {
-        const mapped = mapChannexRevisionToHaip(revision, propertyId);
-        if (!mapped) {
-          this.logger.warn(
-            `Channex webhook: no usable booking revision for property_id=${propertyId} — acking`,
-          );
-          return res.status(200).json({ ok: true, ack: 'no_usable_revision' });
-        }
-        await this.inboundReservationService.processInboundReservation(connection.id, mapped);
-      } else {
-        await this.inboundReservationService.pullAndProcessReservations(
-          connection.id,
-          connection.propertyId,
-        );
+      const payload = body['payload'] as Record<string, unknown> | undefined;
+      const revisionId = payload?.['revision_id'] ?? payload?.['booking_revision_id'];
+      if (revisionId !== undefined && (typeof revisionId !== 'string' ||
+          !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(revisionId))) {
+        return res.status(400).json({ error: 'Invalid revision ID' });
       }
-
+      const result = await this.inboundReservationService.pullAndProcessReservations(
+        connection.id, connection.propertyId, undefined, revisionId,
+      );
+      if (!result.success) return res.status(503).json({ error: 'Channex feed requires retry' });
       return res.status(200).json({ ok: true });
     } catch (error: any) {
-      this.logger.error(`Channex inbound error: ${error.message}`, error.stack);
+      this.logger.error(`Channex booking notification failed (${error?.constructor?.name ?? 'Error'})`);
       return res.status(500).json({ error: 'Internal processing error' });
     }
   }
@@ -218,23 +206,4 @@ export class ChannexInboundController {
     return undefined;
   }
 
-  private extractRevision(body: Record<string, unknown>): Record<string, unknown> | null {
-    // Full revision object
-    if (body['id'] && (body['attributes'] || body['booking'] || body['rooms'])) {
-      return body;
-    }
-    const data = body['data'];
-    if (data && typeof data === 'object' && !Array.isArray(data)) {
-      const row = data as Record<string, unknown>;
-      if (row['id'] || row['attributes'] || row['booking']) return row;
-    }
-    if (Array.isArray(data) && data[0] && typeof data[0] === 'object') {
-      return data[0] as Record<string, unknown>;
-    }
-    // Payload with booking but no revision wrapper
-    if (body['booking'] && typeof body['booking'] === 'object') {
-      return body;
-    }
-    return null;
-  }
 }

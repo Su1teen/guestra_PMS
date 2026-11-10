@@ -69,6 +69,8 @@ When credentials are missing, the adapter runs in **console mode** (logged stub,
 | `baseUrl` | `CHANNEX_BASE_URL` | Default `https://api.channex.io/api/v1`; staging `https://staging.channex.io/api/v1` |
 | `inboundAuth.secret` | — | Shared secret for `X-Channex-Webhook-Secret` on inbound webhooks |
 
+Set `CHANNEX_STAGING_ONLY=true` and inject the key through `CHANNEX_API_KEY` for a staging run. Set `CHANNEX_PROPERTY_ID` to the allowed staging property. The adapter rejects other properties and hosts in this mode.
+
 ```http
 POST /api/v1/channels/connections?propertyId={uuid}
 Content-Type: application/json
@@ -77,7 +79,6 @@ Content-Type: application/json
   "channelCode": "channex",
   "adapterType": "channex",
   "config": {
-    "apiKey": "YOUR_USER_API_KEY",
     "propertyId": "CHANNEX_PROPERTY_UUID",
     "baseUrl": "https://staging.channex.io/api/v1",
     "inboundAuth": { "secret": "SHARED_WEBHOOK_SECRET" }
@@ -108,9 +109,9 @@ Or register a Channex webhook to:
 
 `POST /api/v1/channels/inbound/channex/bookings`
 
-HAIP persists the reservation, then ACKs **`booking_revisions/{revisionId}/ack`** (revision id, not booking id).
+The authenticated webhook fetches the revision by ID. Notifications without a revision ID use the booking feed. Set `CHANNEX_POLL_ENABLED=true` for automatic feed recovery on active inbound connections.
 
-Console mode applies when `apiKey` or `propertyId` is absent.
+The booking and revision receipt commit together. A worker sends the ACK and refreshes availability, with retry state saved in the receipt. Missing credentials cause the Channex adapter to report failure.
 
 ### Certification
 

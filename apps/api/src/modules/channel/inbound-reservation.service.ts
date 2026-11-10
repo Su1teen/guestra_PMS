@@ -1,11 +1,12 @@
-import { Injectable, Inject, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
-import { eq, and, sql } from 'drizzle-orm';
-import { bookings, reservations, guests, channelConnections, roomTypes, ratePlans } from '@telivityhaip/database';
+import { Injectable, Inject, Logger, Optional, ConflictException, NotFoundException, BadRequestException } from '@nestjs/common';
+import { eq, and, desc, sql } from 'drizzle-orm';
+import { auditLogs, bookings, reservations, guests, channelConnections, channelRevisionReceipts, roomTypes, ratePlans } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { ChannelService } from './channel.service';
 import { ChannelAdapterFactory } from './channel-adapter.factory';
 import { AriService } from './ari.service';
 import { WebhookService } from '../webhook/webhook.service';
+import { DomainEventOutboxService } from '../webhook/domain-event-outbox.service';
 import { AvailabilityService } from '../reservation/availability.service';
 import { RoomStatusService } from '../room/room-status.service';
 import { generateConfirmationToken } from '../connect/connect-booking.service';
@@ -13,6 +14,7 @@ import type { ChannelReservation } from './channel-adapter.interface';
 
 @Injectable()
 export class InboundReservationService {
+  private readonly logger = new Logger(InboundReservationService.name);
   constructor(
     @Inject(DRIZZLE) private readonly db: any,
     private readonly channelService: ChannelService,
@@ -21,6 +23,7 @@ export class InboundReservationService {
     private readonly webhookService: WebhookService,
     private readonly availabilityService: AvailabilityService,
     private readonly roomStatusService: RoomStatusService,
+    @Optional() private readonly outbox?: DomainEventOutboxService,
   ) {}
 
   /**
@@ -31,9 +34,17 @@ export class InboundReservationService {
   async processInboundReservation(
     channelConnectionId: string,
     reservation: ChannelReservation,
+    trustedChannex = false,
   ) {
     // Get channel connection for property context and mappings
     const conn = await this.findConnectionForInbound(channelConnectionId);
+    if (conn.adapterType === 'channex') {
+      if (!trustedChannex) throw new BadRequestException('Read Channex revisions from the authenticated feed');
+      return this.processRevision(conn, reservation);
+    }
+    if (reservation.channelCode.startsWith('SIMULATED:')) {
+      throw new BadRequestException('Use the dedicated simulation endpoint');
+    }
     const propertyId = conn.propertyId;
 
     // Check deduplication — scoped to the connection's property to prevent
@@ -59,6 +70,95 @@ export class InboundReservationService {
     return this.handleNewReservation(conn, reservation);
   }
 
+  async processSimulatedRevision(channelConnectionId: string, propertyId: string, reservation: ChannelReservation) {
+    const conn = await this.channelService.findById(channelConnectionId, propertyId);
+    if (conn.adapterType !== 'mock' || !conn.channelCode.startsWith('SIMULATED:') ||
+        conn.channelCode !== reservation.channelCode) {
+      throw new BadRequestException('This connection is outside the simulation');
+    }
+    return this.processRevision(conn, reservation);
+  }
+
+  private async processRevision(conn: typeof channelConnections.$inferSelect, reservation: ChannelReservation) {
+    const { externalRevisionId: revisionId, channelBookingDate, externalConfirmation } = reservation;
+    const simulated = conn.adapterType === 'mock';
+    const vendorProperty = simulated ? undefined : conn.config?.['propertyId'] ?? conn.config?.['hotelId'];
+    const channelCode = simulated ? conn.channelCode : 'channex';
+    if (!conn.isActive || reservation.channelCode !== channelCode || !revisionId ||
+        !externalConfirmation || !Number.isFinite(channelBookingDate.getTime()) ||
+        (vendorProperty && vendorProperty !== reservation.channelHotelId)) {
+      throw new BadRequestException('Invalid Channex revision for this connection');
+    }
+    const { propertyId } = conn;
+    const scope = and(
+      eq(channelRevisionReceipts.propertyId, propertyId),
+      eq(channelRevisionReceipts.channelConnectionId, conn.id),
+    );
+    const result = await this.db.transaction(async (tx: any) => {
+      // Serialize webhook and feed deliveries for the same connection, across replicas.
+      const [active] = await tx.select({ id: channelConnections.id }).from(channelConnections)
+        .where(and(eq(channelConnections.id, conn.id), eq(channelConnections.propertyId, propertyId),
+          eq(channelConnections.isActive, true))).for('update');
+      if (!active) throw new ConflictException('Channex connection is inactive');
+
+      const existing = await this.findByExternalConfirmation(externalConfirmation, channelCode, propertyId, tx);
+      const [duplicate] = await tx.select().from(channelRevisionReceipts)
+        .where(and(scope, eq(channelRevisionReceipts.revisionId, revisionId)));
+      if (duplicate) {
+        if (existing?.id !== duplicate.bookingId) throw new ConflictException('Channex revision identity mismatch');
+        return { bookingId: existing.id, reservationId: duplicate.reservationId, confirmationNumber: existing.confirmationNumber };
+      }
+
+      const [current] = existing ? await tx.select().from(reservations)
+        .where(and(eq(reservations.bookingId, existing.id), eq(reservations.propertyId, propertyId))) : [];
+      if (existing && !current) throw new ConflictException('Channex booking is missing its reservation');
+      const [latest] = existing ? await tx.select().from(channelRevisionReceipts)
+        .where(and(scope, eq(channelRevisionReceipts.bookingId, existing.id)))
+        .orderBy(desc(channelRevisionReceipts.insertedAt)).limit(1) : [];
+
+      const stale = !!current && (
+        (latest && latest.insertedAt > channelBookingDate) ||
+        current.status === 'cancelled' || reservation.status === 'new'
+      );
+      let applied;
+      if (stale) {
+        applied = { bookingId: existing.id, reservationId: current.id, confirmationNumber: existing.confirmationNumber };
+      } else if (reservation.status === 'cancelled') {
+        applied = await this.handleCancellation(conn, reservation, existing, tx);
+      } else if (existing) {
+        applied = await this.handleModification(conn, reservation, existing, tx);
+      } else {
+        applied = await this.handleNewReservation(conn, reservation, tx);
+      }
+
+      // Channex needs an absolute ARI update for both the new and the released nights.
+      const startDate = stale ? null : [current?.arrivalDate, reservation.arrivalDate].filter(Boolean).sort()[0];
+      const endDate = stale ? null : [current?.departureDate, reservation.departureDate].filter(Boolean).sort().at(-1);
+      await tx.insert(channelRevisionReceipts).values({
+        propertyId, channelConnectionId: conn.id, revisionId,
+        bookingId: applied.bookingId, reservationId: applied.reservationId,
+        insertedAt: channelBookingDate, startDate, endDate,
+        completedAt: simulated ? new Date() : null,
+      });
+      if (!stale && simulated) {
+        await tx.insert(auditLogs).values({
+          propertyId, action: 'create', entityType: 'reservation', entityId: applied.reservationId,
+          description: 'SIMULATED channel revision',
+          newValue: { channelCode, revisionId, status: reservation.status },
+        });
+      } else if (!stale) {
+        await this.outbox?.persist(tx, {
+          event: 'channel.reservation_received', entityType: 'reservation', entityId: applied.reservationId,
+          propertyId, timestamp: new Date().toISOString(),
+          data: { channelCode: 'channex', externalConfirmation, status: reservation.status },
+        }, `channex:${conn.id}:${revisionId}`);
+      }
+      return applied;
+    });
+    this.logger.log(`${channelCode} revision recorded property=${propertyId} revision=${revisionId} status=${reservation.status}`);
+    return result;
+  }
+
   /**
    * Pull reservations from a channel and process them.
    */
@@ -66,6 +166,7 @@ export class InboundReservationService {
     channelConnectionId: string,
     propertyId: string,
     since?: Date,
+    externalRevisionId?: string,
   ) {
     const conn = await this.channelService.findById(channelConnectionId, propertyId);
     const adapter = this.adapterFactory.getAdapter(conn.adapterType);
@@ -75,19 +176,26 @@ export class InboundReservationService {
       channelConnectionId,
       connectionConfig: (conn.config ?? {}) as Record<string, unknown>,
       since,
+      ...(externalRevisionId ? { externalRevisionId } : {}),
     });
 
     const processed: Array<{ externalConfirmation: string; status: string; pmsConfirmation?: string; error?: string }> = [];
+    const blocked = new Set<string>();
 
     for (const reservation of result.reservations) {
+      if (blocked.has(reservation.externalConfirmation)) continue;
       try {
-        const res = await this.processInboundReservation(channelConnectionId, reservation);
+        const res = await this.processInboundReservation(channelConnectionId, reservation, conn.adapterType === 'channex');
         processed.push({
           externalConfirmation: reservation.externalConfirmation,
           status: 'processed',
           pmsConfirmation: res.confirmationNumber,
         });
       } catch (error: any) {
+        if (conn.adapterType === 'channex') {
+          blocked.add(reservation.externalConfirmation);
+          this.logger.warn(`Channex revision requires retry property=${propertyId} revision=${reservation.externalRevisionId} error=${error?.constructor?.name ?? 'Error'}`);
+        }
         processed.push({
           externalConfirmation: reservation.externalConfirmation,
           status: 'failed',
@@ -96,24 +204,27 @@ export class InboundReservationService {
       }
     }
 
-    return { total: result.reservations.length, processed };
+    return {
+      total: result.reservations.length, processed,
+      ...(conn.adapterType === 'channex' ? { errors: result.errors, success: result.success && blocked.size === 0 } : {}),
+    };
   }
 
   // --- Private Handlers ---
 
-  private async handleNewReservation(conn: any, reservation: ChannelReservation) {
+  private async handleNewReservation(conn: any, reservation: ChannelReservation, revisionTx?: any) {
     const propertyId = conn.propertyId;
 
     // Resolve channel codes to PMS IDs (outside tx — pure lookups)
     const roomTypeId = this.resolveRoomTypeId(conn, reservation.channelRoomCode);
-    const ratePlanId = this.resolveRatePlanId(conn, reservation.channelRateCode);
+    const ratePlanId = this.resolveRatePlanId(conn, reservation.channelRateCode, reservation.channelParentRateCode);
 
     // FK ownership (security audit follow-on): the channel connection's
     // roomTypeMapping/ratePlanMapping JSON is operator-supplied. A misconfigured
     // (or maliciously edited) mapping could point at a foreign-tenant id. Verify
     // BOTH resolved ids belong to THIS connection's propertyId before writing.
-    await this.assertSamePropertyFk(roomTypes, roomTypeId, propertyId, 'room type');
-    await this.assertSamePropertyFk(ratePlans, ratePlanId, propertyId, 'rate plan');
+    await this.assertSamePropertyFk(roomTypes, roomTypeId, propertyId, 'room type', revisionTx);
+    await this.assertSamePropertyFk(ratePlans, ratePlanId, propertyId, 'rate plan', revisionTx);
 
     // Calculate nights
     const arrival = new Date(reservation.arrivalDate);
@@ -126,7 +237,7 @@ export class InboundReservationService {
     // Atomically create guest + booking + reservation so we never end up with a half-written record.
     let created: { guest: any; booking: any; pmsReservation: any };
     try {
-      created = await this.db.transaction(async (tx: any) => {
+      const create = async (tx: any) => {
       await tx.execute(sql`select id from ${roomTypes} where ${roomTypes.id} = ${roomTypeId} and ${roomTypes.propertyId} = ${propertyId} for update`);
       const availability = await this.availabilityService.searchAvailability(
         propertyId,
@@ -177,9 +288,10 @@ export class InboundReservationService {
         .returning();
 
       return { guest, booking, pmsReservation };
-      });
+      };
+      created = revisionTx ? await create(revisionTx) : await this.db.transaction(create);
     } catch (err: any) {
-      if (err?.code === '23505') {
+      if (!revisionTx && err?.code === '23505') {
         const raced = await this.findByExternalConfirmation(
           reservation.externalConfirmation,
           reservation.channelCode,
@@ -193,6 +305,9 @@ export class InboundReservationService {
     }
 
     const { guest, booking, pmsReservation } = created;
+    if (revisionTx) {
+      return { reservationId: pmsReservation.id, bookingId: booking.id, confirmationNumber, guestId: guest.id };
+    }
 
     // Confirm back to channel (Channex ACKs revision id, not booking id)
     try {
@@ -241,11 +356,11 @@ export class InboundReservationService {
     };
   }
 
-  private async handleModification(conn: any, reservation: ChannelReservation, existing: any) {
+  private async handleModification(conn: any, reservation: ChannelReservation, existing: any, revisionTx?: any) {
     const propertyId = conn.propertyId;
 
     // Find the existing reservation linked to this booking — scoped to property.
-    const [existingReservation] = await this.db
+    const [existingReservation] = await (revisionTx ?? this.db)
       .select()
       .from(reservations)
       .where(
@@ -261,19 +376,19 @@ export class InboundReservationService {
 
     // Resolve codes
     const roomTypeId = this.resolveRoomTypeId(conn, reservation.channelRoomCode);
-    const ratePlanId = this.resolveRatePlanId(conn, reservation.channelRateCode);
+    const ratePlanId = this.resolveRatePlanId(conn, reservation.channelRateCode, reservation.channelParentRateCode);
 
     // FK ownership (security audit follow-on): same as handleNewReservation —
     // verify the operator-supplied channel mapping points at THIS connection's
     // propertyId before mutating the reservation.
-    await this.assertSamePropertyFk(roomTypes, roomTypeId, propertyId, 'room type');
-    await this.assertSamePropertyFk(ratePlans, ratePlanId, propertyId, 'rate plan');
+    await this.assertSamePropertyFk(roomTypes, roomTypeId, propertyId, 'room type', revisionTx);
+    await this.assertSamePropertyFk(ratePlans, ratePlanId, propertyId, 'rate plan', revisionTx);
 
     const arrival = new Date(reservation.arrivalDate);
     const departure = new Date(reservation.departureDate);
     const nights = Math.ceil((departure.getTime() - arrival.getTime()) / (1000 * 60 * 60 * 24));
 
-    const [updated] = await this.db.transaction(async (tx: any) => {
+    const modify = async (tx: any) => {
       const [current] = await tx.select().from(reservations).where(and(eq(reservations.id, existingReservation.id), eq(reservations.propertyId, propertyId))).for('update');
       if (!current || String(current.updatedAt) !== String(existingReservation.updatedAt)) throw new ConflictException('Бронь изменилась. Повторите обработку изменения канала.');
       if (['cancelled','checked_out','no_show'].includes(current.status)) throw new ConflictException('Нельзя изменять завершённую бронь через канал.');
@@ -336,7 +451,12 @@ export class InboundReservationService {
           ),
         )
         .returning();
-    });
+    };
+    if (revisionTx) {
+      await modify(revisionTx);
+      return { reservationId: existingReservation.id, bookingId: existing.id, confirmationNumber: existing.confirmationNumber, guestId: existingReservation.guestId };
+    }
+    await this.db.transaction(modify);
 
     // ACK revision before/with availability push (Channex requires ACK after persist)
     try {
@@ -384,7 +504,7 @@ export class InboundReservationService {
     };
   }
 
-  private async handleCancellation(conn: any, reservation: ChannelReservation, existing: any) {
+  private async handleCancellation(conn: any, reservation: ChannelReservation, existing: any, revisionTx?: any) {
     if (!existing) {
       throw new NotFoundException(
         `Cannot cancel: reservation with external confirmation ${reservation.externalConfirmation} not found`,
@@ -394,7 +514,7 @@ export class InboundReservationService {
     const propertyId = conn.propertyId;
 
     // Find the reservation — scoped to property.
-    const [existingReservation] = await this.db
+    const [existingReservation] = await (revisionTx ?? this.db)
       .select()
       .from(reservations)
       .where(
@@ -409,7 +529,7 @@ export class InboundReservationService {
     }
 
     // Cancel it
-    await this.db
+    await (revisionTx ?? this.db)
       .update(reservations)
       .set({
         status: 'cancelled',
@@ -423,6 +543,9 @@ export class InboundReservationService {
           eq(reservations.propertyId, propertyId),
         ),
       );
+    if (revisionTx) {
+      return { reservationId: existingReservation.id, bookingId: existing.id, confirmationNumber: existing.confirmationNumber, cancelled: true };
+    }
 
     const arrivalDate = reservation.arrivalDate || existingReservation.arrivalDate;
     const departureDate = reservation.departureDate || existingReservation.departureDate;
@@ -517,8 +640,9 @@ export class InboundReservationService {
     externalConfirmation: string,
     channelCode: string,
     propertyId: string,
+    db = this.db,
   ) {
-    const [existing] = await this.db
+    const [existing] = await db
       .select()
       .from(bookings)
       .where(
@@ -581,13 +705,14 @@ export class InboundReservationService {
     return mapping.roomTypeId;
   }
 
-  private resolveRatePlanId(conn: any, channelRateCode: string): string {
+  private resolveRatePlanId(conn: any, channelRateCode: string, parentRateCode?: string): string {
     const ratePlanMapping = (conn.ratePlanMapping ?? []) as Array<{
       ratePlanId: string;
       channelRateCode: string;
     }>;
 
-    const mapping = ratePlanMapping.find((m) => m.channelRateCode === channelRateCode);
+    const mapping = ratePlanMapping.find((m) => m.channelRateCode === channelRateCode)
+      ?? ratePlanMapping.find((m) => m.channelRateCode === parentRateCode);
     if (!mapping) {
       throw new NotFoundException(
         `No rate plan mapping found for channel rate code '${channelRateCode}' on connection ${conn.id}`,
@@ -607,8 +732,9 @@ export class InboundReservationService {
     id: string,
     propertyId: string,
     label: string,
+    db = this.db,
   ): Promise<void> {
-    const [row] = await this.db
+    const [row] = await db
       .select({ id: table.id })
       .from(table)
       .where(and(eq(table.id, id), eq(table.propertyId, propertyId)));
