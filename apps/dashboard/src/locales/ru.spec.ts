@@ -105,7 +105,7 @@ describe('ru locale', () => {
       .map(pathKey);
     expect(untranslated).toEqual([]);
   });
-
+//s
   it('keeps every interpolation placeholder', () => {
     const names = (value: string) =>
       [...value.matchAll(/\{\{([^}]+)\}\}/g)].map((m) => m[1].trim()).sort();
