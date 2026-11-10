@@ -247,7 +247,7 @@ function ScopedReports() {
           { to: '/revenue', permission: 'revenue.manage', label: i18n.language.startsWith('ru') ? 'Прогноз спроса' : 'Demand forecast', note: i18n.language.startsWith('ru') ? 'Прирост и темп бронирования' : 'Pickup and bookings' },
           { to: '/accounting', permission: 'accounting.view', label: i18n.language.startsWith('ru') ? 'Бухгалтерия' : 'Accounting', note: i18n.language.startsWith('ru') ? 'Обороты и сверка' : 'Ledgers and reconciliation' },
         ].filter((area) => hasPermission(area.permission)).map((area) => <Link key={area.to} to={area.to} aria-current={area.active ? 'page' : undefined}
-          className={`rounded-xl border px-4 py-3 transition-colors ${area.active ? 'border-telivity-teal bg-teal-50 text-telivity-navy shadow-sm' : 'border-gray-200 bg-white text-telivity-slate hover:border-telivity-teal'}`}>
+          className={`rounded-xl border px-4 py-3 transition-colors ${area.active ? 'border-telivity-teal bg-primary-50 text-telivity-navy shadow-sm' : 'border-gray-200 bg-white text-telivity-slate hover:border-telivity-teal'}`}>
           <strong className="block text-sm">{area.label}</strong><span className="text-xs opacity-65">{area.note}</span>
         </Link>)}
       </nav>
@@ -472,7 +472,7 @@ function ScopedReports() {
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={Object.entries(payments as Record<string, number>).filter(([k]) => k !== 'total').map(([k, v]) => ({ method: k, amount: v }))}>
                   <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="method" tick={{ fontSize: 12 }} /><YAxis tick={{ fontSize: 12 }} /><Tooltip />
-                  <Bar dataKey="amount" fill="#06bdb4" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="amount" fill="#3657E8" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -491,7 +491,7 @@ function ScopedReports() {
                 occupancyPct: d.occupancyRate == null ? null : Number(d.occupancyRate) * 100,
               }))}>
                 <CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="date" tick={{ fontSize: 11 }} /><YAxis tick={{ fontSize: 12 }} domain={[0, 100]} /><Tooltip />
-                <Line type="monotone" dataKey="occupancyPct" stroke="#06bdb4" strokeWidth={2} dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="occupancyPct" stroke="#3657E8" strokeWidth={2} dot={{ r: 3 }} />
               </LineChart>
             </ResponsiveContainer>
           ) : (
@@ -613,8 +613,8 @@ function ScopedReports() {
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                   <YAxis tick={{ fontSize: 12 }} />
                   <Tooltip />
-                  <Line type="monotone" dataKey="roomsOnBooks" stroke="#06bdb4" strokeWidth={2} dot={{ r: 3 }} name={t('reports.roomsOnBooks')} />
-                  <Line type="monotone" dataKey="newBookings" stroke="#1e3a5f" strokeWidth={2} dot={{ r: 3 }} name={t('reports.newBookings')} />
+                  <Line type="monotone" dataKey="roomsOnBooks" stroke="#3657E8" strokeWidth={2} dot={{ r: 3 }} name={t('reports.roomsOnBooks')} />
+                  <Line type="monotone" dataKey="newBookings" stroke="#F79009" strokeWidth={2} dot={{ r: 3 }} name={t('reports.newBookings')} />
                 </LineChart>
               </ResponsiveContainer>
             ) : (

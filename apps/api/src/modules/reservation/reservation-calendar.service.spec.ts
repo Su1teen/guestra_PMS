@@ -9,7 +9,7 @@ describe('complete calendar window', () => {
     const conditions: any[] = [];
     const tx: any = { select: vi.fn(() => {
       const rows = results.shift();
-      const chain: any = { from: () => chain, innerJoin: () => chain,
+      const chain: any = { from: () => chain, innerJoin: () => chain, leftJoin: () => chain,
         where: (condition: any) => { conditions.push(condition); return chain; },
         orderBy: () => Promise.resolve(rows), then: (resolve: any) => Promise.resolve(rows).then(resolve) };
       return chain;

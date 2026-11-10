@@ -67,12 +67,12 @@ export default function MediaGallery({ propertyId, ownerType, ownerId, canManage
             <div key={m.id} className="group relative rounded-xl overflow-hidden border border-gray-200 bg-gray-50">
               <img src={m.url} alt={m.altText ?? m.caption ?? ''} className="w-full h-32 object-cover" loading="lazy" />
               {m.isPrimary && (
-                <span className="absolute top-1.5 left-1.5 flex items-center gap-1 bg-telivity-teal text-white text-[10px] font-semibold px-1.5 py-0.5 rounded">
+                <span className="absolute top-1.5 left-1.5 flex items-center gap-1 bg-telivity-teal text-white text-[12px] font-semibold px-1.5 py-0.5 rounded">
                   <Star size={10} fill="currentColor" /> {t('media.primary')}
                 </span>
               )}
               {m.caption && (
-                <p className="absolute bottom-0 inset-x-0 bg-black/45 text-white text-[11px] px-2 py-1 truncate">{m.caption}</p>
+                <p className="absolute bottom-0 inset-x-0 bg-black/45 text-white text-[12px] px-2 py-1 truncate">{m.caption}</p>
               )}
               {canManage && (
                 <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

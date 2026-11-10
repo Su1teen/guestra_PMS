@@ -847,12 +847,12 @@ export default function LiveManagementReport() {
                         <Bar
                           dataKey={kind === "revenue" ? "plan" : "expensePlan"}
                           name="План"
-                          fill="#d0c09b"
+                          fill="#C7D2FE"
                         />
                         <Bar
                           dataKey={kind === "revenue" ? "actual" : "expenses"}
                           name="Факт"
-                          fill="#0c7368"
+                          fill="#3657E8"
                         />
                       </BarChart>
                     </ResponsiveContainer>

@@ -136,7 +136,7 @@ function RoleChecklist({ roles, selected, onToggle }: { roles: AdminRole[]; sele
         <label key={r.id} className="flex items-center gap-2 text-sm py-1 cursor-pointer">
           <input type="checkbox" checked={selected.includes(r.id)} onChange={() => onToggle(r.id)} className="accent-telivity-teal" />
           <span className="font-medium text-telivity-navy">{r.name}</span>
-          {r.isSystem && <span className="text-[10px] text-telivity-mid-grey uppercase tracking-wide">{t('admin.system')}</span>}
+          {r.isSystem && <span className="text-[12px] text-telivity-mid-grey uppercase tracking-wide">{t('admin.system')}</span>}
         </label>
       ))}
     </div>

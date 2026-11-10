@@ -1,19 +1,21 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Settings as SettingsIcon, Building, Link2, Shield, ShieldCheck, Image as ImageIcon, Globe } from 'lucide-react';
+import { Settings as SettingsIcon, Building, Link2, Shield, ShieldCheck, Image as ImageIcon, Globe, CalendarCheck } from 'lucide-react';
 import { api } from '../lib/api';
 import { useProperty } from '../context/PropertyContext';
 import MediaGallery from '../components/media/MediaGallery';
 import UserSettings from '../components/admin/UserSettings';
 import RolesSettings from '../components/admin/RolesSettings';
 import BookingEngineSettings from '../components/admin/BookingEngineSettings';
+import BookingPolicySettings from '../components/admin/BookingPolicySettings';
 import { useTranslation } from 'react-i18next';
 
-type Tab = 'property' | 'users' | 'roles' | 'webhooks' | 'booking-engine';
+type Tab = 'property' | 'booking-policy' | 'users' | 'roles' | 'webhooks' | 'booking-engine';
 
 const TABS: { key: Tab; labelKey: string; icon: typeof Building }[] = [
   { key: 'property', labelKey: 'settings.tabs.property', icon: Building },
+  { key: 'booking-policy', labelKey: 'policy.tab', icon: CalendarCheck },
   { key: 'users', labelKey: 'settings.tabs.users', icon: Shield },
   { key: 'roles', labelKey: 'settings.tabs.roles', icon: ShieldCheck },
   { key: 'webhooks', labelKey: 'settings.tabs.webhooks', icon: Link2 },
@@ -41,12 +43,12 @@ export default function Settings() {
         <h1 className="text-2xl font-semibold text-telivity-navy">{t('settings.title')}</h1>
       </div>
 
-      <div className="flex gap-1 bg-white rounded-xl shadow-sm p-1 mb-4">
+      <div className="flex gap-1 overflow-x-auto bg-white rounded-xl border border-line shadow-sm p-1 mb-4">
         {TABS.map((tabItem) => (
           <button
             key={tabItem.key}
             onClick={() => setTab(tabItem.key)}
-            className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-medium transition-colors ${tab === tabItem.key ? 'bg-telivity-teal text-white' : 'text-telivity-slate hover:bg-telivity-light-grey'
+            className={`flex-1 min-w-max flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold transition-colors ${tab === tabItem.key ? 'bg-telivity-navy text-white' : 'text-telivity-slate hover:bg-telivity-light-grey'
               }`}
           >
             <tabItem.icon size={16} />
@@ -56,6 +58,7 @@ export default function Settings() {
       </div>
 
       {tab === 'property' && <PropertySettings propertyId={propertyId} queryClient={queryClient} />}
+      {tab === 'booking-policy' && <BookingPolicySettings propertyId={propertyId} />}
       {tab === 'users' && <UserSettings propertyId={propertyId} />}
       {tab === 'roles' && <RolesSettings propertyId={propertyId} />}
       {tab === 'webhooks' && <WebhookSettings propertyId={propertyId} />}

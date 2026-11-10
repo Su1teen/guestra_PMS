@@ -71,6 +71,14 @@ export const properties = pgTable('properties', {
     noShowFeeAmount?: number;
     noShowCutoffHour?: number;
     auditAutoLock?: boolean;
+    /** Child age bands for pricing; ages above the last band count as adults. */
+    childAgeBands?: Array<{ code: string; label: string; minAge: number; maxAge: number; occupiesBed: boolean }>;
+    /** Hours a staff-created tentative booking is held before the option expires (default 48). */
+    optionHoldHours?: number;
+    /** What happens when an option expires without guarantee: release the room or remind staff. */
+    optionExpiryAction?: 'cancel' | 'notify';
+    /** Send the guest confirmation automatically when a booking becomes confirmed (default true). */
+    autoSendConfirmation?: boolean;
     guestInfo?: {
       pets?: string;
       children?: string;

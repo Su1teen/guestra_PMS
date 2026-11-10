@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, timestamp, jsonb, integer, date, pgEnum, numeric, boolean, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, timestamp, jsonb, integer, smallint, date, pgEnum, numeric, boolean, uniqueIndex } from 'drizzle-orm/pg-core';
 import { properties } from './property.js';
 import { rooms } from './room.js';
 import { roomTypes } from './room.js';
@@ -80,6 +80,11 @@ export interface AcceptedPricingSnapshot {
     reason: string;
     serviceDate: string;
   };
+  /** Extra-guest supplement already included in every night's room amount (absent on older snapshots). */
+  occupancySupplement?: {
+    amountPerNight: string;
+    lines: Array<{ kind: 'adult' | 'child'; band: string | null; bandLabel: string | null; age: number | null; ordinal: number; amountPerNight: string }>;
+  } | null;
 }
 
 /**
@@ -148,6 +153,20 @@ export const reservations = pgTable('reservations', {
   // Occupancy
   adults: integer('adults').notNull().default(1),
   children: integer('children').notNull().default(0),
+  /** Age of each child on arrival; `children` stays the head count for channels that send only a number. */
+  childAges: smallint('child_ages').array(),
+
+  // Tentative (option) booking → confirmed on guarantee
+  /** Hold deadline of a pending booking; past it the option is released or staff is reminded (property setting). */
+  optionUntil: timestamp('option_until', { withTimezone: true }),
+  /** How the confirmed booking is guaranteed: deposit | card | company | none. */
+  guaranteeType: varchar('guarantee_type', { length: 20 }),
+  /** Payments + deposits needed for automatic confirmation (null = manual confirmation only). */
+  requiredDeposit: numeric('required_deposit', { precision: 12, scale: 2 }),
+  confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+  confirmedBy: uuid('confirmed_by'),
+  confirmationSentAt: timestamp('confirmation_sent_at', { withTimezone: true }),
+  proposalSentAt: timestamp('proposal_sent_at', { withTimezone: true }),
 
   // Special requests & preferences
   specialRequests: text('special_requests'),

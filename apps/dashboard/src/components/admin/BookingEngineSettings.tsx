@@ -448,7 +448,7 @@ function BookingEngineSettingsForProperty({ propertyId }: { propertyId: string }
                     <option value="request">{t('bookingEngine.requestSettings.modes.request')}</option>
                   )}
                 </select>
-                <p className="text-[11px] text-telivity-slate mt-1">{t(`bookingEngine.requestSettings.modeDescriptions.${form.bookingMode}`)}</p>
+                <p className="text-[12px] text-telivity-slate mt-1">{t(`bookingEngine.requestSettings.modeDescriptions.${form.bookingMode}`)}</p>
               </div>
               <div>
                 <label htmlFor="card-collection" className="block text-xs font-medium text-telivity-slate mb-1">{t('bookingEngine.requestSettings.cardCollection')}</label>
@@ -457,12 +457,12 @@ function BookingEngineSettingsForProperty({ propertyId }: { propertyId: string }
                   <option value="optional">{t('bookingEngine.requestSettings.cardPolicies.optional')}</option>
                   <option value="required">{t('bookingEngine.requestSettings.cardPolicies.required')}</option>
                 </select>
-                <p className="text-[11px] text-telivity-slate mt-1">{t(`bookingEngine.requestSettings.cardDescriptions.${form.paymentMethodCollection}`)}</p>
+                <p className="text-[12px] text-telivity-slate mt-1">{t(`bookingEngine.requestSettings.cardDescriptions.${form.paymentMethodCollection}`)}</p>
               </div>
               <div className="md:col-span-2">
                 <label htmlFor="stripe-publishable-key" className="block text-xs font-medium text-telivity-slate mb-1">{t('bookingEngine.requestSettings.stripeKey')}</label>
                 <input id="stripe-publishable-key" type="text" value={form.stripePublishableKey} onChange={(event) => updateForm((current) => ({ ...current, stripePublishableKey: event.target.value }))} placeholder={t('bookingEngine.requestSettings.stripeKeyPlaceholder')} autoComplete="off" className="w-full border border-telivity-slate rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:border-telivity-deep-blue focus-visible:ring-2 focus-visible:ring-telivity-deep-blue" />
-                <p className="text-[11px] text-telivity-slate mt-1">{t('bookingEngine.requestSettings.stripeKeyDescription')}</p>
+                <p className="text-[12px] text-telivity-slate mt-1">{t('bookingEngine.requestSettings.stripeKeyDescription')}</p>
               </div>
             </div>
             {cardCollectionBlocked && (
@@ -600,7 +600,7 @@ function DepositSettings({
         </div>
         <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={form.depositPolicy.refundable} onChange={(event) => updateForm((current) => ({ ...current, depositPolicy: { ...current.depositPolicy, refundable: event.target.checked } }))} className="accent-telivity-deep-blue" /><span className="text-telivity-navy">{t('bookingEngine.refundableDeposit')}</span></label>
         <label className="flex items-center gap-2 text-sm cursor-pointer"><input type="checkbox" checked={form.autoConfirm} onChange={(event) => updateForm((current) => ({ ...current, autoConfirm: event.target.checked }))} className="accent-telivity-deep-blue" /><span className="text-telivity-navy">{t('bookingEngine.autoConfirm')}</span></label>
-        <p className="text-[11px] text-telivity-slate">{t('bookingEngine.requestSettings.autoConfirmDescription')}</p>
+        <p className="text-[12px] text-telivity-slate">{t('bookingEngine.requestSettings.autoConfirmDescription')}</p>
       </div>
     </div>
   );
@@ -665,7 +665,7 @@ function InventoryList({ title, empty, items, selected, onToggle }: { title: str
     <div>
       <p className="text-xs font-medium text-telivity-slate mb-2">{title}</p>
       <div className="space-y-1 max-h-56 overflow-y-auto border border-gray-100 rounded-lg p-2">
-        {items.map((item) => <label key={item.id} className="flex items-center gap-2 text-sm py-1 cursor-pointer"><input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => onToggle(item.id)} className="accent-telivity-deep-blue" /><span className="font-medium text-telivity-navy">{item.name}</span><span className="text-[10px] text-telivity-slate uppercase tracking-wide">{item.code}</span></label>)}
+        {items.map((item) => <label key={item.id} className="flex items-center gap-2 text-sm py-1 cursor-pointer"><input type="checkbox" checked={selectedIds.has(item.id)} onChange={() => onToggle(item.id)} className="accent-telivity-deep-blue" /><span className="font-medium text-telivity-navy">{item.name}</span><span className="text-[12px] text-telivity-slate uppercase tracking-wide">{item.code}</span></label>)}
         {items.length === 0 && <p className="text-xs text-telivity-slate py-1">{empty}</p>}
       </div>
     </div>

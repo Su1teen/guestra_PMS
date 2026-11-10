@@ -15,6 +15,17 @@ export interface Reservation {
   guest?: { id: string; firstName: string; lastName: string; email?: string | null };
   adults: number;
   children: number;
+  childAges?: number[] | null;
+  nights?: number;
+  bookingId?: string;
+  groupName?: string | null;
+  /** Tentative booking terms */
+  optionUntil?: string | null;
+  requiredDeposit?: string | null;
+  guaranteeType?: string | null;
+  confirmedAt?: string | null;
+  proposalSentAt?: string | null;
+  confirmationSentAt?: string | null;
   totalAmount?: number | string;
   currencyCode?: string;
   source?: string;

@@ -16,6 +16,7 @@ import { userCanAccessProperty } from '../auth/property-access';
 import { PropertyService } from './property.service';
 import { CreatePropertyDto } from './dto/create-property.dto';
 import { UpdatePropertyDto } from './dto/update-property.dto';
+import { BookingPolicyDto } from './dto/booking-policy.dto';
 
 @ApiTags('properties')
 @Controller('properties')
@@ -70,5 +71,20 @@ export class PropertyController {
     @Body() dto: UpdatePropertyDto,
   ) {
     return this.propertyService.update(id, dto);
+  }
+
+  @Get(':id/booking-policy')
+  @ApiOperation({ summary: 'Tentative booking, guarantee and child age policy of the property' })
+  getBookingPolicy(@Param('id', ParseUUIDPipe) id: string, @CurrentUser() user?: AuthUser) {
+    if (this.authOn() && user && !userCanAccessProperty(user, id)) throw new ForbiddenException('You do not have access to this property');
+    return this.propertyService.bookingPolicy(id);
+  }
+
+  @Patch(':id/booking-policy')
+  @Roles('admin')
+  @ApiOperation({ summary: 'Update the booking policy (merged into settings; other settings are kept)' })
+  updateBookingPolicy(@Param('id', ParseUUIDPipe) id: string, @Body() dto: BookingPolicyDto, @CurrentUser() user?: AuthUser) {
+    if (this.authOn() && user && !userCanAccessProperty(user, id)) throw new ForbiddenException('You do not have access to this property');
+    return this.propertyService.updateBookingPolicy(id, dto);
   }
 }

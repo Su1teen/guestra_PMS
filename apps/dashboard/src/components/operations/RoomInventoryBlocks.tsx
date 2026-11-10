@@ -642,7 +642,7 @@ export default function RoomInventoryBlocks({
                 className={
                   'rounded-lg p-3 text-sm ' +
                   (preview.canApply
-                    ? 'bg-teal-50 text-teal-800'
+                    ? 'bg-primary-50 text-primary-800'
                     : 'bg-orange-50 text-orange-800')
                 }
               >

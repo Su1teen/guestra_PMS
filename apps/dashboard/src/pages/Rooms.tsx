@@ -408,15 +408,15 @@ function RoomList() {
                     className={`border-2 rounded-xl p-3 cursor-pointer transition-all hover:shadow-md ${STATUS_CARD_COLORS[room.status] ?? 'border-gray-200'}`}
                   >
                     <p className="text-sm font-semibold text-telivity-navy">{room.number}</p>
-                    <p className="text-[10px] text-telivity-mid-grey truncate">{room.roomTypeName ?? ''}</p>
-                    <StatusBadge status={room.status} label={t(`dashboard.roomStatuses.${room.status}`, { defaultValue: room.status })} className="mt-1.5 text-[9px] px-1.5 py-0" />
+                    <p className="text-[12px] text-telivity-mid-grey truncate">{room.roomTypeName ?? ''}</p>
+                    <StatusBadge status={room.status} label={t(`dashboard.roomStatuses.${room.status}`, { defaultValue: room.status })} className="mt-1.5 text-[12px] px-1.5 py-0" />
                     {diary ? (
                       <>
-                        <p className="text-[10px] text-telivity-slate mt-1 truncate font-medium">{diary.guestName ?? t('rooms.none')}</p>
-                        <p className="text-[9px] text-telivity-mid-grey truncate">{diary.arrivalDate} → {diary.departureDate}</p>
+                        <p className="text-[12px] text-telivity-slate mt-1 truncate font-medium">{diary.guestName ?? t('rooms.none')}</p>
+                        <p className="text-[12px] text-telivity-mid-grey truncate">{diary.arrivalDate} → {diary.departureDate}</p>
                       </>
                     ) : room.guestName ? (
-                      <p className="text-[10px] text-telivity-slate mt-1 truncate">{room.guestName}</p>
+                      <p className="text-[12px] text-telivity-slate mt-1 truncate">{room.guestName}</p>
                     ) : null}
                   </div>
                   );

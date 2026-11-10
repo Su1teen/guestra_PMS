@@ -53,6 +53,12 @@ import { ReservationPriceDto } from './dto/reservation-price.dto';
 import { UpgradeReservationDto } from './dto/upgrade-reservation.dto';
 import { AddBookingRoomDto } from './dto/add-booking-room.dto';
 import { ReservationOccupancyDto, SendConfirmationDto } from './dto/reservation-occupancy.dto';
+import { ConfirmReservationDto } from './dto/confirm-reservation.dto';
+import { CreateGroupBookingDto, GroupQuoteDto } from './dto/create-group-booking.dto';
+import { ReservationGuaranteeService } from './reservation-guarantee.service';
+import { ChangeOptionDto, RecordPrepaymentDto, ReleaseOptionDto, RemindGuestDto } from './dto/option-actions.dto';
+
+const documentKind = (kind?: string) => (kind === 'proposal' || kind === 'confirmation' ? kind : undefined);
 
 @ApiTags('reservations')
 @Controller('reservations')
@@ -69,6 +75,7 @@ export class ReservationController {
     private readonly staffReservationService: StaffReservationService,
     private readonly pricingService: ReservationPricingService,
     private readonly confirmationService: ReservationConfirmationService,
+    private readonly guaranteeService: ReservationGuaranteeService,
   ) {}
 
   // --- Action routes BEFORE :id to avoid conflicts ---
@@ -104,7 +111,31 @@ export class ReservationController {
   @Post('staff-create')
   @RequirePermissions('reservations.write', 'rateplans.read')
   @ApiOperation({ summary: 'Atomically price, create, confirm and optionally assign a staff reservation' })
-  staffCreate(@Body() dto: StaffCreateReservationDto) { return this.staffReservationService.create(dto); }
+  staffCreate(@Body() dto: StaffCreateReservationDto, @AuditActorCtx() actor: AuditActor) { return this.staffReservationService.create(dto, actor); }
+
+  @Post('quote/group')
+  @RequirePermissions('reservations.read', 'rateplans.read')
+  @ApiOperation({ summary: 'Canonical price per room, line and total for a group booking, with availability shortages' })
+  groupQuote(@Body() dto: GroupQuoteDto) { return this.quoteService.groupQuote(dto); }
+
+  @Post('group-booking')
+  @RequirePermissions('reservations.write', 'rateplans.read')
+  @ApiOperation({ summary: 'Create a group booking: one confirmation number, several rooms, all-or-nothing' })
+  createGroupBooking(@Body() dto: CreateGroupBookingDto, @AuditActorCtx() actor: AuditActor) {
+    return this.staffReservationService.createGroup(dto, actor);
+  }
+
+  @Get('options')
+  @RequirePermissions('reservations.read')
+  @ApiOperation({ summary: 'Tentative bookings waiting for a guarantee, by option deadline' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  pendingOptions(@Query('propertyId', ParseUUIDPipe) propertyId: string) { return this.guaranteeService.listPending(propertyId); }
+
+  @Post('options/sweep')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Release or report tentative bookings whose option expired (call from a scheduler)' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  sweepOptions(@Query('propertyId', ParseUUIDPipe) propertyId: string) { return this.guaranteeService.sweepExpiredOptions(propertyId); }
 
   @Post('quote')
   @RequirePermissions('reservations.read', 'rateplans.read')
@@ -294,14 +325,72 @@ export class ReservationController {
 
   @Patch(':id/confirm')
   @RequirePermissions('reservations.write')
-  @ApiOperation({ summary: 'Confirm reservation' })
+  @ApiOperation({ summary: 'Confirm a tentative reservation (guarantee type, audited, sends the guest confirmation per settings)' })
   @ApiQuery({ name: 'propertyId', required: true })
   @ApiResponse({ status: 200, description: 'Reservation confirmed' })
-  confirmReservation(
+  async confirmReservation(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: ConfirmReservationDto,
+    @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.reservationService.confirm(id, propertyId);
+    const input = { guaranteeType: dto?.guaranteeType, reason: dto?.reason, notifyGuest: dto?.notifyGuest };
+    if (dto?.wholeBooking) {
+      return this.guaranteeService.confirmBookingOf(id, propertyId, input, actor);
+    }
+    return this.guaranteeService.confirm(id, propertyId, input, actor);
+  }
+
+  @Post(':id/prepayment')
+  @RequirePermissions('reservations.write', 'folios.manage')
+  @ApiOperation({ summary: 'Mark a prepayment as received (cash, transfer, offline terminal); confirms the booking when it covers the guarantee' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  recordPrepayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: RecordPrepaymentDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.guaranteeService.recordPrepayment(id, propertyId, dto, actor);
+  }
+
+  @Patch(':id/option')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Extend or remove the option deadline, or change the guarantee amount of an unconfirmed booking' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  changeOption(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: ChangeOptionDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.guaranteeService.changeOption(id, propertyId, dto, actor);
+  }
+
+  @Post(':id/option/release')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Release an unconfirmed booking by hand (cancels it with the reason)' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  releaseOption(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: ReleaseOptionDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.guaranteeService.releaseOption(id, propertyId, dto, actor);
+  }
+
+  @Post(':id/option/remind')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Remind the guest of an unconfirmed booking (proposal resent with deadline and amount due)' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  remindGuest(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: RemindGuestDto,
+    @AuditActorCtx() actor: AuditActor,
+  ) {
+    return this.guaranteeService.remindGuest(id, propertyId, dto, actor);
   }
 
   @Patch(':id/assign-room')
@@ -370,7 +459,7 @@ export class ReservationController {
     @Body() dto: ReservationOccupancyDto,
     @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.pricingService.setOccupancy(id, propertyId, dto.adults, dto.children ?? 0, actor);
+    return this.pricingService.setOccupancy(id, propertyId, dto.adults, dto.children ?? 0, actor, dto.childAges);
   }
 
   @Post(':id/pricing')
@@ -416,11 +505,13 @@ export class ReservationController {
   @RequirePermissions('reservations.read')
   @ApiOperation({ summary: 'Booking confirmation data for the guest (all rooms of the booking)' })
   @ApiQuery({ name: 'propertyId', required: true })
+  @ApiQuery({ name: 'kind', required: false, enum: ['proposal', 'confirmation'] })
   confirmation(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Query('kind') kind?: string,
   ) {
-    return this.confirmationService.build(id, propertyId);
+    return this.confirmationService.build(id, propertyId, documentKind(kind));
   }
 
   @Get(':id/confirmation/document')
@@ -428,16 +519,18 @@ export class ReservationController {
   @Header('Content-Type', 'text/html; charset=utf-8')
   @ApiOperation({ summary: 'Printable booking confirmation (HTML)' })
   @ApiQuery({ name: 'propertyId', required: true })
+  @ApiQuery({ name: 'kind', required: false, enum: ['proposal', 'confirmation'] })
   confirmationDocument(
     @Param('id', ParseUUIDPipe) id: string,
     @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Query('kind') kind?: string,
   ) {
-    return this.confirmationService.html(id, propertyId);
+    return this.confirmationService.html(id, propertyId, documentKind(kind));
   }
 
   @Post(':id/confirmation/send')
   @RequirePermissions('reservations.write')
-  @ApiOperation({ summary: 'Email the booking confirmation to the guest (audited)' })
+  @ApiOperation({ summary: 'Send the proposal / booking confirmation to the guest by email or SMS (audited)' })
   @ApiQuery({ name: 'propertyId', required: true })
   sendConfirmation(
     @Param('id', ParseUUIDPipe) id: string,
@@ -445,7 +538,9 @@ export class ReservationController {
     @Body() dto: SendConfirmationDto,
     @AuditActorCtx() actor: AuditActor,
   ) {
-    return this.confirmationService.send(id, propertyId, dto.email, actor);
+    const channel = dto.channel ?? 'email';
+    return this.confirmationService.send(id, propertyId,
+      { kind: dto.kind, channel, to: channel === 'sms' ? dto.phone : dto.email }, actor);
   }
 
   @Delete(':id/guests/:guestId')

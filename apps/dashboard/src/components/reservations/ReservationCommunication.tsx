@@ -201,7 +201,7 @@ export function ReservationOpsNotes({
                   <button
                     onClick={() => update.mutate({ noteId: n.id, isActive: n.isActive === false })}
                     disabled={!hasPermission('reservations.write') || update.isPending}
-                    className="text-[10px] text-telivity-mid-grey hover:underline disabled:opacity-50"
+                    className="text-[12px] text-telivity-mid-grey hover:underline disabled:opacity-50"
                   >
                     {n.isActive === false ? t('reservations.reactivateNote') : t('reservations.resolveNote')}
                   </button>

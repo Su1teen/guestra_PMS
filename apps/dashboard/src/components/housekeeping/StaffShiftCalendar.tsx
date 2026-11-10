@@ -357,7 +357,7 @@ export default function StaffShiftCalendar() {
       className={
         'mb-1 block w-full rounded-lg border p-2 text-left text-xs ' +
         (s.status === 'confirmed'
-          ? 'border-teal-200 bg-teal-50'
+          ? 'border-primary-200 bg-primary-50'
           : s.status === 'cancelled'
             ? 'border-gray-200 bg-gray-50 text-gray-500'
             : 'border-amber-200 bg-amber-50')
@@ -437,7 +437,7 @@ export default function StaffShiftCalendar() {
         </div>
       )}
       {recoveryNotice && (
-        <p className="rounded-lg bg-teal-50 p-3 text-sm" role="status">
+        <p className="rounded-lg bg-primary-50 p-3 text-sm" role="status">
           {recoveryNotice}
         </p>
       )}
@@ -607,7 +607,7 @@ export default function StaffShiftCalendar() {
                     </span>
                     {canManage && (
                       <button
-                        className="ml-1 text-teal-700"
+                        className="ml-1 text-primary-700"
                         aria-label={'Добавить смену на ' + d}
                         disabled={!!pending}
                         onClick={() => open(undefined, d)}
@@ -701,7 +701,7 @@ export default function StaffShiftCalendar() {
                     {u.maxOpenTasks != null ? ' / ' + u.maxOpenTasks : ''}
                   </p>
                   <p
-                    className={u.available ? 'text-teal-700' : 'text-amber-700'}
+                    className={u.available ? 'text-primary-700' : 'text-amber-700'}
                   >
                     {u.onLeave
                       ? 'Сейчас отпуск / отсутствие'

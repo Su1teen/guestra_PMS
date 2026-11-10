@@ -1,8 +1,9 @@
 import { IsInt, IsOptional, IsString, IsUUID, Max, MaxLength, Min } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, IntersectionType, OmitType } from '@nestjs/swagger';
+import { BookingConfirmationOptionsDto } from './booking-confirmation-options.dto';
 import { ReservationQuoteDto } from './reservation-quote.dto';
 import { IsMoneyString } from '../../../common/validation/is-money-string.validator';
-export class StaffCreateReservationDto extends OmitType(ReservationQuoteDto, ['guestId'] as const) {
+export class StaffCreateReservationDto extends IntersectionType(OmitType(ReservationQuoteDto, ['guestId'] as const), BookingConfirmationOptionsDto) {
   @ApiProperty() @IsUUID() guestId!: string;
   @ApiPropertyOptional() @IsOptional() @IsUUID() roomId?: string;
   @ApiProperty() @IsUUID() requestId!: string;

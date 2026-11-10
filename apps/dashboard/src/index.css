@@ -2,17 +2,96 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens. Values are "r g b" channels so Tailwind alpha modifiers work (see tailwind.config.ts).
+ * Neutral, untinted canvas; one saturated action colour; status colours only where they carry meaning.
+ * Text tokens meet WCAG AA (>= 4.5:1) on both canvas and surface.
+ */
+@layer base {
+  :root {
+    --color-primary: 54 87 232;        /* #3657E8 actions, links, selection */
+    --color-primary-strong: 39 66 196; /* #2742C4 hover / pressed */
+    --color-primary-soft: 91 121 240;  /* #5B79F0 */
+    --color-primary-50: 238 242 255;
+    --color-primary-100: 224 231 255;
+    --color-primary-200: 199 210 254;
+    --color-primary-300: 164 180 252;
+    --color-warning: 196 65 12;        /* #C4410C */
+    --color-warning-soft: 243 135 68;
+    --color-attention: 234 170 8;
+    --color-violet: 105 65 198;
+    --color-ink: 16 24 40;             /* #101828 primary text, sidebar */
+    --color-ink-2: 52 64 84;           /* #344054 secondary text */
+    --color-ink-3: 93 102 121;         /* #5D6679 muted text */
+    --color-canvas: 243 244 246;       /* #F3F4F6 app background, hover */
+    --color-surface: 255 255 255;
+    --color-line: 228 231 236;         /* #E4E7EC borders */
+    color-scheme: light;
+  }
+
+  html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+  body {
+    @apply bg-telivity-light-grey text-telivity-navy;
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+    font-size: 0.9375rem;
+    line-height: 1.375rem;
+  }
+  *, ::before, ::after { border-color: rgb(var(--color-line)); }
+  table { font-variant-numeric: tabular-nums; }
+  ::selection { background: rgb(var(--color-primary-100)); }
+
+  /* Comfortable hit targets for every form control. */
+  input:where(:not([type='checkbox']):not([type='radio']):not([type='range']):not([type='color']):not([type='file'])),
+  select, textarea { min-height: 2.25rem; }
+  input[type='checkbox'], input[type='radio'] { width: 1rem; height: 1rem; accent-color: rgb(var(--color-primary)); }
+  input::placeholder, textarea::placeholder { color: rgb(var(--color-ink-3) / 0.8); }
+
+  :focus-visible { outline: 2px solid rgb(var(--color-primary)); outline-offset: 2px; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible { outline-offset: 0; }
+
+  @media print {
+    body { background: white; }
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex min-h-[2.25rem] items-center justify-center gap-2 rounded-lg px-4 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-lg { @apply min-h-[2.5rem] px-5; }
+  .btn-primary { @apply btn bg-telivity-teal text-white hover:bg-telivity-dark-teal; }
+  .btn-secondary { @apply btn border border-gray-300 bg-white text-telivity-navy hover:bg-telivity-light-grey; }
+  .btn-ghost { @apply btn text-telivity-slate hover:bg-telivity-light-grey; }
+  .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700; }
+  .field { @apply w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-telivity-navy; }
+  .card { @apply rounded-xl border border-line bg-white shadow-sm; }
+  .chip { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium; }
+  /* Tentative (option) bookings: diagonal hatch reads as "not yet confirmed" even in greyscale print. */
+  .bar-hatched { background-image: repeating-linear-gradient(135deg, rgb(251 191 36 / 0.22) 0 6px, transparent 6px 12px); }
+  .label { @apply mb-1 block text-xs font-medium text-telivity-slate; }
+}
+
+/*
+ * Legacy white panels (`bg-white rounded-xl shadow-sm`) get a hairline outline via box-shadow, so cards keep their
+ * edge on the neutral canvas without layout shifts. New components use `.card`.
+ */
+@layer utilities {
+  .bg-white.shadow-sm { box-shadow: 0 0 0 1px rgb(var(--color-line)), 0 1px 2px 0 rgb(16 24 40 / 0.05); }
+}
+
+
 .workspace-canvas { display:grid; grid-auto-rows:40px; gap:12px; align-items:stretch; min-width:0; }
-.workspace-tile { position:relative; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border:1px solid #e3e9e5; border-radius:14px; background:white; box-shadow:0 2px 6px #12263908; container-type:inline-size; }
-.workspace-tile-heading { display:flex; align-items:center; gap:6px; min-height:38px; padding:8px 12px; border-bottom:1px solid #f1f3f2; }
-.workspace-tile-heading h2 { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; font-weight:650; color:#183332; }
+.workspace-tile { position:relative; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; border:1px solid rgb(var(--color-line)); border-radius:14px; background:white; box-shadow:0 2px 6px rgb(16 24 40 / 0.04); container-type:inline-size; }
+.workspace-tile-heading { display:flex; align-items:center; gap:6px; min-height:38px; padding:8px 12px; border-bottom:1px solid rgb(var(--color-line)); }
+.workspace-tile-heading h2 { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; font-weight:600; color:rgb(var(--color-ink)); }
 .workspace-tile-heading button { flex:none; border-radius:5px; padding:3px; }
-.workspace-tile-heading button:focus-visible,.workspace-resize:focus-visible { outline:2px solid #0c7368; outline-offset:2px; }
+.workspace-tile-heading button:focus-visible,.workspace-resize:focus-visible { outline:2px solid rgb(var(--color-primary)); outline-offset:2px; }
 .workspace-tile-content { flex:1; min-height:0; overflow:auto; scrollbar-width:thin; }
 .workspace-tile [data-widget] { margin-bottom:0; box-shadow:none; }
 .workspace-grip { cursor:grab; touch-action:none; }
-.workspace-customizing .workspace-tile { border-color:#7fbbb3; }
-.workspace-resize { position:absolute; bottom:0; right:0; padding:6px; border-radius:7px 0 12px 0; background:#e7f3ef; color:#0c7368; cursor:se-resize; touch-action:none; }
+.workspace-customizing .workspace-tile { border-color:rgb(var(--color-primary-300)); }
+.workspace-resize { position:absolute; bottom:0; right:0; padding:6px; border-radius:7px 0 12px 0; background:rgb(var(--color-primary-50)); color:rgb(var(--color-primary)); cursor:se-resize; touch-action:none; }
 .workspace-kpi-value { font-size:clamp(18px,7cqi,30px); font-weight:650; overflow-wrap:anywhere; font-variant-numeric:tabular-nums; line-height:1.2; }
 .workspace-financial-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
 @container (max-width:480px) { .workspace-financial-grid {grid-template-columns:1fr;} .workspace-tile-content .grid-cols-4,.workspace-tile-content .grid-cols-3 {grid-template-columns:repeat(2,minmax(0,1fr));} }

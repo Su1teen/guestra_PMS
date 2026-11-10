@@ -65,6 +65,8 @@ export const WEBHOOK_EVENTS = {
   // Reservation events
   'reservation.created': 'reservation.created',
   'reservation.confirmed': 'reservation.confirmed',
+  'reservation.option_expired': 'reservation.option_expired',
+  'reservation.document_sent': 'reservation.document_sent',
   'reservation.modified': 'reservation.modified',
   'reservation.cancelled': 'reservation.cancelled',
   'reservation.checked_in': 'reservation.checked_in',

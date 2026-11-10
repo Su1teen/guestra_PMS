@@ -14,6 +14,7 @@ import {
   Length,
   ValidateIf,
   ValidateNested,
+  IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
@@ -68,6 +69,14 @@ export class CreateRatePlanDto extends PricingMutationDto {
   @IsOptional()
   @Matches(/^\d{1,10}(\.\d{1,2})?$/)
   extraChildAmount?: string;
+
+  @ApiPropertyOptional({
+    description: 'Per-night child supplements by property age band: band code → amounts for the 1st, 2nd, … child (last repeats)',
+    example: { child_0_5: ['0', '2000'], child_6_12: ['3000'] },
+  })
+  @IsOptional()
+  @IsObject()
+  childSupplements?: Record<string, string[]> | null;
 
   @ApiProperty({ example: 'USD' })
   @IsString()

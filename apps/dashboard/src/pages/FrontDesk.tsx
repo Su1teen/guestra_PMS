@@ -12,6 +12,7 @@ import { moneyString, requirePropertyId, requireCurrency } from '../lib/api-help
 import { useProperty } from '../context/PropertyContext';
 import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
+import FolioDocumentActions from '../components/folios/FolioDocumentActions';
 import FindGuest from '../components/guests/FindGuest';
 import IdSwipeCapture from '../components/guests/IdSwipeCapture';
 import GuestDetailsModal from '../components/front-desk/GuestDetailsModal';
@@ -754,7 +755,7 @@ export default function FrontDesk() {
       <div className="flex flex-wrap items-center gap-1.5 mt-0.5">
         {vipLevel && vipLevel !== 'none' && <StatusBadge status={vipLevel} />}
         {loyaltyNumber && (
-          <span className="text-[11px] text-telivity-mid-grey">{t('frontDesk.loyaltyNumber', { number: loyaltyNumber })}</span>
+          <span className="text-[12px] text-telivity-mid-grey">{t('frontDesk.loyaltyNumber', { number: loyaltyNumber })}</span>
         )}
       </div>
     );
@@ -1015,7 +1016,7 @@ export default function FrontDesk() {
                       <td className="px-4 py-3 text-sm font-medium text-telivity-navy">
                         <div>{guestName(r)}</div>
                         {(tab === 'arrivals' || tab === 'in-house') && guestRecognition(r)}
-                        {tab === 'arrivals' && readiness.find(a => a.reservationId === r.id) && <div className="mt-1 flex flex-wrap gap-1">{['roomAssigned','housekeepingReady','depositReceived','operationalTasksComplete'].map(key => <span key={key} className={'rounded px-1.5 py-0.5 text-[10px] ' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'checks.' : 'checksMissing.') + key)}</span>)}</div>}
+                        {tab === 'arrivals' && readiness.find(a => a.reservationId === r.id) && <div className="mt-1 flex flex-wrap gap-1">{['roomAssigned','housekeepingReady','depositReceived','operationalTasksComplete'].map(key => <span key={key} className={'rounded px-1.5 py-0.5 text-[12px] ' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'bg-primary-50 text-primary-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.' + (readiness.find(a => a.reservationId === r.id)?.checks[key] ? 'checks.' : 'checksMissing.') + key)}</span>)}</div>}
                         {r.guestId && hasPermission('guests.read') && <button className="mt-1 text-xs text-telivity-teal" onClick={e => { e.stopPropagation(); openGuest(r.guestId!, propertyId); }}>{t('guestQuickView.title')}</button>}
                         {tab === 'arrivals' && readiness.find(a => a.reservationId === r.id)?.readinessReasons?.length > 0 && <ul className="mt-1 text-xs text-amber-900">{readiness.find(a => a.reservationId === r.id).readinessReasons.map((reason: { code: string; label: string }) => <li key={reason.code}>{reason.label}</li>)}</ul>}
                       </td>
@@ -1028,7 +1029,7 @@ export default function FrontDesk() {
                           <span className="text-telivity-orange font-medium">{t('frontDesk.notAssigned')}</span>
                         )}
                         {r.doNotMove && (
-                          <span className="ml-2 text-[10px] uppercase tracking-wide text-telivity-mid-grey">
+                          <span className="ml-2 text-[12px] uppercase tracking-wide text-telivity-mid-grey">
                             {t('frontDesk.dnm')}
                           </span>
                         )}
@@ -1161,15 +1162,15 @@ export default function FrontDesk() {
         {checkInModal && (
           <div className="space-y-5">
             {/* Header Banner */}
-            <div className="bg-gradient-to-r from-slate-900 via-teal-950 to-slate-900 -mx-6 -mt-6 p-6 rounded-t-2xl text-white relative overflow-hidden border-b border-teal-500/20">
+            <div className="bg-gradient-to-r from-slate-900 via-primary-950 to-slate-900 -mx-6 -mt-6 p-6 rounded-t-2xl text-white relative overflow-hidden border-b border-primary-500/20">
               <div className="relative z-10 flex items-center justify-between">
                 <div className="flex items-center gap-3.5">
-                  <div className="p-3 bg-teal-500/20 border border-teal-500/30 rounded-xl text-teal-300">
+                  <div className="p-3 bg-primary-500/20 border border-primary-500/30 rounded-xl text-primary-300">
                     <StickyNote size={24} />
                   </div>
                   <div>
                     <h2 className="text-lg font-bold tracking-tight text-white">{t('frontDesk.checkInGuest')}</h2>
-                    <p className="text-xs text-teal-200/80 mt-0.5">
+                    <p className="text-xs text-primary-200/80 mt-0.5">
                       <span className="font-semibold text-white">{guestName(checkInModal)}</span> &middot; {checkInModal.confirmationNumber} ({checkInModal.arrivalDate} → {checkInModal.departureDate})
                     </p>
                   </div>
@@ -1267,7 +1268,7 @@ export default function FrontDesk() {
               </div>
 
               {/* FNRH Stay Details Section */}
-              <div className="border border-teal-100 rounded-xl p-4 bg-teal-50/20 space-y-3">
+              <div className="border border-primary-100 rounded-xl p-4 bg-primary-50/20 space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-bold text-telivity-teal uppercase tracking-wider flex items-center gap-1.5">
                     {t('frontDesk.fnrhStayDetails')}
@@ -1313,30 +1314,30 @@ export default function FrontDesk() {
 
                     <div className="grid grid-cols-3 gap-2">
                       <div>
-                        <label className="block text-[11px] font-medium text-telivity-slate mb-1">{t('frontDesk.originCity')}</label>
+                        <label className="block text-[12px] font-medium text-telivity-slate mb-1">{t('frontDesk.originCity')}</label>
                         <input type="text" value={originCity} onChange={(e) => setOriginCity(e.target.value)} className="w-full border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:border-telivity-teal bg-white" />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-medium text-telivity-slate mb-1">{t('frontDesk.originState')}</label>
+                        <label className="block text-[12px] font-medium text-telivity-slate mb-1">{t('frontDesk.originState')}</label>
                         <input type="text" maxLength={2} value={originState} onChange={(e) => setOriginState(e.target.value.toUpperCase())} className="w-full border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:border-telivity-teal uppercase bg-white" />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-medium text-telivity-slate mb-1">{t('frontDesk.originCountry')}</label>
+                        <label className="block text-[12px] font-medium text-telivity-slate mb-1">{t('frontDesk.originCountry')}</label>
                         <input type="text" maxLength={2} value={originCountry} onChange={(e) => setOriginCountry(e.target.value.toUpperCase())} placeholder="BR" className="w-full border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:border-telivity-teal uppercase bg-white" />
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-2">
                       <div>
-                        <label className="block text-[11px] font-medium text-telivity-slate mb-1">{t('frontDesk.destinationCity')}</label>
+                        <label className="block text-[12px] font-medium text-telivity-slate mb-1">{t('frontDesk.destinationCity')}</label>
                         <input type="text" value={destinationCity} onChange={(e) => setDestinationCity(e.target.value)} className="w-full border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:border-telivity-teal bg-white" />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-medium text-telivity-slate mb-1">{t('frontDesk.destinationState')}</label>
+                        <label className="block text-[12px] font-medium text-telivity-slate mb-1">{t('frontDesk.destinationState')}</label>
                         <input type="text" maxLength={2} value={destinationState} onChange={(e) => setDestinationState(e.target.value.toUpperCase())} className="w-full border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:border-telivity-teal uppercase bg-white" />
                       </div>
                       <div>
-                        <label className="block text-[11px] font-medium text-telivity-slate mb-1">{t('frontDesk.destinationCountry')}</label>
+                        <label className="block text-[12px] font-medium text-telivity-slate mb-1">{t('frontDesk.destinationCountry')}</label>
                         <input type="text" maxLength={2} value={destinationCountry} onChange={(e) => setDestinationCountry(e.target.value.toUpperCase())} placeholder="BR" className="w-full border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:border-telivity-teal uppercase bg-white" />
                       </div>
                     </div>
@@ -1379,7 +1380,7 @@ export default function FrontDesk() {
                   />
                   {t('frontDesk.registrationSigned')}
                   {registrationRequired && (
-                    <span className="text-telivity-orange text-[11px]">({t('common.required')})</span>
+                    <span className="text-telivity-orange text-[12px]">({t('common.required')})</span>
                   )}
                 </label>
               </div>
@@ -1604,7 +1605,7 @@ export default function FrontDesk() {
       >
         <div className="space-y-4">
           <div className="rounded-xl border border-gray-100 bg-gray-50/40 p-4 space-y-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-telivity-mid-grey">
+            <p className="text-[12px] font-semibold uppercase tracking-wider text-telivity-mid-grey">
               {t('frontDesk.room')} 1
             </p>
             <FindGuest
@@ -1703,7 +1704,7 @@ export default function FrontDesk() {
                 className="rounded-xl border border-gray-100 bg-gray-50/40 p-4 space-y-3"
               >
                 <div className="flex items-center justify-between">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-telivity-mid-grey">
+                  <p className="text-[12px] font-semibold uppercase tracking-wider text-telivity-mid-grey">
                     {t('frontDesk.room')} {idx + 2}
                   </p>
                   <button
@@ -1982,7 +1983,13 @@ export default function FrontDesk() {
                 {formatMoney(checkOutModal.balance ?? 0, currencyCode)}
               </p>
             </div>
-            {propertyId && <FolioDocumentButton propertyId={propertyId} reservationId={checkOutModal.id} label="Проверить фолио перед выездом"/>}
+            {propertyId && hasPermission('folios.read') && (
+              <div className="rounded-lg border border-gray-200 p-4">
+                <p className="mb-2 text-sm font-semibold text-telivity-navy">{t('statement.title')}</p>
+                <p className="mb-3 text-xs text-telivity-mid-grey">{t('statement.hint')}</p>
+                <FolioDocumentActions propertyId={propertyId} reservationId={checkOutModal.id} guestEmail={(checkOutModal as any).guest?.email ?? (checkOutModal as any).guestEmail} compact />
+              </div>
+            )}
             <div className="flex gap-3 pt-2">
               <button
                 onClick={() => setCheckOutModal(null)}
@@ -2041,11 +2048,11 @@ function AdditionalGuestsSection({
   return (
     <div className="space-y-2 pt-2 mt-1 pl-3 border-l-2 border-gray-200">
       <div className="flex items-center justify-between">
-        <label className="block text-[11px] font-medium text-telivity-mid-grey uppercase tracking-wide">
+        <label className="block text-[12px] font-medium text-telivity-mid-grey uppercase tracking-wide">
           {t('frontDesk.accompanyingGuests')}
         </label>
         {max != null && (
-          <span className="text-[11px] text-telivity-mid-grey">
+          <span className="text-[12px] text-telivity-mid-grey">
             {currentCount}/{max}
           </span>
         )}

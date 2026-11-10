@@ -26,7 +26,7 @@ export default function GuestContextSummary({ guest, data, propertyId, excludeRe
   const profile = data?.guest ?? query.data?.guest ?? guest;
   const history = data ?? query.data;
   const stays = history?.stays?.filter(stay => stay.id !== excludeReservationId) ?? [];
-  return <section className="space-y-3 rounded-xl border border-teal-100 bg-teal-50/40 p-4" aria-label={t('guestContext.title')}>
+  return <section className="space-y-3 rounded-xl border border-primary-100 bg-primary-50/40 p-4" aria-label={t('guestContext.title')}>
     <div><h3 className="text-xs font-semibold text-telivity-dark-teal">{t('guestContext.notes')}</h3>
       <p className="mt-1 whitespace-pre-wrap break-words text-sm text-telivity-navy">{profile.notes?.trim() || t(query.isPending && !data ? 'common.loading' : 'guestContext.noNotes')}</p>
       {profile.isDnr && <p className="mt-2 text-sm font-semibold text-red-700">{t('guestQuickView.dnr')}{profile.dnrReason ? ': ' + profile.dnrReason : ''}</p>}

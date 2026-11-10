@@ -10,6 +10,7 @@ import { formatMoney, formatMoneyPlain } from '../lib/money';
 import { useProperty } from '../context/PropertyContext';
 import { useToast } from '../components/ui/Toast';
 import StatusBadge from '../components/ui/StatusBadge';
+import FolioDocumentActions from '../components/folios/FolioDocumentActions';
 import Modal from '../components/ui/Modal';
 import { StripeProvider } from '../components/payment/StripeProvider';
 import { CardInput } from '../components/payment/CardInput';
@@ -709,8 +710,12 @@ function FolioDetail() {
         </div>
       </div>
 
+      {propertyId && id && (
+        <div className="mb-4"><FolioDocumentActions hideOpen propertyId={propertyId} folioId={id} guestEmail={(context?.guest as { email?: string | null } | undefined)?.email} /></div>
+      )}
+
       {context?.reservation && (
-        <div className="mb-6 grid grid-cols-1 gap-3 rounded-xl bg-telivity-teal/5 p-4 sm:grid-cols-4">
+        <div className="mb-6 grid grid-cols-1 gap-3 rounded-xl bg-primary-50 p-4 sm:grid-cols-4">
           <Summary label="Стоимость проживания" value={formatMoney(context.commercial.stayTotal, context.reservation.currencyCode)} />
           <Summary label="Начислено в фолио" value={formatMoney(context.commercial.postedCharges, context.reservation.currencyCode)} />
           <Summary label="Внесено" value={formatMoney(context.commercial.paid, context.reservation.currencyCode)} />

@@ -563,12 +563,12 @@ function TaskBoard() {
                       <div className="flex items-center justify-between">
                         <span className="text-sm font-medium text-telivity-navy">{task.roomNumber ?? '—'}</span>
                         {task.priority >= 5 && (
-                          <span className="text-[10px] bg-telivity-orange text-white rounded px-1">
+                          <span className="text-[12px] bg-telivity-orange text-white rounded px-1">
                             {t('housekeeping.high')}
                           </span>
                         )}
                       </div>
-                      <p className="text-[10px] text-telivity-mid-grey mt-1">
+                      <p className="text-[12px] text-telivity-mid-grey mt-1">
                         {t(`housekeeping.taskTypes.${task.type}`, { defaultValue: task.type.replace(/_/g, ' ') })}
                       </p>
                       {task.checklist && (
@@ -1030,7 +1030,7 @@ function HousekeepingAnalytics() {
                 }}
               />
               <Tooltip />
-              <Bar dataKey="avgTurnTime" fill="#06bdb4" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="avgTurnTime" fill="#3657E8" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </div>

@@ -9,6 +9,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ChildAgesProperty } from './child-ages';
 import { IsMoneyString } from '../../../common/validation/is-money-string.validator';
 
 export class CreateReservationDto {
@@ -56,6 +57,9 @@ export class CreateReservationDto {
   @IsInt()
   @Min(0)
   children?: number;
+
+  @ChildAgesProperty()
+  childAges?: number[];
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -555,7 +555,7 @@ function PricingSimulation() {
                 patchSettings({ pace: { ...settings.pace, tier2Adjustment: value / 100 } })
               }
             />
-            <p className="text-[11px] text-telivity-mid-grey">
+            <p className="text-[12px] text-telivity-mid-grey">
               {t('dynamicPricing.controls.paceSignal', { count: bookingsLast24h })}
             </p>
           </Accordion>
@@ -651,7 +651,7 @@ function PricingSimulation() {
                 patchSettings({ intradayDecay: { ...settings.intradayDecay, fromHour } })
               }
             />
-            <p className="text-[11px] text-telivity-mid-grey">
+            <p className="text-[12px] text-telivity-mid-grey">
               {t('dynamicPricing.controls.propertyClock', {
                 time: `${String(clock.hour).padStart(2, '0')}:00`,
                 zone: property?.timezone ?? t('dynamicPricing.controls.localZone'),
@@ -783,10 +783,10 @@ function PricingSimulation() {
                 {t('dynamicPricing.forecast.title', { days: FORECAST_DAYS })}
               </h2>
               {forecastSource.synthetic ? (
-                <span className="rounded-full bg-telivity-orange/15 text-telivity-orange text-[11px] font-semibold px-2.5 py-1">
+                <span className="rounded-full bg-telivity-orange/15 text-telivity-orange text-[12px] font-semibold px-2.5 py-1">
                   {t('dynamicPricing.forecast.synthetic')}
                 </span>
-              ) : <span className="text-[11px] text-telivity-mid-grey">{ru ? 'Сценарий на основе On books (не Forecast)' : 'On-books scenario (not Forecast)'}</span>}
+              ) : <span className="text-[12px] text-telivity-mid-grey">{ru ? 'Сценарий на основе On books (не Forecast)' : 'On-books scenario (not Forecast)'}</span>}
             </div>
             <div className="h-56 sm:h-64" role="img" aria-label={ru ? 'Сценарий цены и загрузки на 30 дней; выбор даты в таблице ниже' : '30-day price and occupancy scenario; choose a date in the table below'}>
               <ResponsiveContainer width="100%" height="100%">
@@ -811,13 +811,13 @@ function PricingSimulation() {
                     if (!active || !night) return null;
                     return <div className="max-w-64 rounded-lg border bg-white p-3 text-xs shadow-lg"><p className="font-semibold">{night.date} · Simulation</p><p className="mt-1 whitespace-nowrap tabular-nums">{t('dynamicPricing.forecast.dynamicSeries')}: {formatMoney(night.finalPrice, currencyCode, i18n.language)}</p><p className="whitespace-nowrap tabular-nums">{t('dynamicPricing.forecast.baseSeries')}: {formatMoney(settings.baseRate * (settings.categoryMultipliers[category] ?? 1), currencyCode, i18n.language)}</p><p>{t('dynamicPricing.forecast.occupancySeries')}: {night.occupancyPercent}%</p><p className="mt-2">{night.lines.filter(line => line.amount !== 0 && line.kind !== 'base' && line.kind !== 'total').map(breakdownLabel).join(' · ')}</p><p className="mt-2 text-telivity-mid-grey">{ru ? 'Нажмите для расшифровки' : 'Click for waterfall'}</p></div>;
                   }} />
-                  <ReferenceLine x={selectedDate} yAxisId="rate" stroke="#0f9b8e" strokeDasharray="3 3" />
+                  <ReferenceLine x={selectedDate} yAxisId="rate" stroke="#3657E8" strokeDasharray="3 3" />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
                   <Bar
                     yAxisId="occupancy"
                     dataKey="occupancy"
                     name={t('dynamicPricing.forecast.occupancySeries')}
-                    fill="#7fd1c8"
+                    fill="#A4B4FC"
                     barSize={8}
                     radius={[2, 2, 0, 0]}
                   />
@@ -826,7 +826,7 @@ function PricingSimulation() {
                     type="monotone"
                     dataKey="dynamicRate"
                     name={t('dynamicPricing.forecast.dynamicSeries')}
-                    stroke="#0f9b8e"
+                    stroke="#3657E8"
                     strokeWidth={2}
                     dot={false}
                   />
@@ -885,7 +885,7 @@ function PricingSimulation() {
                         <td className="px-3 py-1.5 text-xs font-medium text-telivity-navy">
                           {format(day, 'd MMM', { locale: dateLocale })}
                           {night.leadTimeDays === 0 && (
-                            <span className="ml-2 text-[10px] font-semibold text-telivity-teal">
+                            <span className="ml-2 text-[12px] font-semibold text-telivity-teal">
                               {t('dynamicPricing.table.today')}
                             </span>
                           )}
@@ -916,7 +916,7 @@ function PricingSimulation() {
                         <td className="px-3 py-1.5 text-right text-xs font-semibold text-telivity-navy">
                           {formatMoney(night.finalPrice, currencyCode)}
                           {night.intradayApplied && (
-                            <span className="ml-1 text-[10px] font-semibold text-telivity-orange">
+                            <span className="ml-1 text-[12px] font-semibold text-telivity-orange">
                               {t('dynamicPricing.table.decayed')}
                             </span>
                           )}

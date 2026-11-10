@@ -14,6 +14,12 @@ import { AvailabilityService, stayDates } from './availability.service';
 import { ReservationService } from './reservation.service';
 import type { ReservationPriceDto } from './dto/reservation-price.dto';
 import type { UpgradeReservationDto } from './dto/upgrade-reservation.dto';
+import { bedOccupants } from '../rate-plan/child-pricing';
+import { resolveParty } from './dto/child-ages';
+import { supplementSnapshot } from './pricing-snapshot';
+
+/** Party of a stored reservation, including child ages when recorded. */
+const partyOf = (row: any) => ({ adults: row.adults ?? 1, children: row.children ?? 0, childAges: row.childAges ?? null });
 
 /** Pricing can only be changed while the stay is open; closed stays keep their final folio. */
 const PRICE_EDITABLE = ['pending', 'confirmed', 'assigned', 'checked_in', 'stayover', 'due_out'];
@@ -46,7 +52,7 @@ export class ReservationPricingService {
       if (!AUTO_REPRICE.includes(row.status)) return { repriced: false, reason: 'STAY_STARTED' as const };
       if (!previous) return { repriced: false, reason: 'NO_ACCEPTED_PRICE' as const };
       if (previous.source === 'custom' || previous.adjustment) return { repriced: false, reason: 'MANUAL_PRICE' as const };
-      const price = await this.canonical(tx, row, row.ratePlanId, { adults: row.adults ?? 1, children: row.children ?? 0 });
+      const price = await this.canonical(tx, row, row.ratePlanId, partyOf(row));
       const next = this.snapshot(previous, price, null);
       if (next.grandTotal === previous.grandTotal) return { repriced: false, reason: 'UNCHANGED' as const };
       await this.apply(tx, row, previous, next, {}, actor, 'reprice_occupancy',
@@ -58,22 +64,26 @@ export class ReservationPricingService {
   }
 
   /** Change the head count (named guests are not required for children) and reprice when allowed. */
-  async setOccupancy(reservationId: string, propertyId: string, adults: number, children: number, actor?: AuditActor) {
+  async setOccupancy(reservationId: string, propertyId: string, adults: number, children: number, actor?: AuditActor,
+    childAges?: number[] | null) {
+    ({ adults, children, childAges } = resolveParty({ adults, children: childAges?.length ? undefined : children, childAges }));
     await withAcceptedPricingLock(this.db, propertyId, reservationId, async (tx) => {
       const row = await this.load(tx, reservationId, propertyId);
       this.assertEditable(row);
       const [type] = await tx.select({ maxOccupancy: roomTypes.maxOccupancy }).from(roomTypes)
         .where(and(eq(roomTypes.id, row.roomTypeId), eq(roomTypes.propertyId, propertyId)));
-      if (type && adults + children > type.maxOccupancy) throw new BadRequestException(`Room type max occupancy is ${type.maxOccupancy}`);
-      await tx.update(reservations).set({ adults, children, updatedAt: new Date() })
+      const bands = childAges?.length ? await this.rates.childAgeBands(propertyId, tx) : [];
+      if (type && bedOccupants(adults, children, childAges, bands) > type.maxOccupancy) throw new BadRequestException(`Room type max occupancy is ${type.maxOccupancy}`);
+      await tx.update(reservations).set({ adults, children, childAges, updatedAt: new Date() })
         .where(and(eq(reservations.id, reservationId), eq(reservations.propertyId, propertyId)));
+      const ages = childAges?.length ? ` (${childAges.join(', ')} лет)` : '';
       await tx.insert(auditLogs).values({ propertyId, entityType: 'reservation', entityId: reservationId, action: 'occupancy_change',
-        ...actorFields(actor), description: `Состав: ${adults} взр., ${children} дет.`,
-        previousValue: { adults: row.adults, children: row.children }, newValue: { adults, children } });
+        ...actorFields(actor), description: `Состав: ${adults} взр., ${children} дет.${ages}`,
+        previousValue: { adults: row.adults, children: row.children, childAges: row.childAges ?? null }, newValue: { adults, children, childAges } });
     });
     const pricing = await this.repriceForOccupancy(reservationId, propertyId, actor);
     if (!pricing.repriced) await this.emit(reservationId, propertyId);
-    return { adults, children, pricing };
+    return { adults, children, childAges, pricing };
   }
 
   /** Manual total, percentage or amount discount on the canonical tariff, with a mandatory reason. */
@@ -84,8 +94,7 @@ export class ReservationPricingService {
       const row = await this.load(tx, reservationId, propertyId);
       this.assertEditable(row);
       const previous = this.requireSnapshot(row);
-      const base = this.snapshot(previous, await this.canonical(tx, row, row.ratePlanId,
-        { adults: row.adults ?? 1, children: row.children ?? 0 }), null);
+      const base = this.snapshot(previous, await this.canonical(tx, row, row.ratePlanId, partyOf(row)), null);
       const target = this.targetTotal(base.grandTotal, dto);
       const next = dto.mode === 'reset' ? base : this.snapshot(previous, null, { total: target, reason }, base, await this.today(tx, propertyId));
       await this.apply(tx, row, previous, next, {}, actor, dto.mode === 'reset' ? 'price_reset' : 'price_override', reason);
@@ -108,7 +117,8 @@ export class ReservationPricingService {
       const [type] = await tx.select().from(roomTypes)
         .where(and(eq(roomTypes.id, dto.roomTypeId), eq(roomTypes.propertyId, propertyId)));
       if (!type?.isActive) throw new BadRequestException('Room type not found in this property');
-      if ((row.adults ?? 1) + (row.children ?? 0) > type.maxOccupancy)
+      const bands = row.childAges?.length ? await this.rates.childAgeBands(propertyId, tx) : [];
+      if (bedOccupants(row.adults ?? 1, row.children ?? 0, row.childAges, bands) > type.maxOccupancy)
         throw new BadRequestException('Selected room type cannot accommodate this party');
       const ratePlanId = dto.ratePlanId ?? await this.defaultRatePlan(tx, propertyId, dto.roomTypeId, row.ratePlanId);
       const plan = await this.rates.findById(ratePlanId, propertyId, tx, true);
@@ -135,7 +145,7 @@ export class ReservationPricingService {
         throw new ConflictException('An in-house guest must be moved with "Move room" before changing room type');
 
       const base = this.snapshot(previous, await this.canonical(tx, { ...row, roomTypeId: dto.roomTypeId }, ratePlanId,
-        { adults: row.adults ?? 1, children: row.children ?? 0 }), null);
+        partyOf(row)), null);
       const today = await this.today(tx, propertyId);
       const next = dto.pricing === 'reprice' ? base
         : this.snapshot(previous, null, { total: dto.pricing === 'custom' ? this.money(dto.customTotal) : previous.grandTotal, reason }, base, today);
@@ -176,7 +186,7 @@ export class ReservationPricingService {
       return { ...previous, source: 'current', currencyCode: price.currency, roomTotal: price.roomTotal, taxTotal: price.taxTotal,
         grandTotal: new Decimal(price.totalAmount).plus(services).toFixed(2),
         nights: price.lineItems.map(n => ({ date: n.date, roomAmount: n.rate, taxAmount: n.tax })),
-        customReason: null, adjustment: null };
+        customReason: null, adjustment: null, occupancySupplement: supplementSnapshot(price) };
     }
     const tariff = base!;
     const total = new Decimal(custom!.total);
@@ -215,7 +225,7 @@ export class ReservationPricingService {
     return parsed.toFixed(2);
   }
 
-  private async canonical(tx: any, row: any, ratePlanId: string, occupancy: { adults: number; children: number }) {
+  private async canonical(tx: any, row: any, ratePlanId: string, occupancy: { adults: number; children: number; childAges?: number[] | null }) {
     const plan = await this.rates.findById(ratePlanId, row.propertyId, tx);
     const nights = stayDates(row.arrivalDate, row.departureDate).length;
     const price = await calculateCanonicalRoomPricing({ propertyId: row.propertyId, ratePlanId, checkIn: row.arrivalDate,

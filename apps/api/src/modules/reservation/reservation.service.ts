@@ -219,7 +219,8 @@ export class ReservationService {
           currencyCode: dto.currencyCode,
           acceptedPricingSnapshot: opts?.acceptedPricingSnapshot,
           adults: dto.adults ?? 1,
-          children: dto.children ?? 0,
+          children: dto.childAges?.length ?? dto.children ?? 0,
+          childAges: dto.childAges?.length ? dto.childAges : null,
           specialRequests: dto.specialRequests,
           status: 'pending',
         })
@@ -291,12 +292,14 @@ export class ReservationService {
     // Bug 2: actual state change is an atomic conditional update. Two
     // concurrent confirms can both pass assertTransition but only one
     // can flip status=pending → status=confirmed.
+    // A tentative stay that already holds a room is confirmed straight into `assigned`.
+    const target = reservation.roomId ? 'assigned' : 'confirmed';
     const updated = await this.claimTransition(
       id,
       propertyId,
       ['pending'],
-      { status: 'confirmed', updatedAt: new Date() },
-      'confirmed',
+      { status: target, confirmedAt: new Date(), updatedAt: new Date() },
+      target,
     );
     return updated;
   }
@@ -317,7 +320,10 @@ export class ReservationService {
       if (!reservation) {
         throw new NotFoundException(`Reservation ${id} not found`);
       }
-      assertTransition(reservation.status as ReservationStatus, 'assigned');
+      // A tentative (pending) stay may hold a specific room: it keeps `pending` and moves to `assigned`
+      // when it is confirmed. Confirmed stays move to `assigned` now.
+      const holdsForOption = reservation.status === 'pending';
+      if (!holdsForOption) assertTransition(reservation.status as ReservationStatus, 'assigned');
 
       // The physical-room lock serializes competing assignments. Re-reading
       // overlaps after the lock prevents two future reservations from being
@@ -372,11 +378,11 @@ export class ReservationService {
 
       const [updated] = await tx
         .update(reservations)
-        .set({ roomId: dto.roomId, status: 'assigned', updatedAt: new Date() })
+        .set({ roomId: dto.roomId, status: holdsForOption ? 'pending' : 'assigned', updatedAt: new Date() })
         .where(and(
           eq(reservations.id, id),
           eq(reservations.propertyId, propertyId),
-          eq(reservations.status, 'confirmed'),
+          eq(reservations.status, holdsForOption ? 'pending' : 'confirmed'),
         ))
         .returning();
       if (!updated) {

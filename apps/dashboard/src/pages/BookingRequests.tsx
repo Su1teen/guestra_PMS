@@ -307,7 +307,7 @@ function BookingRequestDetailPage({ propertyId, canWrite }: { propertyId: string
           {canWrite && scopedRequest.status !== 'denied' ? (
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-telivity-slate">{t('bookingRequests.detail.decisionActions')}</p>
+                <p className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-telivity-slate">{t('bookingRequests.detail.decisionActions')}</p>
                 <div className="flex gap-2">
                   {scopedRequest.status === 'pending' ? (
                     <>
@@ -330,7 +330,7 @@ function BookingRequestDetailPage({ propertyId, canWrite }: { propertyId: string
                 ) : null}
               </div>
               <div>
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-telivity-slate">{t('bookingRequests.detail.moneyActions')}</p>
+                <p className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-telivity-slate">{t('bookingRequests.detail.moneyActions')}</p>
                 <div className="flex gap-2">
                   {scopedRequest.card ? <button type="button" aria-label={t('bookingRequests.actions.charge')} onClick={() => setPaymentAction('charge')} className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-telivity-deep-blue focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-telivity-deep-blue"><CreditCard size={15} aria-hidden="true" className="mx-auto sm:mr-1 sm:inline" /><span className="hidden sm:inline">{t('bookingRequests.actions.charge')}</span></button> : null}
                   <button type="button" aria-label={t('bookingRequests.actions.record')} onClick={() => setPaymentAction('external')} className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-telivity-deep-blue focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-telivity-deep-blue"><Banknote size={15} aria-hidden="true" className="mx-auto sm:mr-1 sm:inline" /><span className="hidden sm:inline">{t('bookingRequests.actions.record')}</span></button>

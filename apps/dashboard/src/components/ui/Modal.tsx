@@ -8,6 +8,8 @@ interface ModalProps {
   title: string;
   children: ReactNode;
   wide?: boolean;
+  /** Extra-wide dialog for side-by-side form and document preview. */
+  xwide?: boolean;
   closeDisabled?: boolean;
   side?: boolean;
 }
@@ -18,6 +20,7 @@ export default function Modal({
   title,
   children,
   wide,
+  xwide,
   closeDisabled = false,
   side = false,
 }: ModalProps) {
@@ -81,7 +84,7 @@ export default function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`relative bg-white shadow-xl ${side ? 'w-full max-w-sm h-full overflow-y-auto' : `rounded-xl ${wide ? 'w-full max-w-2xl' : 'w-full max-w-md'} max-h-[85vh] overflow-y-auto mx-4`}`}
+        className={`relative bg-white shadow-xl ${side ? 'w-full max-w-sm h-full overflow-y-auto' : `rounded-xl ${xwide ? 'w-full max-w-5xl' : wide ? 'w-full max-w-2xl' : 'w-full max-w-md'} max-h-[90vh] overflow-y-auto mx-4`}`}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
           <h2 id={titleId} className="text-lg font-semibold text-telivity-navy">{title}</h2>

@@ -42,6 +42,11 @@ export const ratePlans = pgTable('rate_plans', {
   extraAdultAmount: numeric('extra_adult_amount', { precision: 12, scale: 2 }),
   /** Per-night supplement for each child sharing the room (null = none). */
   extraChildAmount: numeric('extra_child_amount', { precision: 12, scale: 2 }),
+  /**
+   * Per-night child supplements by property age band: band code → amount for the 1st, 2nd, … child of
+   * that band; the last amount repeats for further children. Takes precedence over `extraChildAmount`.
+   */
+  childSupplements: jsonb('child_supplements').$type<Record<string, string[]>>(),
 
   // Tax handling
   isTaxInclusive: boolean('is_tax_inclusive').notNull().default(false),

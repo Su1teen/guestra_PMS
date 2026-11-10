@@ -988,7 +988,7 @@ function Priority({ value, ru }: { value: string; ru: boolean }) {
           : 'bg-blue-50 text-blue-800';
   return (
     <span
-      className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${cls}`}
+      className={`rounded-full px-2 py-0.5 text-[12px] font-bold uppercase ${cls}`}
     >
       {labels[value] ?? value}
     </span>

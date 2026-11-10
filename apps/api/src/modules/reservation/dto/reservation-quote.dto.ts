@@ -1,6 +1,7 @@
 import { IsUUID, IsOptional, IsInt, Min, Max } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsCanonicalCalendarDate, IsAfterCheckIn } from '@telivityhaip/shared';
+import { ChildAgesProperty } from './child-ages';
 
 export class ReservationQuoteDto {
   @ApiProperty() @IsUUID() propertyId!: string;
@@ -11,4 +12,5 @@ export class ReservationQuoteDto {
   @ApiProperty({ example: '2026-10-12' }) @IsCanonicalCalendarDate() @IsAfterCheckIn() checkOut!: string;
   @ApiPropertyOptional({ description: 'Adults; applies rate plan occupancy supplements' }) @IsOptional() @IsInt() @Min(1) @Max(20) adults?: number;
   @ApiPropertyOptional() @IsOptional() @IsInt() @Min(0) @Max(20) children?: number;
+  @ChildAgesProperty() childAges?: number[];
 }

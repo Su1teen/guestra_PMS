@@ -137,7 +137,7 @@ function GuestList() {
                       {g.firstName} {g.lastName}
                     </button>
                     {gIsMinor && (
-                      <span className="px-1.5 py-0.5 rounded text-[11px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
+                      <span className="px-1.5 py-0.5 rounded text-[12px] font-bold bg-purple-100 text-purple-800 border border-purple-200">
                         {t('guests.minorBadge', { age: guestAge ?? '?' })}
                       </span>
                     )}
@@ -651,7 +651,7 @@ function GuestDetail() {
                   <div key={s.id} className="p-3 bg-gray-50 rounded-lg border border-gray-100 flex items-center justify-between">
                     <div>
                       <p className="text-xs font-bold text-telivity-navy">{s.confirmationNumber}</p>
-                      <p className="text-[11px] text-telivity-mid-grey">{s.arrivalDate} → {s.departureDate} {s.roomNumber ? `• ${t('guests.roomNumber', { number: s.roomNumber })}` : ''}</p>
+                      <p className="text-[12px] text-telivity-mid-grey">{s.arrivalDate} → {s.departureDate} {s.roomNumber ? `• ${t('guests.roomNumber', { number: s.roomNumber })}` : ''}</p>
                     </div>
                     <StatusBadge status={s.status} />
                   </div>

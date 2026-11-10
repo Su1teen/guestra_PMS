@@ -19,6 +19,10 @@ import type { Reservation } from './types';
 import ReservationLifecycleActions from './ReservationLifecycleActions';
 import ReservationServicesPanel from '../services/ReservationServicesPanel';
 import FolioDocumentButton from '../folios/FolioDocumentButton';
+import ReservationConfirmationCard from './ReservationConfirmationCard';
+import GuestDocumentPanel from './GuestDocumentPanel';
+import FolioDocumentActions from '../folios/FolioDocumentActions';
+import { compactParty } from '../../lib/booking';
 
 export default function ReservationWorkspace({ reservationId, initial, onClose, mode = 'drawer', actions, doorPin }: {
   reservationId: string; initial?: Reservation; onClose: () => void; mode?: 'drawer' | 'page'; actions?: React.ReactNode; doorPin?: string | null;
@@ -116,11 +120,11 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
   if (suspended || !hasPermission('reservations.read')) return null;
   return <div className={mode === 'page' ? 'mx-auto max-w-7xl' : 'fixed inset-0 z-50 flex justify-end'}>
 {mode === 'drawer' && <button className="absolute inset-0 bg-black/30" tabIndex={-1} aria-label={t('common.close')} onClick={onClose}/> }
-    <aside ref={panel} tabIndex={-1} role={mode === 'drawer' ? 'dialog' : undefined} aria-modal={mode === 'drawer' ? true : undefined} aria-labelledby={titleId} className={mode === 'page' ? 'rounded-xl border bg-white focus:outline-none' : 'relative h-full w-full max-w-2xl overflow-y-auto bg-white shadow-xl focus:outline-none'}>
+    <aside ref={panel} tabIndex={-1} role={mode === 'drawer' ? 'dialog' : undefined} aria-modal={mode === 'drawer' ? true : undefined} aria-labelledby={titleId} className={mode === 'page' ? 'rounded-xl border bg-white focus:outline-none' : 'relative h-full w-full max-w-3xl overflow-y-auto bg-white shadow-xl focus:outline-none'}>
       <header className="sticky top-0 z-10 border-b border-gray-100 bg-white px-6 py-4">
         <div className="flex items-start justify-between gap-4"><div><p className="text-xs text-telivity-mid-grey">{t('reservations.details')}</p><h2 id={titleId} className="mt-1 text-lg font-semibold text-telivity-navy">{guestId && hasPermission('guests.read') ? <button onClick={viewGuest} className="text-left hover:text-telivity-teal hover:underline">{name}</button> : name}</h2><p className="mt-1 text-xs text-telivity-mid-grey">{reservation?.confirmationNumber ?? reservationId}</p></div><button className="rounded-lg p-2 hover:bg-gray-100" aria-label={t('common.close')} onClick={onClose}><X size={18}/></button></div>
         <div className="mt-4 flex gap-2 overflow-x-auto" role="tablist">
-          {tabs.map((id) => <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === id ? 'bg-telivity-teal/10 text-telivity-dark-teal' : 'text-telivity-slate hover:bg-gray-50'}`}>{t(`reservationWorkspace.${id}`)}</button>)}
+          {tabs.map((id) => <button key={id} role="tab" aria-selected={tab === id} onClick={() => setTab(id)} className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === id ? 'bg-primary-50 text-primary-800' : 'text-telivity-slate hover:bg-gray-50'}`}>{t(`reservationWorkspace.${id}`)}</button>)}
         </div>
       </header>
       <div className="p-6" role="tabpanel">
@@ -162,15 +166,22 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
               }
             </QueryRows> : tab === 'history' ? <QueryRows query={historyQuery}>{(rows: any[]) => rows.map((event: any) => <div key={event.id} className="rounded-lg border p-3 text-sm"><p>{t('reservationWorkspace.auditActions.' + event.action, { defaultValue: t('reservationWorkspace.historyEvent') })}</p><p className="mt-1 text-xs text-gray-500">{new Date(event.occurredAt).toLocaleString(i18n.resolvedLanguage)} · {event.userEmail ?? t('reservationWorkspace.system')}</p></div>)}</QueryRows> : <div className="space-y-5">
           {hasPermission('guests.read') && envelope?.guest && <div className="rounded-xl bg-gray-50 p-4 text-sm"><p>{envelope.guest.email ?? '—'}</p><p className="mt-1">{envelope.guest.phone ?? '—'}</p></div>}
-          <StatusBadge status={reservation.status} label={t(`reservations.statuses.${reservation.status}`, { defaultValue: t('reservationWorkspace.unknownStatus') })}/>
+          {propertyId && !CLOSED_STATUSES.includes(reservation.status) ? (
+            <ReservationConfirmationCard reservation={reservation} propertyId={propertyId} canWrite={hasPermission('reservations.write')}/>
+          ) : <StatusBadge status={reservation.status} label={t(`reservations.statuses.${reservation.status}`, { defaultValue: t('reservationWorkspace.unknownStatus') })}/>}
           <div className="grid grid-cols-2 gap-4">
             <Detail label={t('reservations.arrival')} value={reservation.arrivalDate}/><Detail label={t('reservations.departure')} value={reservation.departureDate}/>
             <Detail label={t('reservations.room')} value={reservation.roomNumber ?? t('reservations.unassigned')}/><Detail label={t('reservations.roomType')} value={reservation.roomTypeName ?? '—'}/>
             <Detail label={t('reservations.ratePlan')} value={reservation.ratePlanName ?? '—'}/><Detail label={t('reservations.total')} value={reservation.totalAmount != null ? formatMoney(reservation.totalAmount, reservation.currencyCode ?? currencyCode) : '—'}/>
-            <Detail label={t('reservations.adults')} value={String(reservation.adults ?? '—')}/><Detail label={t('reservations.children')} value={String(reservation.children ?? 0)}/>
+            <Detail label={t('booking.partyLabel')} value={reservation.adults != null ? compactParty(reservation.adults, reservation.children ?? 0, reservation.childAges) : '—'}/>
+            <Detail label={t('booking.nightsLabel')} value={String(reservation.nights ?? '—')}/>
             <Detail label={t('reservations.source')} value={t('reservationWorkspace.sources.' + (reservation.source ?? 'unknown'), { defaultValue: t('reservationWorkspace.unknownStatus') })}/>
           </div>
           {doorPin && <Detail label={t('frontDesk.doorPin')} value={doorPin}/>}
+          {propertyId && hasPermission('reservations.read') && reservation.status !== 'cancelled' && (
+            <GuestDocumentPanel key={reservation.id + ':' + reservation.status} reservationId={reservation.id} propertyId={propertyId}
+              canSend={hasPermission('reservations.write')} compact={mode === 'drawer'}/>
+          )}
           {guestId && propertyId && hasPermission('guests.read') && <GuestContextSummary key={propertyId + guestId}
             guest={guestQuery.data?.guest ?? { ...reservation.guest, id: guestId, firstName: reservation.guest?.firstName ?? '', lastName: reservation.guest?.lastName ?? '' }}
             data={guestQuery.data} propertyId={propertyId} excludeReservationId={reservationId} onNavigate={onClose}/>}
@@ -178,10 +189,10 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
           {reservation.notes && <div className="rounded-lg bg-gray-50 p-3 text-sm"><p className="mb-1 text-xs text-telivity-mid-grey">{t('reservations.notes')}</p><p className="whitespace-pre-wrap">{reservation.notes}</p></div>}
           {propertyId && <ReservationOpsNotes reservationId={reservation.id} propertyId={propertyId} readOnly={mode === 'drawer'}/>}
           {mode === 'page' && propertyId && <ReservationLifecycleActions reservation={reservation} propertyId={propertyId} onWorkflow={go}/>}
-          {hasPermission('folios.read') && <div className="rounded-xl border p-4"><p className="mb-2 text-xs font-semibold text-gray-500">{t('frontDesk.accountSummary')}</p><QueryRows query={folioQuery}>{(rows: any[]) => rows.map(f => <div key={f.id} className="flex justify-between text-sm"><span>{t('frontDesk.balance')}</span><strong>{formatMoney(f.balance, f.currencyCode ?? currencyCode)}</strong></div>)}</QueryRows>
+          {hasPermission('folios.read') && <div className="rounded-xl border p-4"><p className="mb-2 text-xs font-semibold text-gray-500">{t('frontDesk.accountSummary')}</p>{propertyId && previewFolio && <div className="mb-3"><FolioDocumentActions propertyId={propertyId} folioId={previewFolio.id} guestEmail={envelope?.guest?.email} compact hideOpen/></div>}<QueryRows query={folioQuery}>{(rows: any[]) => rows.map(f => <div key={f.id} className="flex justify-between text-sm"><span>{t('frontDesk.balance')}</span><strong>{formatMoney(f.balance, f.currencyCode ?? currencyCode)}</strong></div>)}</QueryRows>
             {previewFolio && <div className="mt-3 grid grid-cols-2 gap-3 text-xs"><div><p>{t('folios.charges')}</p><QueryRows query={chargesQuery}>{(rows: any[]) => rows.slice(-3).reverse().map(c => <p key={c.id} className="mt-1 flex justify-between gap-2"><span className="truncate">{c.description}</span><span>{formatMoney(c.amount, c.currencyCode ?? currencyCode)}</span></p>)}</QueryRows></div>{hasPermission('folios.read') && <div><p>{t('folios.payments')}</p><QueryRows query={paymentsQuery}>{(rows: any[]) => rows.slice(0,3).map(p => <p key={p.id} className="mt-1">{formatMoney(p.amount, p.currencyCode ?? currencyCode)}</p>)}</QueryRows></div>}</div>}
           </div>}
-          {readinessQuery.isError ? <QueryError onRetry={() => void readinessQuery.refetch()}/> : readiness && <div className="rounded-xl border p-4"><p className="mb-2 text-sm font-semibold">{t('reservationWorkspace.readiness')}</p><div className="flex flex-wrap gap-2">{['roomAssigned','roomOperational','housekeepingReady','depositReceived','guestInformationComplete','operationalTasksComplete'].map(key => <span key={key} className={'rounded-lg px-3 py-2 text-xs ' + (readiness.checks[key] ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.' + (readiness.checks[key] ? 'checks.' : 'checksMissing.') + key)}</span>)}</div>{readiness.notes && <p className="mt-3 text-sm">{readiness.notes}</p>}</div>}
+          {readinessQuery.isError ? <QueryError onRetry={() => void readinessQuery.refetch()}/> : readiness && <div className="rounded-xl border p-4"><p className="mb-2 text-sm font-semibold">{t('reservationWorkspace.readiness')}</p><div className="flex flex-wrap gap-2">{['roomAssigned','roomOperational','housekeepingReady','depositReceived','guestInformationComplete','operationalTasksComplete'].map(key => <span key={key} className={'rounded-lg px-3 py-2 text-xs ' + (readiness.checks[key] ? 'bg-primary-50 text-primary-700' : 'bg-amber-50 text-amber-900')}>{t('workspace.' + (readiness.checks[key] ? 'checks.' : 'checksMissing.') + key)}</span>)}</div>{readiness.notes && <p className="mt-3 text-sm">{readiness.notes}</p>}</div>}
           {propertyId && <>
             {<ReservationPartyPanel readOnly={!hasPermission('reservations.write') || CLOSED_STATUSES.includes(reservation.status)} readOnlyReason={hasPermission('reservations.write') ? t('reservations.guestsLockedClosed', { defaultValue: 'Состав гостей нельзя менять у закрытой брони' }) : t('reservations.guestsLockedPermission', { defaultValue: 'Нет права изменять бронь' })} reservationId={reservation.id} propertyId={propertyId} roomTypeId={reservation.roomTypeId} ratePlanId={reservation.ratePlanId} totalAmount={reservation.totalAmount != null ? String(reservation.totalAmount) : undefined} currencyCode={reservation.currencyCode ?? null}/>}
             <ReservationCommercialActions key={reservation.id + ':' + String(reservation.totalAmount)} reservation={reservation} propertyId={propertyId} canWrite={hasPermission('reservations.write')}/>

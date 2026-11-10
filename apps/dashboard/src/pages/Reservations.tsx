@@ -11,7 +11,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from '@tanstack/react-table';
-import { CalendarDays, Plus, ChevronLeft, ChevronRight, ArrowUpDown, X, MoreHorizontal, Eye, Pencil, Ban, DoorOpen, LogIn, LogOut, Upload, UserX, Check } from 'lucide-react';
+import { CalendarDays, Plus, ChevronLeft, ChevronRight, Users, Clock3, AlertCircle, ArrowUpDown, X, MoreHorizontal, Eye, Pencil, Ban, DoorOpen, LogIn, LogOut, Upload, UserX, Check } from 'lucide-react';
 import { format, addDays, eachDayOfInterval } from 'date-fns';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
@@ -26,6 +26,9 @@ import { useToast } from '../components/ui/Toast';
 import StatusBadge from '../components/ui/StatusBadge';
 import Modal from '../components/ui/Modal';
 import ReservationWorkspace from '../components/reservations/ReservationWorkspace';
+import ReservationHoverCard, { type HoverTarget } from '../components/reservations/ReservationHoverCard';
+import GroupBookingModal from '../components/reservations/GroupBookingModal';
+import { BAR_ACCENT, BAR_CLASSES, compactParty, optionState, statusTone } from '../lib/booking';
 import StaffBookingRecovery from '../components/reservations/StaffBookingRecovery';
 import type { Reservation } from '../components/reservations/types';
 import CreateReservationModal, {
@@ -445,6 +448,8 @@ function ReservationList() {
         </div>
       </div>
 
+      {propertyId && <PendingOptionsBanner propertyId={propertyId} active={statusFilter === 'pending'} onShow={() => setStatusFilter('pending')} />}
+
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-sm p-4 mb-4 flex flex-wrap gap-3 items-end">
         <div>
@@ -738,6 +743,15 @@ function AvailabilityCalendar() {
   const [drag, setDrag] = useState<{ roomId: string; anchor: string; hovered: string } | null>(null);
   const [prefill, setPrefill] = useState<CreateReservationPrefill | null>(null);
   const [detailRes, setDetailRes] = useState<Reservation | null>(null);
+  const [hover, setHover] = useState<HoverTarget | null>(null);
+  const [groupOpen, setGroupOpen] = useState(false);
+  const hoverTimer = React.useRef<number | null>(null);
+  const showHover = (reservation: Reservation, element: HTMLElement) => {
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = window.setTimeout(() => setHover({ reservation, rect: element.getBoundingClientRect() }), 250);
+  };
+  const hideHover = () => { if (hoverTimer.current) window.clearTimeout(hoverTimer.current); hoverTimer.current = null; setHover(null); };
+  useEffect(() => () => { if (hoverTimer.current) window.clearTimeout(hoverTimer.current); }, []);
 
   const calendarQuery = useQuery({
     queryKey: ['reservations', 'calendar', propertyId, dayKeys[0], dayCount],
@@ -832,6 +846,7 @@ function AvailabilityCalendar() {
         roomNumber: room.number,
         roomTypeId: room.roomTypeId ?? '',
         roomTypeName: roomTypes.find((rt) => rt.id === room.roomTypeId)?.name,
+        maxOccupancy: (roomTypes.find((rt) => rt.id === room.roomTypeId) as { maxOccupancy?: number } | undefined)?.maxOccupancy,
         checkInDate: checkIn,
         checkOutDate: checkOut,
       });
@@ -872,37 +887,48 @@ function AvailabilityCalendar() {
           <h1 className="text-2xl font-semibold text-telivity-navy">{t('reservations.availabilityCalendar')}</h1>
           <p className="text-xs text-telivity-mid-grey">{t('reservations.tape.dragHint')}</p>
         </div>
-        <div className="ml-auto flex gap-2">
-          <button onClick={() => setStartDate(addDays(startDate, -7))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-telivity-light-grey" aria-label={t('reservations.tape.previousWeek')}>
-            <ChevronLeft size={14} />
-          </button>
-          <button onClick={() => setStartDate(new Date(todayKey + 'T00:00:00'))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-telivity-light-grey">
-            {t('reservations.today')}
-          </button>
-          <button onClick={() => setStartDate(addDays(startDate, 7))} className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm hover:bg-telivity-light-grey" aria-label={t('reservations.tape.nextWeek')}>
-            <ChevronRight size={14} />
-          </button>
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {hasPermission('reservations.write', 'rateplans.read') && (
+            <button onClick={() => setGroupOpen(true)} className="btn-primary"><Users size={16} />{t('booking.group.open')}</button>
+          )}
+          <div className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white">
+            <button onClick={() => setStartDate(addDays(startDate, -7))} className="flex h-9 w-10 items-center justify-center hover:bg-telivity-light-grey" aria-label={t('reservations.tape.previousWeek')}>
+              <ChevronLeft size={16} />
+            </button>
+            <button onClick={() => setStartDate(new Date(todayKey + 'T00:00:00'))} className="h-9 border-x border-gray-300 px-4 text-sm font-semibold hover:bg-telivity-light-grey">
+              {t('reservations.today')}
+            </button>
+            <button onClick={() => setStartDate(addDays(startDate, 7))} className="flex h-9 w-10 items-center justify-center hover:bg-telivity-light-grey" aria-label={t('reservations.tape.nextWeek')}>
+              <ChevronRight size={16} />
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap gap-3">
-        <input value={search} onChange={(e) => setSearch(e.target.value)} aria-label={t('reservationWorkspace.search')} placeholder={t('reservationWorkspace.search')} className="min-w-[240px] flex-1 rounded-lg border border-gray-200 px-3 py-2 text-sm"/>
-        <select value={roomTypeFilter} onChange={(e) => setRoomTypeFilter(e.target.value)} aria-label={t('reservations.roomType')} className="rounded-lg border border-gray-200 px-3 py-2 text-sm"><option value="">{t('reservationWorkspace.allTypes')}</option>{roomTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}</select>
-        <select value={dayCount} onChange={(e) => setDayCount(Number(e.target.value))} aria-label={t('reservations.availabilityCalendar')} className="rounded-lg border border-gray-200 px-3 py-2 text-sm">{[7,14,28].map((n) => <option key={n} value={n}>{t('reservationWorkspace.days', { count:n })}</option>)}</select>
+      <div className="card mb-4 flex flex-wrap items-center gap-2 p-3">
+        <input value={search} onChange={(e) => setSearch(e.target.value)} aria-label={t('reservationWorkspace.search')} placeholder={t('reservationWorkspace.search')} className="field min-w-[220px] flex-1"/>
+        <input type="date" aria-label={t('reservations.arrival')} value={dayKeys[0]} onChange={e => { if (e.target.value) setStartDate(new Date(e.target.value + 'T00:00:00')); }} className="field w-auto"/>
+        <select value={dayCount} onChange={(e) => setDayCount(Number(e.target.value))} aria-label={t('reservations.availabilityCalendar')} className="field w-auto">{[7,14,28].map((n) => <option key={n} value={n}>{t('reservationWorkspace.days', { count:n })}</option>)}</select>
+        <select value={roomTypeFilter} onChange={(e) => setRoomTypeFilter(e.target.value)} aria-label={t('reservations.roomType')} className="field w-auto"><option value="">{t('reservationWorkspace.allTypes')}</option>{roomTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}</select>
+        <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label={t('reservations.status')} className="field w-auto"><option value="">{t('reservationWorkspace.allStatuses')}</option>{['pending','confirmed','assigned','checked_in','stayover','due_out'].map(s => <option key={s} value={s}>{t('reservations.statuses.' + s)}</option>)}</select>
+        <label className="flex h-9 items-center gap-2 px-1 text-sm text-telivity-slate"><input type="checkbox" checked={accessibleOnly} onChange={e => setAccessibleOnly(e.target.checked)}/>{t('reservationWorkspace.accessible')}</label>
+        {hasPermission('rateplans.read') && <label className="flex h-9 items-center gap-2 px-1 text-sm text-telivity-slate"><input type="checkbox" checked={priceMode} onChange={e => setPriceMode(e.target.checked)}/>{t('reservationWorkspace.priceMode')}</label>}
+        {hasPermission('rateplans.read') && priceMode && <><select value={previewRatePlan} onChange={e => setPreviewRatePlan(e.target.value)} aria-label={t('reservations.ratePlan')} className="field w-auto"><option value="">{t('reservations.tape.selectRatePlan')}</option>{(plansQuery.data ?? []).map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><p className="text-xs text-telivity-mid-grey">{t('reservationWorkspace.pricePreview')}</p></>}
       </div>
-      <div className="mb-3 flex flex-wrap items-center gap-3 text-sm"><input type="date" aria-label={t('reservations.arrival')} value={dayKeys[0]} onChange={e => { if (e.target.value) setStartDate(new Date(e.target.value + 'T00:00:00')); }} className="rounded-lg border p-2"/><select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label={t('reservations.status')} className="rounded-lg border p-2"><option value="">{t('reservationWorkspace.allStatuses')}</option>{['pending','confirmed','assigned','checked_in','stayover','due_out'].map(s => <option key={s} value={s}>{t('reservations.statuses.' + s)}</option>)}</select><label className="flex items-center gap-2"><input type="checkbox" checked={accessibleOnly} onChange={e => setAccessibleOnly(e.target.checked)}/>{t('reservationWorkspace.accessible')}</label></div>
-      {hasPermission('rateplans.read') && <div className="mb-3 flex flex-wrap items-center gap-3 text-sm"><label className="flex items-center gap-2"><input type="checkbox" checked={priceMode} onChange={e => setPriceMode(e.target.checked)}/>{t('reservationWorkspace.priceMode')}</label>{priceMode && <><select value={previewRatePlan} onChange={e => setPreviewRatePlan(e.target.value)} aria-label={t('reservations.ratePlan')} className="rounded-lg border p-2"><option value="">{t('reservations.tape.selectRatePlan')}</option>{(plansQuery.data ?? []).map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><p className="text-xs text-gray-500">{t('reservationWorkspace.pricePreview')}</p></>}</div>}
       {(plansQuery.isError || pricesQuery.isError) && <QueryError onRetry={() => { void plansQuery.refetch(); if (previewRatePlan) void pricesQuery.refetch(); }}/>}
       {inventoryBlocks.length > 0 && <div className="mb-3 flex flex-wrap gap-2 rounded-lg bg-orange-50 p-3 text-xs text-orange-800" aria-label="Плановые блокировки номеров">{inventoryBlocks.map(block=><Link key={block.id} className="rounded border border-orange-200 px-2 py-1 underline" to={'/operations?tab=maintenance&propertyId='+propertyId+'&blockId='+block.id}>{rooms.find(room=>room.id===block.roomId)?.number ?? 'Номер'} · {block.kind} · {block.startDate} → {block.endDate} · {block.overdue?'Просрочена блокировка / Требуется подтверждение':'До подтверждённого возврата'}</Link>)}</div>}
       {blocks.length > 0 && <p className="mb-3 rounded-lg bg-orange-50 p-3 text-xs text-orange-800">{t('reservationWorkspace.icalPool', { count: blocks.length })}</p>}
       {calendarQuery.isError && <QueryError onRetry={() => void calendarQuery.refetch()}/>}
       {calendarQuery.isPending && <p role="status" className="mb-4 text-sm">{t('common.loading')}</p>}
       <AvailabilitySummary days={dayKeys} roomTypes={roomTypes} rows={calendarQuery.data?.availability ?? []} />
-      <div className="flex flex-wrap gap-4 mb-3 text-xs text-telivity-mid-grey">
-        <LegendSwatch className="bg-telivity-teal/20" label={t('reservations.tape.legendBooked')} />
-        <LegendSwatch className="bg-telivity-orange/25" label={t('reservations.tape.legendBlocked')} />
+      <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-telivity-slate">
+        <LegendSwatch className="border border-amber-400 bg-amber-50 bar-hatched" label={t('booking.legend.tentative')} />
+        <LegendSwatch className="border border-primary-300 bg-primary-50" label={t('booking.legend.confirmed')} />
+        <LegendSwatch className="border border-emerald-400 bg-emerald-50" label={t('booking.legend.inhouse')} />
+        <LegendSwatch className="border border-violet-300 bg-violet-50" label={t('booking.legend.departing')} />
+        <LegendSwatch className="bg-orange-100" label={t('reservations.tape.legendBlocked')} />
         <LegendSwatch className="bg-yellow-100" label={t('reservations.tape.legendDirty')} />
-        <LegendSwatch className="bg-telivity-teal/60" label={t('reservations.tape.legendSelecting')} />
+        <LegendSwatch className="bg-telivity-teal/40" label={t('reservations.tape.legendSelecting')} />
       </div>
 
       <div className="bg-white rounded-xl shadow-sm overflow-auto max-h-[70vh]">
@@ -925,7 +951,7 @@ function AvailabilityCalendar() {
             </tr>)}
             {visibleRooms.map((room, i) => (
               <tr key={room.id} className={`border-b border-gray-50 ${i % 2 === 1 ? 'bg-gray-50/30' : ''}`}>
-                <td className="px-3 py-2 text-xs font-medium text-telivity-navy sticky left-0 bg-white">{room.number}<div className="mt-1 text-[10px] text-telivity-mid-grey">{roomTypes.find((rt) => rt.id === room.roomTypeId)?.name}</div></td>
+                <td className="px-3 py-2 text-xs font-medium text-telivity-navy sticky left-0 bg-white">{room.number}<div className="mt-1 text-[12px] text-telivity-mid-grey">{roomTypes.find((rt) => rt.id === room.roomTypeId)?.name}</div></td>
                 <td colSpan={dayCount} className="p-0"><div className="relative h-20">
                   <div className="grid h-full" style={{ gridTemplateColumns: 'repeat(' + dayCount + ', minmax(60px, 1fr))' }}>{dayKeys.map(date => {
                     const state = cellState(room, date); const free = state === 'free' && !calendarQuery.isFetching && calendarQuery.data?.complete === true && hasPermission('reservations.write', 'rateplans.read');
@@ -933,17 +959,43 @@ function AvailabilityCalendar() {
                       onMouseDown={e => { if (free) { e.preventDefault(); setDrag({ roomId: room.id, anchor: date, hovered: date }); } }}
                       onMouseEnter={() => { if (drag?.roomId === room.id && date >= drag.anchor) setDrag({ ...drag, hovered: date }); }}
                       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPrefill({ roomId: room.id, roomNumber: room.number, roomTypeId: room.roomTypeId ?? '', checkInDate: date, checkOutDate: format(addDays(new Date(date + 'T00:00:00'), 1), 'yyyy-MM-dd') }); } }}
-                      className={'h-full border-r border-gray-100 ' + (isSelected(room.id, date) ? 'bg-telivity-teal/50' : state === 'blocked' ? 'bg-orange-100' : state === 'dirty' ? 'bg-yellow-100' : 'hover:bg-teal-50')}
-                      title={state === 'blocked' ? t('reservations.tape.legendBlocked') : state === 'dirty' ? t('reservations.tape.legendDirty') : date}>{priceMode && pricesQuery.data?.roomTypeId === room.roomTypeId && <span className="block pt-14 text-[10px] font-medium text-gray-600">{formatMoney(pricesQuery.data.prices.find((p: any) => p.date === date)?.totalAmount, currencyCode)}</span>}</button>
+                      className={'h-full border-r border-gray-100 ' + (isSelected(room.id, date) ? 'bg-telivity-teal/50' : state === 'blocked' ? 'bg-orange-100' : state === 'dirty' ? 'bg-yellow-100' : 'hover:bg-primary-50')}
+                      title={state === 'blocked' ? t('reservations.tape.legendBlocked') : state === 'dirty' ? t('reservations.tape.legendDirty') : date}>{priceMode && pricesQuery.data?.roomTypeId === room.roomTypeId && <span className="block pt-14 text-[12px] font-medium text-gray-600">{formatMoney(pricesQuery.data.prices.find((p: any) => p.date === date)?.totalAmount, currencyCode)}</span>}</button>
                   })}</div>
                   {(reservationsByRoom.get(room.id) ?? []).filter(r => !statusFilter || r.status === statusFilter).map(res => {
                     const left = res.arrivalDate < dayKeys[0] ? 0 : dayKeys.indexOf(res.arrivalDate);
                     const right = res.departureDate > dayKeys[dayCount - 1] ? dayCount : dayKeys.indexOf(res.departureDate);
                     if (left < 0 || right <= left) return null;
-                    return <div key={res.id} className={'absolute top-2 flex h-16 items-center gap-1 rounded-lg border px-2 text-xs shadow-sm ' + (['checked_in','stayover','due_out'].includes(res.status) ? 'border-teal-300 bg-teal-100' : 'border-blue-200 bg-blue-50')}
-                      style={{ left: 'calc(' + left/dayCount*100 + '% + 2px)', width: 'calc(' + (right-left)/dayCount*100 + '% - 4px)' }}>
-                      <button className="min-w-0 flex-1 text-left" onClick={() => setDetailRes(res)} aria-label={t('reservationWorkspace.open', { number: res.confirmationNumber })}><strong className="block truncate text-telivity-navy">{res.guestName ?? res.confirmationNumber?.slice(-6)}</strong><span className="block truncate text-[10px] text-telivity-slate">{t('reservations.statuses.' + res.status)} · {t('reservationWorkspace.sources.' + res.source, { defaultValue: t('reservationWorkspace.unknownStatus') })}</span>{hasPermission('folios.read') && <span className="block truncate text-[9px]">{ledgerQuery.isError ? t('reservations.tape.ledgerUnavailable') : ledgerQuery.isPending ? '…' : ledgerByStay.get(res.id)?.hasBalanceDue ? t('reservations.tape.balanceDue') : ledgerByStay.get(res.id)?.hasPostedPayment ? t('reservations.tape.paymentRecorded') : t('reservations.tape.noPaymentRecorded')}</span>}</button>
-                      {res.guestId && hasPermission('guests.read') && <button className="rounded p-1 text-telivity-teal" aria-label={t('guestQuickView.title')} onClick={() => openGuest(res.guestId!, propertyId)}>◉</button>}
+                    const tone = statusTone(res.status);
+                    const ledger = ledgerByStay.get(res.id);
+                    const option = tone === 'tentative' ? optionState(res.optionUntil) : 'none';
+                    const sameBooking = !!hover && hover.reservation.bookingId != null && hover.reservation.bookingId === res.bookingId && hover.reservation.id !== res.id;
+                    return <div key={res.id}
+                      className={'group absolute top-1.5 flex h-[4.25rem] items-stretch overflow-hidden rounded-lg border text-left shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-telivity-teal ' + BAR_CLASSES[tone] + (sameBooking ? ' ring-2 ring-telivity-teal ring-offset-1' : '')}
+                      style={{ left: 'calc(' + left/dayCount*100 + '% + 2px)', width: 'calc(' + (right-left)/dayCount*100 + '% - 4px)' }}
+                      onMouseEnter={(e) => showHover(res, e.currentTarget)} onMouseLeave={hideHover}>
+                      <span className={'w-1 shrink-0 ' + BAR_ACCENT[tone]} aria-hidden />
+                      <button className="min-w-0 flex-1 px-2 py-1.5 text-left" onClick={() => { hideHover(); setDetailRes(res); }}
+                        onFocus={(e) => showHover(res, e.currentTarget.parentElement as HTMLElement)} onBlur={hideHover}
+                        aria-describedby={hover?.reservation.id === res.id ? `hover-${res.id}` : undefined}
+                        aria-label={t('reservationWorkspace.open', { number: res.confirmationNumber })}>
+                        <span className="flex items-center gap-1">
+                          {res.groupName && <Users size={12} className="shrink-0 opacity-70" aria-label={t('booking.groupLabel')} />}
+                          <strong className="block truncate text-sm leading-tight">{res.guestName || res.confirmationNumber?.slice(-6)}</strong>
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs opacity-80">
+                          {compactParty(res.adults ?? 1, res.children ?? 0)} · {tone === 'tentative' ? t('booking.legend.tentativeShort') : t('reservations.statuses.' + res.status)}
+                        </span>
+                        <span className="mt-0.5 flex items-center gap-1 truncate text-xs">
+                          {option === 'expired' ? <><AlertCircle size={12} className="text-red-600" /><span className="font-semibold text-red-700">{t('booking.legend.expired')}</span></>
+                            : option === 'soon' ? <><Clock3 size={12} /><span>{t('booking.legend.soon')}</span></>
+                            : hasPermission('folios.read') ? (ledgerQuery.isError ? t('reservations.tape.ledgerUnavailable') : ledgerQuery.isPending ? '…'
+                              : ledger?.hasBalanceDue ? <span className="font-semibold text-red-700">{t('reservations.tape.balanceDue')}</span>
+                              : ledger?.hasPostedPayment ? t('reservations.tape.paymentRecorded') : t('reservations.tape.noPaymentRecorded'))
+                            : t('reservationWorkspace.sources.' + res.source, { defaultValue: '' })}
+                        </span>
+                      </button>
+                      {res.guestId && hasPermission('guests.read') && <button className="self-start rounded p-1.5 text-current opacity-0 transition-opacity hover:bg-black/5 group-hover:opacity-100 focus:opacity-100" aria-label={t('guestQuickView.title')} onClick={() => { hideHover(); openGuest(res.guestId!, propertyId); }}><Eye size={14} /></button>}
                     </div>;
                   })}
                 </div></td>
@@ -962,6 +1014,12 @@ function AvailabilityCalendar() {
         prefill={prefill}
         onClose={() => setPrefill(null)}
       />
+
+      <ReservationHoverCard target={hover} showMoney={hasPermission('folios.read')}
+        roomNumber={hover ? rooms.find((room) => room.id === hover.reservation.roomId)?.number : undefined}
+        roomTypeName={hover ? roomTypes.find((type) => type.id === hover.reservation.roomTypeId)?.name : undefined}
+        ledger={hover ? ledgerByStay.get(hover.reservation.id) : undefined} />
+      <GroupBookingModal open={groupOpen} onClose={() => setGroupOpen(false)} initialCheckIn={dayKeys[0]} initialCheckOut={dayKeys[1]} />
 
       {detailRes && <ReservationWorkspace key={propertyId + detailRes.id} reservationId={detailRes.id} initial={detailRes} onClose={() => setDetailRes(null)}/>}
 
@@ -985,7 +1043,7 @@ function AvailabilitySummary({ days, roomTypes, rows }: { days: string[]; roomTy
   const cell = (free: number, sold: number, ooo: number, all: number) => (
     <td className={`px-1 py-1 text-center ${free <= 0 ? 'bg-red-50 text-red-700' : free <= 1 ? 'bg-amber-50 text-amber-800' : 'text-telivity-navy'}`}
       title={t('reservations.summaryCell', { free, sold, ooo, all, defaultValue: 'Свободно {{free}} · Забронировано {{sold}} · Не в продаже {{ooo}} · Всего {{all}}' })}>
-      <span className="font-semibold">{free}</span><span className="block text-[10px] text-telivity-mid-grey">{sold}/{all}{ooo ? ` · ${ooo}✕` : ''}</span>
+      <span className="font-semibold">{free}</span><span className="block text-[12px] text-telivity-mid-grey">{sold}/{all}{ooo ? ` · ${ooo}✕` : ''}</span>
     </td>);
   return (
     <div className="mb-3 rounded-xl bg-white shadow-sm">
@@ -1016,7 +1074,7 @@ function AvailabilitySummary({ days, roomTypes, rows }: { days: string[]; roomTy
 function LegendSwatch({ className, label }: { className: string; label: string }) {
   return (
     <span className="flex items-center gap-1.5">
-      <span className={`inline-block w-3 h-3 rounded ${className}`} aria-hidden="true" />
+      <span className={`inline-block h-4 w-6 rounded ${className}`} aria-hidden="true" />
       {label}
     </span>
   );
@@ -1186,4 +1244,30 @@ function ReservationDetailRoute() {
   const { propertyId } = useProperty();
   const navigate = useNavigate();
   return id ? <ReservationWorkspace key={propertyId + id} mode="page" reservationId={id} onClose={() => navigate('/reservations')}/> : null;
+}
+
+/** Tentative bookings waiting for a guarantee: how many, how many expire within a day or already expired. */
+function PendingOptionsBanner({ propertyId, active, onShow }: { propertyId: string; active: boolean; onShow: () => void }) {
+  const { t } = useTranslation();
+  const { hasPermission } = useAuth();
+  const query = useQuery<Array<{ id: string; optionUntil: string | null; overdue: boolean }>>({
+    queryKey: ['reservations', 'options', propertyId],
+    enabled: hasPermission('reservations.read'),
+    queryFn: () => api.get('/v1/reservations/options', { params: { propertyId }, skipErrorToast: true }).then((r) => r.data?.data ?? r.data ?? []),
+  });
+  const rows = Array.isArray(query.data) ? query.data : [];
+  if (!rows.length) return null;
+  const expired = rows.filter((r) => optionState(r.optionUntil) === 'expired').length;
+  const soon = rows.filter((r) => optionState(r.optionUntil) === 'soon').length;
+  return (
+    <div className={`mb-4 flex flex-wrap items-center gap-3 rounded-xl border p-4 ${expired ? 'border-red-200 bg-red-50' : 'border-amber-200 bg-amber-50'}`}>
+      <Clock3 size={20} className={expired ? 'text-red-600' : 'text-amber-600'} />
+      <p className="text-sm text-telivity-navy">
+        <strong>{t('booking.options.waiting', { count: rows.length })}</strong>
+        {soon > 0 && <span className="ml-2 text-amber-900">· {t('booking.options.soon', { count: soon })}</span>}
+        {expired > 0 && <span className="ml-2 font-semibold text-red-700">· {t('booking.options.expired', { count: expired })}</span>}
+      </p>
+      {!active && <button type="button" className="btn-secondary ml-auto" onClick={onShow}>{t('booking.options.show')}</button>}
+    </div>
+  );
 }

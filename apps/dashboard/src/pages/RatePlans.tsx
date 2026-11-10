@@ -14,6 +14,7 @@ import RevenueWorkspaceNav from '../components/revenue/RevenueWorkspaceNav';
 import LiveRateWorkflow, { PreviewTable } from '../components/revenue/LiveRateWorkflow';
 import { useOperationalDate } from '../hooks/useOperationalDate';
 import { useAuth } from '../context/AuthContext';
+import { useBookingPolicy } from '../hooks/useBookingPolicy';
 import { propertyHref } from '../lib/navigation';
 import { pricingError, unwrap, type PendingPricingRequest, type LiveChange, type LivePreview } from '../lib/live-revenue';
 
@@ -35,39 +36,79 @@ interface RatePlan {
   revision?: number;
   extraAdultAmount?: string | null;
   extraChildAmount?: string | null;
+  childSupplements?: Record<string, string[]> | null;
 }
 
-/** Per-night supplements for guests above the room type's standard occupancy. */
+/** Per-night supplements: extra adults, and children by age band and position (1st, 2nd, 3rd+ child). */
 function OccupancySupplements({ plan, propertyId, canManage }: { plan: RatePlan; propertyId: string; canManage: boolean }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { currencyCode } = useProperty();
+  const policy = useBookingPolicy(propertyId).data;
+  const bands = policy?.childAgeBands ?? [];
   const [adult, setAdult] = useState(plan.extraAdultAmount ?? '');
   const [child, setChild] = useState(plan.extraChildAmount ?? '');
+  const [byBand, setByBand] = useState<Record<string, string[]>>(() => plan.childSupplements ?? {});
   const [reason, setReason] = useState('');
+  const setCell = (code: string, index: number, value: string) => setByBand((all) => {
+    const row = [...(all[code] ?? ['', '', ''])];
+    while (row.length < 3) row.push('');
+    row[index] = value.replace(',', '.');
+    return { ...all, [code]: row };
+  });
+  const payloadBands = () => {
+    const out: Record<string, string[]> = {};
+    for (const band of bands) {
+      const row = (byBand[band.code] ?? []).map((v) => v.trim());
+      while (row.length && !row[row.length - 1]) row.pop();
+      if (row.length) out[band.code] = row.map((v) => moneyString(v || '0'));
+    }
+    return Object.keys(out).length ? out : null;
+  };
   const save = useMutation({
     mutationFn: () => api.patch(`/v1/rate-plans/${plan.id}`, {
-      extraAdultAmount: moneyString(adult || '0'), extraChildAmount: moneyString(child || '0'),
+      extraAdultAmount: moneyString(adult || '0'), extraChildAmount: moneyString(child || '0'), childSupplements: payloadBands(),
       requestId: crypto.randomUUID(), expectedRevision: plan.revision ?? 0, reason: reason.trim(),
     }, { params: { propertyId } }),
     onSuccess: () => { setReason(''); void queryClient.invalidateQueries({ queryKey: ['rate-plans', propertyId] }); },
   });
-  const input = 'w-full border border-gray-200 rounded-lg px-3 py-2 text-sm';
+  const money = (value: string, onChange: (v: string) => void, label: string) => (
+    <input inputMode="decimal" aria-label={label} disabled={!canManage} value={value} placeholder="0" onChange={(e) => onChange(e.target.value.replace(',', '.'))} className="field tabular-nums"/>
+  );
   return (
-    <div className="bg-white rounded-xl shadow-sm p-6 space-y-3">
-      <h2 className="text-sm font-semibold text-telivity-navy">{t('ratePlans.supplements', { defaultValue: 'Доплаты за дополнительных гостей' })}</h2>
-      <p className="text-xs text-telivity-mid-grey">{t('ratePlans.supplementsHint', { defaultValue: 'За каждую ночь, за каждого гостя сверх стандартного размещения категории. Пусто или 0 — цена за номер не зависит от числа гостей.' })}</p>
-      <div className="grid grid-cols-2 gap-3">
-        <label><span className="block text-xs text-telivity-mid-grey mb-1">{t('ratePlans.extraAdult', { defaultValue: 'Взрослый' })} ({currencyCode})</span>
-          <input inputMode="decimal" disabled={!canManage} value={adult} onChange={(e) => setAdult(e.target.value.replace(',', '.'))} className={input}/></label>
-        <label><span className="block text-xs text-telivity-mid-grey mb-1">{t('ratePlans.extraChild', { defaultValue: 'Ребёнок' })} ({currencyCode})</span>
-          <input inputMode="decimal" disabled={!canManage} value={child} onChange={(e) => setChild(e.target.value.replace(',', '.'))} className={input}/></label>
+    <div className="card space-y-4 p-6">
+      <div>
+        <h2 className="text-base font-semibold text-telivity-navy">{t('ratePlans.supplements', { defaultValue: 'Доплаты за дополнительных гостей' })}</h2>
+        <p className="mt-1 text-sm text-telivity-mid-grey">{t('childPricing.hint')}</p>
       </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label><span className="label">{t('ratePlans.extraAdult', { defaultValue: 'Взрослый' })} ({currencyCode})</span>{money(adult, setAdult, t('ratePlans.extraAdult', { defaultValue: 'Взрослый' }))}</label>
+        <label><span className="label">{t('childPricing.noAge')} ({currencyCode})</span>{money(child, setChild, t('childPricing.noAge'))}</label>
+      </div>
+      {bands.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-telivity-mid-grey">
+              <th className="py-2 pr-3 font-semibold">{t('childPricing.band')}</th>
+              {[1, 2, 3].map((n) => <th key={n} className="px-2 py-2 font-semibold">{t(n === 3 ? 'childPricing.thirdPlus' : 'childPricing.nth', { n })}</th>)}
+            </tr></thead>
+            <tbody>
+              {bands.map((band) => (
+                <tr key={band.code} className="border-t border-gray-100">
+                  <td className="py-2 pr-3"><span className="font-semibold text-telivity-navy">{band.label}</span>
+                    <span className="block text-xs text-telivity-mid-grey">{band.occupiesBed ? t('childPricing.takesPlace') : t('childPricing.noPlace')}</span></td>
+                  {[0, 1, 2].map((i) => <td key={i} className="px-2 py-2">{money(byBand[band.code]?.[i] ?? '', (v) => setCell(band.code, i, v), `${band.label} ${i + 1}`)}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="mt-2 text-xs text-telivity-mid-grey">{t('childPricing.tableHint')}</p>
+        </div>
+      )}
       {canManage && <>
-        <input placeholder={t('ratePlans.changeReason', { defaultValue: 'Причина изменения' })} value={reason} onChange={(e) => setReason(e.target.value)} className={input}/>
-        {save.isError && <p role="alert" className="text-xs text-red-700">{pricingError(save.error, true)}</p>}
-        <button type="button" disabled={!reason.trim() || save.isPending} onClick={() => save.mutate()}
-          className="bg-telivity-teal text-white rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50">{save.isPending ? t('common.saving') : t('common.save')}</button>
+        <input placeholder={t('ratePlans.changeReason', { defaultValue: 'Причина изменения' })} value={reason} onChange={(e) => setReason(e.target.value)} className="field"/>
+        {save.isError && <p role="alert" className="text-sm text-red-700">{pricingError(save.error, true)}</p>}
+        <button type="button" disabled={!reason.trim() || save.isPending} onClick={() => save.mutate()} className="btn-primary">{save.isPending ? t('common.saving') : t('common.save')}</button>
       </>}
     </div>
   );

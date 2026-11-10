@@ -4,6 +4,7 @@ import { BadRequestException } from '@nestjs/common';
  * Reservation status state machine (KB 5.1).
  *
  * pending → confirmed → assigned → checked_in → stayover → due_out → checked_out
+ * pending → assigned (a tentative stay holding a room is confirmed)
  * pending → cancelled (anytime before checked_in)
  * confirmed → no_show (after arrival date passes)
  */
@@ -20,7 +21,7 @@ export type ReservationStatus =
   | 'cancelled';
 
 const VALID_TRANSITIONS: Record<ReservationStatus, ReservationStatus[]> = {
-  pending: ['confirmed', 'cancelled'],
+  pending: ['confirmed', 'assigned', 'cancelled'],
   confirmed: ['assigned', 'cancelled', 'no_show'],
   assigned: ['checked_in', 'cancelled', 'no_show'],
   checked_in: ['stayover', 'checked_out'],
