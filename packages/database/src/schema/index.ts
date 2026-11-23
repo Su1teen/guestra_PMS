@@ -69,6 +69,7 @@ export {
   ratePlanTypeEnum,
   ratePlans,
   rateRestrictions,
+  priceRules,
 } from './rate-plan.js';
 
 // Folios, Charges & Payments

@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, text, boolean, timestamp, jsonb, integer, date, pgEnum } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, text, boolean, timestamp, jsonb, integer, numeric, date, pgEnum } from 'drizzle-orm/pg-core';
 import { properties } from './property.js';
 
 /**
@@ -65,6 +65,9 @@ export const roomTypes = pgTable('room_types', {
 
   // Pricing reference (base rate defined here, actuals in rate_plans)
   sortOrder: integer('sort_order').notNull().default(0),
+  /** Price calendar bounds: the final nightly price never goes below / above these (NULL = no bound). */
+  minPrice: numeric('min_price', { precision: 12, scale: 2 }),
+  maxPrice: numeric('max_price', { precision: 12, scale: 2 }),
 
   // Status
   isActive: boolean('is_active').notNull().default(true),
