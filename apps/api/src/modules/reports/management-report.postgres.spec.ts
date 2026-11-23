@@ -15,6 +15,7 @@ import {
 import { ReportsService } from "./reports.service";
 import { ManagementInputsService } from "./management-inputs.service";
 import { ReportsController } from "./reports.controller";
+import { MoneyReportsService } from "./money-reports.service";
 import { PERMISSIONS_KEY } from "../auth/permissions.decorator";
 import { Test } from "@nestjs/testing";
 import { ValidationPipe } from "@nestjs/common";
@@ -326,6 +327,7 @@ describe.runIf(process.env.PMS_LIVE_PG === "1")(
           PermissionsGuard,
           { provide: ReportsService, useValue: reports },
           { provide: ManagementInputsService, useValue: inputs },
+          { provide: MoneyReportsService, useValue: {} },
           { provide: PortfolioPropertyResolver, useValue: {} },
           { provide: ConfigService, useValue: { get: () => "true" } },
           {

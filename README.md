@@ -510,7 +510,7 @@ Operator notes for activating existing adapters, metasearch landings on the dire
 | OTA Channels | Booking.com + Expedia (EQC) + SiteMinder + DerbySoft | Direct + aggregated OTA connectivity (ARI + content) |
 | XML Processing | fast-xml-parser | Booking.com OTA XML protocol |
 | Package Manager | pnpm workspaces | Monorepo management |
-| Testing | Vitest (2687 passing tests across 348 files with passing tests) | Unit and integration tests |
+| Testing | Vitest (2710 passing tests across 352 files with passing tests) | Unit and integration tests |
 | Build | tsup (packages) + Vite (dashboard) + nest build (API) | Fast builds |
 | Containers | Docker + docker-compose | Local dev and production deployment |
 | CI/CD | GitHub Actions | Automated testing, builds, and releases |
@@ -1200,7 +1200,7 @@ HAIP is built in public and contributions are welcome.
 pnpm install          # Install dependencies
 pnpm build            # Build all workspace packages
 pnpm dev              # Start API in dev mode (hot reload)
-pnpm test             # Run all tests (2687 passing, 348 files with passes; skipped excluded)
+pnpm test             # Run all tests (2710 passing, 352 files with passes; skipped excluded)
 pnpm lint             # ESLint
 ```
 
