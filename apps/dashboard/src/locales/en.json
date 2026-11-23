@@ -3193,7 +3193,10 @@
     "tab": "Booking policy",
     "optionTitle": "Options and confirmation",
     "optionHint": "Staff bookings start as an option and are confirmed once the prepayment is received. Expired options are never released automatically unless you choose so.",
-    "holdHours": "Hold option, hours",
+    "holdHours": "Hold option",
+    "holdUnitMinutes": "minutes",
+    "holdUnitHours": "hours",
+    "holdMinutesMax": "Up to 90 minutes",
     "noAutoDeadline": "No deadline",
     "expiry": "When the option expires",
     "expiryNotify": "Remind staff",
@@ -3202,7 +3205,7 @@
     "manualOnly": "50% by default",
     "depositHint": "0 = confirm manually only. Empty = 50% by default.",
     "autoSend": "Send the guest a confirmation automatically once the booking is confirmed",
-    "sweepHint": "Expired options are handled by the night audit and on schedule (POST /v1/reservations/options/sweep).",
+    "sweepHint": "Expired options are checked every minute and during the night audit.",
     "bandsTitle": "Child age bands",
     "bandsHint": "Used for child supplements in rate plans and for room capacity.",
     "addBand": "Add band",
@@ -3215,7 +3218,13 @@
     "codeChangeWarning": "After changing age limits, review child supplements in rate plans.",
     "bandsInvalid": "Check names and ages (0–17, 'to' not below 'from').",
     "bandsOverlap": "Bands must not overlap.",
-    "saved": "Policy saved"
+    "saved": "Policy saved",
+    "moneyTitle": "Packages, commission and cancellations",
+    "moneyHint": "Used in the revenue split, manager commission and the cancellation hint.",
+    "packageChildFromAge": "Children count in packages from age",
+    "everyChildCounts": "Every child counts",
+    "commissionRate": "Manager commission, %",
+    "lateCancellationHours": "Late cancellation, hours before arrival"
   },
   "childPricing": {
     "hint": "Per night. Adults and children taking a place fill the room type's standard occupancy first; guests above it pay the supplement. Empty means none.",
@@ -3252,6 +3261,22 @@
       "answered": "Guest replied — check the chat",
       "declined": "Guest disagrees",
       "superseded": "Replaced"
+    }
+  },
+  "stayMoney": {
+    "retain": "Retain prepayment as penalty",
+    "refund": "Refund",
+    "reason": "Reason",
+    "amount": "Amount (empty = all available)",
+    "payment": "Payment",
+    "summary": "Paid {{paid}} · refunded {{refunded}} · retained {{retained}} · available {{available}}",
+    "lateHint": "Less than {{hours}} h before arrival: you may retain the prepayment ({{available}}) as a penalty after cancelling.",
+    "earlyHint": "Cancelled in time: decide whether to refund the prepayment ({{available}}).",
+    "confirm": {
+      "cancel": "Cancel the booking?",
+      "no-show": "Mark the guest as a no-show?",
+      "retain": "Retain the prepayment as a penalty? The payment stays; a penalty charge is added.",
+      "refund": "Refund this payment? The original payment stays; the refund is a separate row dated today."
     }
   }
 }

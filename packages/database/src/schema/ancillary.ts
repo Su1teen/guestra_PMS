@@ -165,6 +165,14 @@ export const ratePlanComponents = pgTable(
     amountOverride: numeric('amount_override', { precision: 12, scale: 2 }),
     /** true = bundled in room rate (reporting line); false = guest-visible surcharge */
     includedInRate: boolean('included_in_rate').notNull().default(true),
+    /** How the component is counted: per_guest_per_night | per_guest_per_stay | per_stay | per_night (null = per_stay × quantity). */
+    basis: varchar('basis', { length: 30 }).$type<'per_guest_per_night' | 'per_guest_per_stay' | 'per_stay' | 'per_night'>(),
+    /** Value of one unit in reports (revenue split); null = amount override, else catalog price. */
+    allocationAmount: numeric('allocation_amount', { precision: 12, scale: 2 }),
+    /** Cost of one unit to the hotel (management report). */
+    unitCost: numeric('unit_cost', { precision: 12, scale: 2 }),
+    /** Report revenue category: fnb | bath | spa | other (null = from the service charge type). */
+    revenueCategory: varchar('revenue_category', { length: 20 }).$type<'fnb' | 'bath' | 'spa' | 'other'>(),
 
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
@@ -236,3 +244,33 @@ export const serviceOperations = pgTable('service_operations', {
   response: jsonb('response').$type<Record<string, unknown>>().notNull(),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, t => [uniqueIndex('service_operations_property_key_unique').on(t.propertyId, t.idempotencyKey)]);
+
+/** Revenue split of a stay (snapshot at confirmation, then correcting rows), retained prepayments and refunds. */
+export const reservationRevenueAllocations = pgTable(
+  'reservation_revenue_allocations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    propertyId: uuid('property_id').notNull().references(() => properties.id),
+    reservationId: uuid('reservation_id').notNull().references(() => reservations.id),
+    /** snapshot | adjustment | penalty | refund */
+    kind: varchar('kind', { length: 20 }).$type<'snapshot' | 'adjustment' | 'penalty' | 'refund'>().notNull(),
+    /** accommodation | fnb | bath | spa | other | penalty | refund */
+    category: varchar('category', { length: 20 }).notNull(),
+    componentId: uuid('component_id'),
+    description: varchar('description', { length: 255 }).notNull(),
+    quantity: integer('quantity').notNull().default(1),
+    amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
+    cost: numeric('cost', { precision: 12, scale: 2 }).notNull().default('0'),
+    currencyCode: varchar('currency_code', { length: 3 }).notNull(),
+    reason: text('reason'),
+    actorId: varchar('actor_id', { length: 120 }),
+    /** Payment or charge the row came from (penalty charge, refund payment). */
+    sourceId: uuid('source_id'),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('reservation_revenue_allocations_reservation_idx').on(t.propertyId, t.reservationId),
+    index('reservation_revenue_allocations_occurred_idx').on(t.propertyId, t.occurredAt),
+  ],
+);

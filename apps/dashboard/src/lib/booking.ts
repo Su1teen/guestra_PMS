@@ -9,9 +9,14 @@ export interface BookingPolicy {
   childAgeBands: ChildAgeBand[];
   childAgeBandsConfigured: boolean;
   optionHoldHours: number | null;
+  /** Short hold in minutes; takes precedence over hours. */
+  optionHoldMinutes?: number | null;
   optionExpiryAction: 'cancel' | 'notify' | null;
   depositPercentage: number | null;
   autoSendConfirmation: boolean;
+  packageChildFromAge?: number | null;
+  commissionRatePercent?: number | null;
+  lateCancellationHours?: number | null;
   /** Platform defaults applied when the hotel has not chosen (50% prepayment, remind on expiry). */
   defaults?: { depositPercentage: number; optionExpiryAction: 'cancel' | 'notify' };
 }
@@ -84,10 +89,10 @@ export function optionState(optionUntil: string | null | undefined, now = Date.n
   return at - now < soonHours * 3_600_000 ? 'soon' : 'ok';
 }
 
-/** Default option deadline for the form: now + policy hours, as a datetime-local value. */
+/** Default option deadline for the form: now + policy hold (minutes or hours), as a datetime-local value. */
 export function defaultOptionUntil(policy: BookingPolicy | undefined, now = new Date()): string {
-  if (!policy?.optionHoldHours) return '';
-  return toLocalInput(new Date(now.getTime() + policy.optionHoldHours * 3_600_000));
+  const ms = policy?.optionHoldMinutes ? policy.optionHoldMinutes * 60_000 : policy?.optionHoldHours ? policy.optionHoldHours * 3_600_000 : 0;
+  return ms ? toLocalInput(new Date(now.getTime() + ms)) : '';
 }
 
 export function toLocalInput(date: Date): string {

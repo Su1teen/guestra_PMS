@@ -23,6 +23,9 @@ import { ReservationPricingService } from './reservation-pricing.service';
 import { ReservationConfirmationService } from './reservation-confirmation.service';
 import { ReservationGuaranteeService } from './reservation-guarantee.service';
 import { DocumentLinkService } from './document-link.service';
+import { OptionExpiryScheduler } from './option-expiry.scheduler';
+import { RevenueAllocationService } from './revenue-allocation.service';
+import { StayMoneyService } from './stay-money.service';
 import { PublicDocumentController } from './public-document.controller';
 import { RatePlanModule } from '../rate-plan/rate-plan.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -58,6 +61,9 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     ReservationPricingService,
     ReservationConfirmationService,
     ReservationGuaranteeService,
+    OptionExpiryScheduler,
+    RevenueAllocationService,
+    StayMoneyService,
     DocumentLinkService,
   ],
   exports: [
@@ -67,6 +73,8 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     ReservationImportService,
     ReservationGuaranteeService,
     ReservationConfirmationService,
+    RevenueAllocationService,
+    StayMoneyService,
     DocumentLinkService,
   ],
 })

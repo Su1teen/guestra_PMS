@@ -9,6 +9,9 @@ export type GuaranteeType = (typeof GUARANTEE_TYPES)[number];
  */
 export const BOOKING_POLICY_DEFAULTS = { depositPercentage: 50, optionExpiryAction: 'notify' as 'cancel' | 'notify' };
 
+/** Cancellation reason written when an unpaid option is released on its deadline. */
+export const OPTION_EXPIRED_REASON = 'Истёк срок опции: гарантия не получена';
+
 /** Tenders front desk can record by hand as a received prepayment while no payment gateway is connected. */
 export const MANUAL_PREPAYMENT_METHODS = ['cash', 'bank_transfer', 'credit_card', 'debit_card', 'other'] as const;
 export type ManualPrepaymentMethod = (typeof MANUAL_PREPAYMENT_METHODS)[number];

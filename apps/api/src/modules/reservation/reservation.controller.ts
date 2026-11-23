@@ -47,6 +47,9 @@ import { SplitReservationDto } from './dto/split-reservation.dto';
 import { MoveReservationGuestDto } from './dto/move-reservation-guest.dto';
 import { resolvePropertyId } from '../../common/property-id';
 import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
+import { RevenueAllocationService } from './revenue-allocation.service';
+import { StayMoneyService } from './stay-money.service';
+import { StayReasonDto, StayRefundDto, StayRetainDto } from './dto/stay-money.dto';
 import { ReservationPricingService } from './reservation-pricing.service';
 import { ReservationConfirmationService } from './reservation-confirmation.service';
 import { ReservationPriceDto } from './dto/reservation-price.dto';
@@ -76,6 +79,8 @@ export class ReservationController {
     private readonly pricingService: ReservationPricingService,
     private readonly confirmationService: ReservationConfirmationService,
     private readonly guaranteeService: ReservationGuaranteeService,
+    private readonly revenueAllocation: RevenueAllocationService,
+    private readonly stayMoney: StayMoneyService,
   ) {}
 
   // --- Action routes BEFORE :id to avoid conflicts ---
@@ -629,6 +634,51 @@ export class ReservationController {
   ) {
     return this.reservationService.markNoShow(id, propertyId);
   }
+
+  @Get(':id/revenue-split')
+  @RequirePermissions('reservations.read')
+  @ApiOperation({ summary: 'Saved revenue split of the stay (accommodation, food, other, cost) with penalties and refunds, and the split it would have now' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  async revenueSplit(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string) {
+    const [saved, preview] = await Promise.all([this.revenueAllocation.current(id, propertyId), this.revenueAllocation.preview(id, propertyId)]);
+    return { ...saved, preview: preview.lines };
+  }
+
+  @Get(':id/money')
+  @RequirePermissions('reservations.read')
+  @ApiOperation({ summary: 'Money of the stay and the suggested cancellation action (retain the prepayment when late)' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  cancellationAdvice(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string) {
+    return this.stayMoney.cancellationAdvice(id, propertyId);
+  }
+
+  @Post(':id/manual-cancel')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Cancel with a required reason; the author is recorded' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  manualCancel(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: StayReasonDto, @AuditActorCtx() actor: AuditActor) { return this.stayMoney.cancel(id, propertyId, dto, actor); }
+
+  @Post(':id/manual-no-show')
+  @RequirePermissions('reservations.write')
+  @ApiOperation({ summary: 'Mark a no-show with a required reason; the author is recorded' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  manualNoShow(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: StayReasonDto, @AuditActorCtx() actor: AuditActor) { return this.stayMoney.noShow(id, propertyId, dto, actor); }
+
+  @Post(':id/retain-prepayment')
+  @RequirePermissions('folios.manage')
+  @ApiOperation({ summary: 'Retain received money of a cancelled or no-show stay as a penalty (fee charge); the payment stays' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  retainPrepayment(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: StayRetainDto, @AuditActorCtx() actor: AuditActor) { return this.stayMoney.retainPrepayment(id, propertyId, dto, actor); }
+
+  @Post(':id/refund')
+  @RequirePermissions('folios.manage')
+  @ApiOperation({ summary: 'Refund a payment of the stay as its own dated row, with a reason' })
+  @ApiQuery({ name: 'propertyId', required: true })
+  refund(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: StayRefundDto, @AuditActorCtx() actor: AuditActor) { return this.stayMoney.refund(id, propertyId, dto, actor); }
 
   @Post(':id/pre-register')
   @RequirePermissions('reservations.write')

@@ -19,19 +19,27 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
   const queryClient = useQueryClient();
   const policyQuery = useBookingPolicy(propertyId);
   const [holdHours, setHoldHours] = useState('');
+  const [holdUnit, setHoldUnit] = useState<'minutes' | 'hours'>('hours');
   const [expiry, setExpiry] = useState<'notify' | 'cancel'>('notify');
   const [deposit, setDeposit] = useState('');
   const [autoSend, setAutoSend] = useState(true);
   const [bands, setBands] = useState<ChildAgeBand[]>([]);
+  const [childFrom, setChildFrom] = useState('');
+  const [commission, setCommission] = useState('');
+  const [lateHours, setLateHours] = useState('');
 
   useEffect(() => {
     const p = policyQuery.data;
     if (!p) return;
-    setHoldHours(p.optionHoldHours != null ? String(p.optionHoldHours) : '');
+    setHoldUnit(p.optionHoldMinutes != null ? 'minutes' : 'hours');
+    setHoldHours(p.optionHoldMinutes != null ? String(p.optionHoldMinutes) : p.optionHoldHours != null ? String(p.optionHoldHours) : '');
     setExpiry(p.optionExpiryAction ?? 'notify');
     setDeposit(p.depositPercentage != null ? String(p.depositPercentage) : '');
     setAutoSend(p.autoSendConfirmation);
     setBands(p.childAgeBands);
+    setChildFrom(p.packageChildFromAge != null ? String(p.packageChildFromAge) : '');
+    setCommission(p.commissionRatePercent != null ? String(p.commissionRatePercent) : '');
+    setLateHours(p.lateCancellationHours != null ? String(p.lateCancellationHours) : '');
   }, [policyQuery.data]);
 
   const bandsError = (() => {
@@ -40,13 +48,18 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
     if (sorted.some((b, i) => i > 0 && b.minAge <= sorted[i - 1]!.maxAge)) return t('policy.bandsOverlap');
     return null;
   })();
+  const holdError = holdUnit === 'minutes' && holdHours.trim() && (Number(holdHours) < 1 || Number(holdHours) > 90) ? t('policy.holdMinutesMax') : null;
 
   const save = useMutation({
     mutationFn: () => api.patch(`/v1/properties/${propertyId}/booking-policy`, {
-      optionHoldHours: holdHours.trim() ? Number(holdHours) : null,
+      optionHoldHours: holdUnit === 'hours' && holdHours.trim() ? Number(holdHours) : null,
+      optionHoldMinutes: holdUnit === 'minutes' && holdHours.trim() ? Number(holdHours) : null,
       optionExpiryAction: expiry,
       depositPercentage: deposit.trim() ? Number(deposit) : null,
       autoSendConfirmation: autoSend,
+      packageChildFromAge: childFrom.trim() ? Number(childFrom) : null,
+      commissionRatePercent: commission.trim() ? Number(commission) : null,
+      lateCancellationHours: lateHours.trim() ? Number(lateHours) : null,
       childAgeBands: bands.map((b) => ({ ...b, label: b.label.trim(), code: b.code || `child_${b.minAge}_${b.maxAge}` })),
     }).then((r) => r.data?.data ?? r.data),
     onSuccess: (policy) => {
@@ -69,8 +82,15 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <label className="block">
             <span className="label">{t('policy.holdHours')}</span>
-            <input className="field tabular-nums" inputMode="numeric" value={holdHours} placeholder={t('policy.noAutoDeadline')}
-              onChange={(e) => setHoldHours(e.target.value.replace(/\D/g, ''))} />
+            <div className="flex gap-2">
+              <input className="field tabular-nums" inputMode="numeric" value={holdHours} placeholder={t('policy.noAutoDeadline')}
+                onChange={(e) => setHoldHours(e.target.value.replace(/\D/g, ''))} />
+              <select className="field w-28 shrink-0" aria-label={t('policy.holdHours')} value={holdUnit} onChange={(e) => setHoldUnit(e.target.value as 'minutes' | 'hours')}>
+                <option value="minutes">{t('policy.holdUnitMinutes')}</option>
+                <option value="hours">{t('policy.holdUnitHours')}</option>
+              </select>
+            </div>
+            {holdError && <span role="alert" className="mt-1 block text-xs text-red-700">{holdError}</span>}
           </label>
           <label className="block">
             <span className="label">{t('policy.expiry')}</span>
@@ -90,6 +110,24 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
           <input type="checkbox" checked={autoSend} onChange={(e) => setAutoSend(e.target.checked)} />{t('policy.autoSend')}
         </label>
         <p className="text-xs text-telivity-mid-grey">{t('policy.sweepHint')}</p>
+      </section>
+
+      <section className="card space-y-4 p-6">
+        <div>
+          <h2 className="text-base font-semibold text-telivity-navy">{t('policy.moneyTitle')}</h2>
+          <p className="mt-1 text-sm text-telivity-mid-grey">{t('policy.moneyHint')}</p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <label className="block"><span className="label">{t('policy.packageChildFromAge')}</span>
+            <input className="field tabular-nums" inputMode="numeric" value={childFrom} placeholder={t('policy.everyChildCounts')}
+              onChange={(e) => setChildFrom(e.target.value.replace(/\D/g, '').slice(0, 2))} /></label>
+          <label className="block"><span className="label">{t('policy.commissionRate')}</span>
+            <input className="field tabular-nums" inputMode="decimal" value={commission} placeholder="10"
+              onChange={(e) => setCommission(e.target.value.replace(',', '.').replace(/[^\d.]/g, ''))} /></label>
+          <label className="block"><span className="label">{t('policy.lateCancellationHours')}</span>
+            <input className="field tabular-nums" inputMode="numeric" value={lateHours} placeholder="24"
+              onChange={(e) => setLateHours(e.target.value.replace(/\D/g, ''))} /></label>
+        </div>
       </section>
 
       <section className="card space-y-4 p-6">
@@ -126,7 +164,7 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
       </section>
 
       <div className="flex justify-end">
-        <button type="button" className="btn-primary btn-lg" disabled={!!bandsError || save.isPending || policyQuery.isPending} onClick={() => save.mutate()}>
+        <button type="button" className="btn-primary btn-lg" disabled={!!bandsError || !!holdError || save.isPending || policyQuery.isPending} onClick={() => save.mutate()}>
           {save.isPending ? t('common.saving') : t('common.save')}
         </button>
       </div>

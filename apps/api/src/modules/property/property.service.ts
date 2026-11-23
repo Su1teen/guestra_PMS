@@ -76,11 +76,15 @@ export class PropertyService {
       childAgeBands: normaliseBands(settings.childAgeBands),
       childAgeBandsConfigured: Array.isArray(settings.childAgeBands) && settings.childAgeBands.length > 0,
       optionHoldHours: settings.optionHoldHours ?? null,
+      optionHoldMinutes: settings.optionHoldMinutes ?? null,
       // Effective values: the hotel's own choice, else the platform defaults (50% prepayment, remind on expiry).
       optionExpiryAction: settings.optionExpiryAction ?? BOOKING_POLICY_DEFAULTS.optionExpiryAction,
       depositPercentage: settings.depositPercentage ?? BOOKING_POLICY_DEFAULTS.depositPercentage,
       defaults: BOOKING_POLICY_DEFAULTS,
       autoSendConfirmation: settings.autoSendConfirmation ?? true,
+      packageChildFromAge: settings.packageChildFromAge ?? null,
+      commissionRatePercent: settings.commissionRatePercent ?? null,
+      lateCancellationHours: settings.lateCancellationHours ?? null,
     };
   }
 
@@ -96,7 +100,7 @@ export class PropertyService {
     }
     const patch: Record<string, unknown> = {};
     const remove: string[] = [];
-    for (const key of ['childAgeBands', 'optionHoldHours', 'optionExpiryAction', 'depositPercentage', 'autoSendConfirmation'] as const) {
+    for (const key of ['childAgeBands', 'optionHoldHours', 'optionHoldMinutes', 'optionExpiryAction', 'depositPercentage', 'autoSendConfirmation', 'packageChildFromAge', 'commissionRatePercent', 'lateCancellationHours'] as const) {
       if (dto[key] === undefined) continue;
       if (dto[key] === null) remove.push(key);
       else patch[key] = key === 'childAgeBands' ? [...dto.childAgeBands!].sort((a, b) => a.minAge - b.minAge) : dto[key];
