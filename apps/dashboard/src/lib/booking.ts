@@ -14,6 +14,9 @@ export interface BookingPolicy {
   optionExpiryAction: 'cancel' | 'notify' | null;
   depositPercentage: number | null;
   autoSendConfirmation: boolean;
+  packageChildFromAge?: number | null;
+  commissionRatePercent?: number | null;
+  lateCancellationHours?: number | null;
   /** Platform defaults applied when the hotel has not chosen (50% prepayment, remind on expiry). */
   defaults?: { depositPercentage: number; optionExpiryAction: 'cancel' | 'notify' };
 }

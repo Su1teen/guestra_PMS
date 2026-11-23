@@ -8,20 +8,13 @@ import { FolioService } from '../folio/folio.service';
 import { PaymentService } from '../payment/payment.service';
 import { WebhookService } from '../webhook/webhook.service';
 import { ReservationService } from './reservation.service';
+import { zonedTimeToUtc } from '../../common/date/zoned-time';
 
 /** Statuses whose prepayment counts as received money; refunds and failed payments do not. */
 const RECEIVED = ['captured', 'settled', 'partially_refunded', 'refunded'];
 const DEFAULT_LATE_HOURS = 24;
 
-/** UTC instant of a wall-clock time in an IANA zone. */
-export function zonedTimeToUtc(date: string, time: string, timeZone: string): Date {
-  const guess = new Date(`${date}T${time.length === 5 ? time : '15:00'}:00Z`);
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit' }).formatToParts(guess);
-  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value);
-  const asLocal = Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute'), get('second'));
-  return new Date(guess.getTime() - (asLocal - guess.getTime()));
-}
+export { zonedTimeToUtc };
 
 export interface ReasonInput { reason: string }
 export interface RetainInput extends ReasonInput { amount?: string }
@@ -88,7 +81,8 @@ export class StayMoneyService {
     const hoursBefore = (arrival.getTime() - now.getTime()) / 3_600_000;
     const late = hoursBefore < limitHours;
     return { reservationId, status: money.row.status, arrivalAt: arrival.toISOString(), hoursBeforeArrival: Math.round(hoursBefore * 10) / 10,
-      lateCancellationHours: limitHours, late, paid: money.paid, refunded: money.refunded, retained: money.retained, available: money.available,
+      lateCancellationHours: limitHours, late, paid: money.paid,
+      payments: money.received.map((p: any) => ({ id: p.id, amount: p.amount, method: p.method, processedAt: p.processedAt ?? null })), refunded: money.refunded, retained: money.retained, available: money.available,
       suggestion: late && new Decimal(money.available).greaterThan(0) ? 'retain_prepayment' as const : new Decimal(money.available).greaterThan(0) ? 'refund_or_keep' as const : 'nothing_to_settle' as const };
   }
 

@@ -22,4 +22,10 @@ export class BookingPolicyDto {
   @ApiPropertyOptional({ description: 'Guarantee share of the stay total that confirms automatically; null = manual confirmation' })
   @IsOptional() @IsNumber() @Min(0) @Max(100) depositPercentage?: number | null;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() autoSendConfirmation?: boolean | null;
+  @ApiPropertyOptional({ description: 'Children from this age count as adults for per-guest package components; null = every child counts' })
+  @IsOptional() @IsInt() @Min(0) @Max(17) packageChildFromAge?: number | null;
+  @ApiPropertyOptional({ description: 'Manager commission on accommodation paid, percent; null = 10' })
+  @IsOptional() @IsNumber() @Min(0) @Max(100) commissionRatePercent?: number | null;
+  @ApiPropertyOptional({ description: 'A cancellation closer than this many hours to arrival suggests retaining the prepayment; null = 24' })
+  @IsOptional() @IsInt() @Min(0) @Max(24 * 30) lateCancellationHours?: number | null;
 }

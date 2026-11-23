@@ -9,6 +9,7 @@ import { ApiTags, ApiOperation, ApiQuery, ApiOkResponse } from '@nestjs/swagger'
 import { ConfigService } from '@nestjs/config';
 import { ReportsService } from './reports.service';
 import { ManagementInputsService } from './management-inputs.service';
+import { MoneyReportsService } from './money-reports.service';
 import { ManagementInputDto, ManagementReportQueryDto, ManagementOperationsQueryDto } from './dto/management-report.dto';
 import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
 import { PortfolioPropertyResolver } from './portfolio-property-resolver';
@@ -30,10 +31,33 @@ export class ReportsController {
     private readonly portfolioResolver: PortfolioPropertyResolver,
     private readonly configService: ConfigService,
     private readonly managementInputs: ManagementInputsService,
+    private readonly moneyReports: MoneyReportsService,
   ) {}
 
   private authOn(): boolean {
     return this.configService.get<string>('AUTH_ENABLED', 'true') !== 'false';
+  }
+
+  @Get('/money/day-by-day')
+  @ApiOperation({ summary: 'Money received per day by payment date (property time zone): prepayments, stay payments, penalties, refunds, with details' })
+  @ApiQuery({ name: 'propertyId', required: true }) @ApiQuery({ name: 'from', required: true }) @ApiQuery({ name: 'to', required: true })
+  moneyDayByDay(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Query('from') from: string, @Query('to') to: string) {
+    return this.moneyReports.dayByDay(propertyId, from, to);
+  }
+
+  @Get('/money/commission-base')
+  @ApiOperation({ summary: 'Accommodation paid in the period per stay and the commission at the property rate' })
+  @ApiQuery({ name: 'propertyId', required: true }) @ApiQuery({ name: 'from', required: true }) @ApiQuery({ name: 'to', required: true })
+  moneyCommissionBase(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Query('from') from: string, @Query('to') to: string) {
+    return this.moneyReports.commissionBase(propertyId, from, to);
+  }
+
+  @Get('/money/management')
+  @RequirePermissions('reports.view', 'management_dashboard.view')
+  @ApiOperation({ summary: 'Revenue by category, cost of included services, entered expenses and result with plan and previous period' })
+  @ApiQuery({ name: 'propertyId', required: true }) @ApiQuery({ name: 'from', required: true }) @ApiQuery({ name: 'to', required: true })
+  moneyManagement(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Query('from') from: string, @Query('to') to: string) {
+    return this.moneyReports.management(propertyId, from, to);
   }
 
   @Get('/management-report')

@@ -1,3 +1,5 @@
+import { CrmReportsController } from './crm-reports.controller';
+import { ReportsModule } from '../reports/reports.module';
 import { Module } from '@nestjs/common';
 import { CredentialAdminGuard } from '../auth/credential-admin.guard';
 import { ConnectReadinessController } from './connect-readiness.controller';
@@ -36,8 +38,8 @@ import { EmailModule } from '../agent/guest-comms/email.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule, GuestInboxModule, EmailModule, NotificationsModule],
-  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController, ReservationChatController],
+  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule, GuestInboxModule, EmailModule, NotificationsModule, ReportsModule],
+  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController, CrmReportsController, ReservationChatController],
   providers: [
     CredentialAdminGuard,
     ConnectV2Service, ConnectV2Guard, ConnectInboxService, ConnectSandboxService, ReservationChatService,

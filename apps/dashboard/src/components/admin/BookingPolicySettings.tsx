@@ -24,6 +24,9 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
   const [deposit, setDeposit] = useState('');
   const [autoSend, setAutoSend] = useState(true);
   const [bands, setBands] = useState<ChildAgeBand[]>([]);
+  const [childFrom, setChildFrom] = useState('');
+  const [commission, setCommission] = useState('');
+  const [lateHours, setLateHours] = useState('');
 
   useEffect(() => {
     const p = policyQuery.data;
@@ -34,6 +37,9 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
     setDeposit(p.depositPercentage != null ? String(p.depositPercentage) : '');
     setAutoSend(p.autoSendConfirmation);
     setBands(p.childAgeBands);
+    setChildFrom(p.packageChildFromAge != null ? String(p.packageChildFromAge) : '');
+    setCommission(p.commissionRatePercent != null ? String(p.commissionRatePercent) : '');
+    setLateHours(p.lateCancellationHours != null ? String(p.lateCancellationHours) : '');
   }, [policyQuery.data]);
 
   const bandsError = (() => {
@@ -51,6 +57,9 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
       optionExpiryAction: expiry,
       depositPercentage: deposit.trim() ? Number(deposit) : null,
       autoSendConfirmation: autoSend,
+      packageChildFromAge: childFrom.trim() ? Number(childFrom) : null,
+      commissionRatePercent: commission.trim() ? Number(commission) : null,
+      lateCancellationHours: lateHours.trim() ? Number(lateHours) : null,
       childAgeBands: bands.map((b) => ({ ...b, label: b.label.trim(), code: b.code || `child_${b.minAge}_${b.maxAge}` })),
     }).then((r) => r.data?.data ?? r.data),
     onSuccess: (policy) => {
@@ -101,6 +110,24 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
           <input type="checkbox" checked={autoSend} onChange={(e) => setAutoSend(e.target.checked)} />{t('policy.autoSend')}
         </label>
         <p className="text-xs text-telivity-mid-grey">{t('policy.sweepHint')}</p>
+      </section>
+
+      <section className="card space-y-4 p-6">
+        <div>
+          <h2 className="text-base font-semibold text-telivity-navy">{t('policy.moneyTitle')}</h2>
+          <p className="mt-1 text-sm text-telivity-mid-grey">{t('policy.moneyHint')}</p>
+        </div>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <label className="block"><span className="label">{t('policy.packageChildFromAge')}</span>
+            <input className="field tabular-nums" inputMode="numeric" value={childFrom} placeholder={t('policy.everyChildCounts')}
+              onChange={(e) => setChildFrom(e.target.value.replace(/\D/g, '').slice(0, 2))} /></label>
+          <label className="block"><span className="label">{t('policy.commissionRate')}</span>
+            <input className="field tabular-nums" inputMode="decimal" value={commission} placeholder="10"
+              onChange={(e) => setCommission(e.target.value.replace(',', '.').replace(/[^\d.]/g, ''))} /></label>
+          <label className="block"><span className="label">{t('policy.lateCancellationHours')}</span>
+            <input className="field tabular-nums" inputMode="numeric" value={lateHours} placeholder="24"
+              onChange={(e) => setLateHours(e.target.value.replace(/\D/g, ''))} /></label>
+        </div>
       </section>
 
       <section className="card space-y-4 p-6">

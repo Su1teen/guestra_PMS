@@ -82,6 +82,9 @@ export class PropertyService {
       depositPercentage: settings.depositPercentage ?? BOOKING_POLICY_DEFAULTS.depositPercentage,
       defaults: BOOKING_POLICY_DEFAULTS,
       autoSendConfirmation: settings.autoSendConfirmation ?? true,
+      packageChildFromAge: settings.packageChildFromAge ?? null,
+      commissionRatePercent: settings.commissionRatePercent ?? null,
+      lateCancellationHours: settings.lateCancellationHours ?? null,
     };
   }
 
@@ -97,7 +100,7 @@ export class PropertyService {
     }
     const patch: Record<string, unknown> = {};
     const remove: string[] = [];
-    for (const key of ['childAgeBands', 'optionHoldHours', 'optionHoldMinutes', 'optionExpiryAction', 'depositPercentage', 'autoSendConfirmation'] as const) {
+    for (const key of ['childAgeBands', 'optionHoldHours', 'optionHoldMinutes', 'optionExpiryAction', 'depositPercentage', 'autoSendConfirmation', 'packageChildFromAge', 'commissionRatePercent', 'lateCancellationHours'] as const) {
       if (dto[key] === undefined) continue;
       if (dto[key] === null) remove.push(key);
       else patch[key] = key === 'childAgeBands' ? [...dto.childAgeBands!].sort((a, b) => a.minAge - b.minAge) : dto[key];
