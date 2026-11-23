@@ -49,6 +49,8 @@ import { resolvePropertyId } from '../../common/property-id';
 import { AuditActorCtx, type AuditActor } from '../../common/audit/audit-actor';
 import { RevenueAllocationService } from './revenue-allocation.service';
 import { StayMoneyService } from './stay-money.service';
+import { ReservationAdjustmentsService } from './reservation-adjustments.service';
+import { CorrectClosedReservationDto, SetPriceTypeDto } from './dto/reservation-adjustments.dto';
 import { StayReasonDto, StayRefundDto, StayRetainDto } from './dto/stay-money.dto';
 import { ReservationPricingService } from './reservation-pricing.service';
 import { ReservationConfirmationService } from './reservation-confirmation.service';
@@ -81,6 +83,7 @@ export class ReservationController {
     private readonly guaranteeService: ReservationGuaranteeService,
     private readonly revenueAllocation: RevenueAllocationService,
     private readonly stayMoney: StayMoneyService,
+    private readonly adjustments: ReservationAdjustmentsService,
   ) {}
 
   // --- Action routes BEFORE :id to avoid conflicts ---
@@ -324,6 +327,22 @@ export class ReservationController {
   ) {
     const result = await this.reservationService.modify(id, propertyId, dto);
     return result.reservation;
+  }
+
+  @Post(':id/price-type')
+  @RequirePermissions('reservations.price_type')
+  @ApiOperation({ summary: 'Set complimentary / barter / chef / marketing price type with reason and counterparty (audited)' })
+  setPriceType(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: SetPriceTypeDto, @AuditActorCtx() actor: AuditActor) {
+    return this.adjustments.setPriceType(id, propertyId, dto, actor);
+  }
+
+  @Post(':id/correct-closed')
+  @RequirePermissions('reservations.correct_closed')
+  @ApiOperation({ summary: 'Correct a checked-out, cancelled or no-show reservation: limited fields, reason, audit' })
+  correctClosed(@Param('id', ParseUUIDPipe) id: string, @Query('propertyId', ParseUUIDPipe) propertyId: string,
+    @Body() dto: CorrectClosedReservationDto, @AuditActorCtx() actor: AuditActor) {
+    return this.adjustments.correctClosed(id, propertyId, dto, actor);
   }
 
   // --- Lifecycle transition routes ---

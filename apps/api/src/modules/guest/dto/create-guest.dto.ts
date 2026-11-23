@@ -134,6 +134,17 @@ export class CreateGuestDto {
   @IsEnum(['none', 'silver', 'gold', 'platinum', 'diamond'])
   vipLevel?: string;
 
+  @ApiPropertyOptional({ enum: ['regular', 'returning', 'vip'], default: 'regular', description: 'Hotel guest level; privileges are never an automatic discount' })
+  @IsOptional()
+  @IsEnum(['regular', 'returning', 'vip'])
+  guestTier?: string;
+
+  @ApiPropertyOptional({ description: 'Privileges of the guest, as text for staff' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  privileges?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

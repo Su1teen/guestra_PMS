@@ -30,6 +30,8 @@ import { useGuestQuickView } from '../components/guests/GuestQuickView';
 import Guest360Panel from '../components/guests/Guest360Panel';
 import type { Guest } from '../types/guest';
 
+export const GUEST_TIER_LABELS: Record<string, string> = { regular: 'Обычный', returning: 'Постоянный', vip: 'VIP' };
+
 function guestListSearchParams(term: string): { search?: string; loyaltyNumber?: string } {
   const trimmed = term.trim();
   if (!trimmed) return {};
@@ -46,6 +48,7 @@ function GuestList() {
   const { propertyId } = useProperty();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
+  const [roomNumber, setRoomNumber] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
 
   const { data: propertyData } = useQuery({
@@ -62,10 +65,10 @@ function GuestList() {
     property?.settings?.minorGuardianIdentificationRequired !== false;
 
   const { data } = useQuery({
-    queryKey: ['guests', propertyId, searchTerm],
+    queryKey: ['guests', propertyId, searchTerm, roomNumber],
     queryFn: () =>
       api
-        .get('/v1/guests', { params: { propertyId, ...guestListSearchParams(searchTerm) } })
+        .get('/v1/guests', { params: { propertyId, ...guestListSearchParams(searchTerm), ...(roomNumber.trim() ? { roomNumber: roomNumber.trim() } : {}) } })
         .then((r) => r.data),
     enabled: !!propertyId,
   });
@@ -99,6 +102,16 @@ function GuestList() {
             placeholder={t('guests.searchPlaceholder')}
             className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-telivity-teal"
           />
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <input
+            aria-label="Номер комнаты"
+            value={roomNumber}
+            onChange={(e) => setRoomNumber(e.target.value)}
+            placeholder="Номер комнаты (гость сейчас проживает)"
+            className="w-64 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:border-telivity-teal"
+          />
+          {roomNumber.trim() && <p role="status" className="text-xs text-amber-800">Номер комнаты — только подсказка: сверьте документ гостя перед действием.</p>}
         </div>
       </div>
 
@@ -147,6 +160,7 @@ function GuestList() {
                   <td className="px-4 py-3 text-sm text-telivity-slate font-mono">{g.taxId ? (isBR ? formatCpf(g.taxId) : g.taxId) : (g.idNumber ?? '—')}</td>
                   <td className="px-4 py-3">
                     {g.vipLevel && g.vipLevel !== 'none' ? <StatusBadge status={g.vipLevel} /> : <span className="text-sm text-telivity-mid-grey">—</span>}
+                    {g.guestTier && g.guestTier !== 'regular' && <span className="ml-1 rounded bg-violet-50 px-1.5 py-0.5 text-xs font-semibold text-violet-800">{GUEST_TIER_LABELS[g.guestTier] ?? g.guestTier}</span>}
                   </td>
                   <td className="px-4 py-3 text-sm text-telivity-slate">{g.loyaltyNumber ?? '—'}</td>
                   {isBR && (
@@ -239,6 +253,8 @@ function GuestDetail() {
   const [countryCode, setCountryCode] = useState(defaultCountry);
 
   const [vipLevel, setVipLevel] = useState('none');
+  const [guestTier, setGuestTier] = useState('regular');
+  const [privileges, setPrivileges] = useState('');
   const [loyaltyNumber, setLoyaltyNumber] = useState('');
   const [companyName, setCompanyName] = useState('');
   const [notes, setNotes] = useState('');
@@ -284,6 +300,8 @@ function GuestDetail() {
         postalCode: postalCode || undefined,
         countryCode: countryCode || undefined,
         vipLevel: vipLevel !== 'none' ? vipLevel : undefined,
+        guestTier,
+        privileges: privileges.trim() || undefined,
         loyaltyNumber: loyaltyNumber || undefined,
         companyName: companyName || undefined,
         notes: notes || undefined,
@@ -358,6 +376,8 @@ function GuestDetail() {
     setCountryCode(guest.countryCode ?? defaultCountry);
 
     setVipLevel(guest.vipLevel ?? 'none');
+    setGuestTier(guest.guestTier ?? 'regular');
+    setPrivileges(guest.privileges ?? '');
     setLoyaltyNumber(guest.loyaltyNumber ?? '');
     setCompanyName(guest.companyName ?? '');
     setNotes(guest.notes ?? '');
@@ -525,6 +545,12 @@ function GuestDetail() {
                   </select>
                   <input type="text" value={loyaltyNumber} onChange={(e) => setLoyaltyNumber(e.target.value)} placeholder={t('guests.loyaltyNumber')} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal bg-white" />
                 </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <select aria-label="Статус гостя" value={guestTier} onChange={(e) => setGuestTier(e.target.value)} className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal bg-white">
+                    {Object.entries(GUEST_TIER_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                  </select>
+                  <input type="text" aria-label="Привилегии" maxLength={500} value={privileges} onChange={(e) => setPrivileges(e.target.value)} placeholder="Привилегии (только описание, цену не меняет)" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal bg-white" />
+                </div>
                 <input type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder={t('guests.company')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal bg-white" />
                 <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder={t('guests.placeholders.notes')} className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-telivity-teal bg-white" />
                 <label className="flex items-center gap-2 text-xs text-telivity-navy">
@@ -620,6 +646,8 @@ function GuestDetail() {
                 </h3>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-2">
                   <DetailRow label={t('guests.vipLevel')} value={guest.vipLevel ?? t('guests.none')} />
+                  <DetailRow label="Статус гостя" value={GUEST_TIER_LABELS[guest.guestTier ?? 'regular'] ?? guest.guestTier ?? '—'} />
+                  <DetailRow label="Привилегии" value={guest.privileges ?? '—'} />
                   <DetailRow label={t('guests.loyaltyNumber')} value={guest.loyaltyNumber ?? '—'} />
                   <DetailRow label={t('guests.company')} value={guest.companyName ?? '—'} />
                   <DetailRow label={t('guests.consentLabel')} value={guest.gdprConsentMarketing ? t('guests.consentAuthorized') : t('guests.consentUnauthorized')} />

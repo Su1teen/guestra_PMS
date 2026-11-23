@@ -11,6 +11,7 @@ function service(facts: any) {
   const svc = new MoneyReportsService({} as any);
   vi.spyOn(svc as any, 'facts').mockResolvedValue({ tz: 'Asia/Almaty', property: { name: 'LES Borovoe', currencyCode: 'KZT', settings: {} }, splits: split,
     penalties: [], newBookings: [], ...facts });
+  vi.spyOn(svc as any, 'freeStays').mockResolvedValue({ rows: [], nights: 0, stays: 0, cost: new Decimal(0) });
   return svc;
 }
 
@@ -68,5 +69,16 @@ describe('MoneyReportsService', () => {
     expect(report.cost.fact).toBe(8000);
     expect(report.result.fact).toBeNull();
     expect(report.expensesFilled).toBe(false);
+  });
+
+  it('complimentary and barter stays: no revenue and no commission, but nights and cost count', async () => {
+    const comp = stay({ id: 'r1', priceType: 'complimentary' });
+    const svc = service({ days: ['2027-02-14'], items: [{ id: 'p1', date: '2027-02-14', amount: new Decimal(100000), refund: false, stay: comp, method: 'cash' }] });
+    expect((await svc.commissionBase('p', '2027-02-14', '2027-02-14')).rows).toEqual([]);
+    vi.mocked((svc as any).freeStays).mockResolvedValue({ rows: [{ id: 'r1', priceType: 'complimentary', nights: 1, cost: new Decimal(8000) }], nights: 1, stays: 1, cost: new Decimal(8000) });
+    vi.spyOn(svc as any, 'inputs').mockResolvedValue({ budget: null, expenses: null });
+    const report = await svc.management('p', '2027-02-14', '2027-02-14');
+    expect(report.complimentary).toEqual({ stays: 1, nights: 1, cost: 8000, previousNights: 1 });
+    expect(report.cost.fact).toBe(16000);
   });
 });

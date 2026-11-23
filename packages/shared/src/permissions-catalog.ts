@@ -23,6 +23,8 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { key: 'frontdesk.access', label: 'Use front desk', group: 'Front Desk', navKey: '/front-desk' },
   { key: 'reservations.read', label: 'View reservations', group: 'Reservations', navKey: '/reservations' },
   { key: 'reservations.write', label: 'Create / modify reservations', group: 'Reservations' },
+  { key: 'reservations.price_type', label: 'Set complimentary / barter / internal price type', group: 'Reservations' },
+  { key: 'reservations.correct_closed', label: 'Correct a checked-out, cancelled or no-show reservation', group: 'Reservations' },
   { key: 'guests.read', label: 'View guests', group: 'Guests', navKey: '/guests' },
   { key: 'guests.write', label: 'Create / modify guests', group: 'Guests' },
   { key: 'rooms.read', label: 'View rooms', group: 'Rooms', navKey: '/rooms' },

@@ -21,6 +21,13 @@ export class CrmSyncController {
     return this.sync.snapshot(propertyId, id);
   }
 
+  @Get('guests/:customerId/history') @ServiceCapability('integration.read')
+  @ApiOperation({ summary: 'Stays of a linked CRM customer at this property (newest first)' })
+  guestHistory(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Param('customerId') customerId: string) {
+    if (!/^[\w:.-]{1,200}$/.test(customerId)) throw new BadRequestException('INVALID_CUSTOMER_ID');
+    return this.sync.guestHistory(propertyId, customerId);
+  }
+
   @Get('resolve/:type/:id') @ServiceCapability('integration.read') @ApiOperation({ summary: 'Resolve a domain event entity to its stay snapshot' })
   resolve(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Param('type') type: string, @Param('id', ParseUUIDPipe) id: string) {
     if (!ENTITY_TYPES.includes(type)) throw new BadRequestException('UNSUPPORTED_ENTITY');

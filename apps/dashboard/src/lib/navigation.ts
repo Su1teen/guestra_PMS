@@ -37,6 +37,7 @@ export const NAVIGATION: NavigationSection[] = [
     { to: '/revenue', icon: TrendingUp, labelKey: 'nav.revenueManagement', permission: 'revenue.manage' },
     { to: '/dynamic-pricing', icon: Gauge, labelKey: 'nav.dynamicPricing', permission: 'revenue.manage' },
     { to: '/rate-plans', icon: BadgeDollarSign, labelKey: 'nav.ratePlans', permission: 'rateplans.read' },
+    { to: '/price-calendar', icon: CalendarDays, labelKey: 'nav.priceCalendar', permission: 'rateplans.read' },
   ] },
   { labelKey: 'navigation.finance', items: [
     { to: '/reports/management', icon: TrendingUp, labelKey: 'nav.managementReport', permission: 'reports.view' },

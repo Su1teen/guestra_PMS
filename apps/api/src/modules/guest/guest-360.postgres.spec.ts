@@ -7,7 +7,7 @@ import request from 'supertest';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { eq } from 'drizzle-orm';
-import { guests, properties, guestPropertyLinks, auditLogs, services, serviceBookings, users, roles, userRoles, rolePermissions } from '@telivityhaip/database';
+import { guests, properties, guestPropertyLinks, auditLogs, services, serviceBookings, users, roles, userRoles, rolePermissions, roomTypes, rooms, ratePlans, bookings, reservations } from '@telivityhaip/database';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import { PermissionsService } from '../auth/permissions.service';
@@ -113,6 +113,28 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Guest 360 HTTP on the core Post
     expect(response.body.summary.totalStays).toBe(0);
     expect(response.body.timeline).toHaveLength(1);
     expect(response.body.timeline[0].action).toBe('create');
+  });
+
+  it('finds a guest by room number only with an active stay at this property, and asks to check the document', async () => {
+    // Own property: the stays below are kept apart from the shared fixture so its cleanup stays valid.
+    const hotel = randomUUID(), typeId = randomUUID(), rateId = randomUUID(), inHouse = randomUUID(), departed = randomUUID();
+    await db.insert(properties).values({ id: hotel, name: 'Room search', code: 'RS-' + hotel.slice(0, 8), countryCode: 'KZ', timezone: 'Asia/Almaty', currencyCode: 'KZT', totalRooms: 2 });
+    await db.insert(roomTypes).values({ id: typeId, propertyId: hotel, name: 'Шале', code: 'CH', maxOccupancy: 2, defaultOccupancy: 2 });
+    const [r101, r102] = await db.insert(rooms).values([{ propertyId: hotel, roomTypeId: typeId, number: '101' }, { propertyId: hotel, roomTypeId: typeId, number: '102' }]).returning();
+    await db.insert(ratePlans).values({ id: rateId, propertyId: hotel, roomTypeId: typeId, name: 'База', code: 'BAR', type: 'bar', baseAmount: '500.00', currencyCode: 'KZT' });
+    await db.insert(guests).values([{ id: inHouse, firstName: 'Проживает', lastName: 'Сейчас' }, { id: departed, firstName: 'Уже', lastName: 'Выехал' }]);
+    for (const [guest, room, status] of [[inHouse, r101!.id, 'checked_in'], [departed, r102!.id, 'checked_out']] as const) {
+      const bookingId = randomUUID();
+      await db.insert(bookings).values({ id: bookingId, propertyId: hotel, guestId: guest, confirmationNumber: 'RS-' + bookingId, source: 'direct' });
+      await db.insert(reservations).values({ bookingId, propertyId: hotel, guestId: guest, roomTypeId: typeId, ratePlanId: rateId, roomId: room,
+        arrivalDate: '2027-01-01', departureDate: '2027-01-03', nights: 2, totalAmount: '1000.00', currencyCode: 'KZT', status });
+    }
+    const guestsService = new GuestService(db as any);
+    const found = await guestsService.search(hotel, { roomNumber: '101' } as any);
+    expect(found.data.map((g: any) => g.id)).toEqual([inHouse]);
+    expect(found.verifyDocument).toBe(true);
+    expect((await guestsService.search(hotel, { roomNumber: '102' } as any)).data).toEqual([]);
+    expect((await guestsService.search(propertyId, { roomNumber: '101' } as any)).data).toEqual([]);
   });
 
   it('does not expose a guest to an unrelated property', async () => {

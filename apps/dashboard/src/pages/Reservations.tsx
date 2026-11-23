@@ -11,7 +11,7 @@ import {
   type ColumnDef,
   type SortingState,
 } from '@tanstack/react-table';
-import { CalendarDays, Plus, ChevronLeft, ChevronRight, Users, Clock3, AlertCircle, ArrowUpDown, X, MoreHorizontal, Eye, Pencil, Ban, DoorOpen, LogIn, LogOut, Upload, UserX, Check } from 'lucide-react';
+import { CalendarDays, Plus, ChevronLeft, ChevronRight, Users, Clock3, AlertCircle, ArrowUpDown, X, MoreHorizontal, Eye, Pencil, Ban, DoorOpen, LogIn, LogOut, Upload, UserX, Check, Wrench, History } from 'lucide-react';
 import { format, addDays, eachDayOfInterval } from 'date-fns';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
@@ -735,6 +735,11 @@ function AvailabilityCalendar() {
   const [accessibleOnly, setAccessibleOnly] = useState(false);
   const [priceMode, setPriceMode] = useState(false); const [previewRatePlan, setPreviewRatePlan] = useState('');
   const [dayCount, setDayCount] = useState(14);
+  // «История»: closed stays drawn read-only under the live ones; they never occupy a room.
+  const [showHistory, setShowHistory] = useState(false);
+  // Ticks the tentative-booking countdown without refetching the chart.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
   const [search, setSearch] = useState('');
   const [roomTypeFilter, setRoomTypeFilter] = useState('');
   const days = eachDayOfInterval({ start: startDate, end: addDays(startDate, dayCount - 1) });
@@ -754,8 +759,8 @@ function AvailabilityCalendar() {
   useEffect(() => () => { if (hoverTimer.current) window.clearTimeout(hoverTimer.current); }, []);
 
   const calendarQuery = useQuery({
-    queryKey: ['reservations', 'calendar', propertyId, dayKeys[0], dayCount],
-    queryFn: () => api.get('/v1/reservations/calendar', { params: { propertyId, checkIn: dayKeys[0], checkOut: format(addDays(startDate, dayCount), 'yyyy-MM-dd') }, skipErrorToast: true }).then(r => r.data?.data ?? r.data),
+    queryKey: ['reservations', 'calendar', propertyId, dayKeys[0], dayCount, showHistory],
+    queryFn: () => api.get('/v1/reservations/calendar', { params: { propertyId, checkIn: dayKeys[0], checkOut: format(addDays(startDate, dayCount), 'yyyy-MM-dd'), ...(showHistory ? { includeHistory: true } : {}) }, skipErrorToast: true }).then(r => r.data?.data ?? r.data),
     enabled: !!propertyId && hasPermission('reservations.read', 'rooms.read'),
   });
   const ledgerQuery = useQuery({ queryKey: ['calendar-ledger', propertyId, dayKeys[0], dayCount], enabled: !!propertyId && hasPermission('folios.read'), queryFn: () => api.get('/v1/reservations/calendar-ledger', { params: { propertyId, checkIn: dayKeys[0], checkOut: format(addDays(startDate, dayCount), 'yyyy-MM-dd') }, skipErrorToast: true }).then(r => r.data?.data ?? r.data) });
@@ -765,6 +770,13 @@ function AvailabilityCalendar() {
   const rooms: TapeRoom[] = calendarQuery.data?.rooms ?? [];
   const roomTypes: { id: string; name: string }[] = calendarQuery.data?.roomTypes ?? [];
   const reservations: Reservation[] = calendarQuery.data?.reservations ?? [];
+  const historyStays: Reservation[] = showHistory ? calendarQuery.data?.history ?? [] : [];
+  const historyByRoom = useMemo(() => {
+    const map = new Map<string, Reservation[]>();
+    for (const stay of historyStays) if (stay.roomId) map.set(stay.roomId, [...(map.get(stay.roomId) ?? []), stay]);
+    return map;
+  }, [historyStays]);
+  const todayIndex = dayKeys.indexOf(todayKey);
   const blocks: { roomTypeId: string; startDate: string; endDate: string }[] = calendarQuery.data?.blocks ?? [];
   const inventoryBlocks: Array<{id:string;roomId:string;startDate:string;endDate:string;kind:string;reason:string;overdue:boolean}> = calendarQuery.data?.inventoryBlocks ?? [];
   const inventoryByRoom=useMemo(()=>{
@@ -803,8 +815,10 @@ function AvailabilityCalendar() {
    * off the chart every morning.
    */
   const cellState = useCallback(
-    (room: TapeRoom, date: string): 'booked' | 'blocked' | 'dirty' | 'free' => {
+    (room: TapeRoom, date: string): 'booked' | 'blocked' | 'dirty' | 'free' | 'ooo' | 'oos' => {
       if (getResForCell(room.id, date)) return 'booked';
+      if (room.status === 'out_of_order') return 'ooo';
+      if (room.status === 'out_of_service') return 'oos';
       if ((availabilityByNight.get(room.roomTypeId + ':' + date) ?? Infinity) <= 0) return 'blocked';
       if (room.status && UNSELLABLE_ROOM_STATUSES.includes(room.status)) return 'blocked';
       if (inventoryByRoom.get(room.id)?.some(block => block.startDate <= date)) return 'blocked';
@@ -912,6 +926,7 @@ function AvailabilityCalendar() {
         <select value={roomTypeFilter} onChange={(e) => setRoomTypeFilter(e.target.value)} aria-label={t('reservations.roomType')} className="field w-auto"><option value="">{t('reservationWorkspace.allTypes')}</option>{roomTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}</select>
         <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} aria-label={t('reservations.status')} className="field w-auto"><option value="">{t('reservationWorkspace.allStatuses')}</option>{['pending','confirmed','assigned','checked_in','stayover','due_out'].map(s => <option key={s} value={s}>{t('reservations.statuses.' + s)}</option>)}</select>
         <label className="flex h-9 items-center gap-2 px-1 text-sm text-telivity-slate"><input type="checkbox" checked={accessibleOnly} onChange={e => setAccessibleOnly(e.target.checked)}/>{t('reservationWorkspace.accessible')}</label>
+        <label className="flex h-9 items-center gap-2 px-1 text-sm text-telivity-slate"><input type="checkbox" checked={showHistory} onChange={e => setShowHistory(e.target.checked)}/><History size={14} aria-hidden/>{t('reservations.tape.history', { defaultValue: 'История' })}</label>
         {hasPermission('rateplans.read') && <label className="flex h-9 items-center gap-2 px-1 text-sm text-telivity-slate"><input type="checkbox" checked={priceMode} onChange={e => setPriceMode(e.target.checked)}/>{t('reservationWorkspace.priceMode')}</label>}
         {hasPermission('rateplans.read') && priceMode && <><select value={previewRatePlan} onChange={e => setPreviewRatePlan(e.target.value)} aria-label={t('reservations.ratePlan')} className="field w-auto"><option value="">{t('reservations.tape.selectRatePlan')}</option>{(plansQuery.data ?? []).map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}</select><p className="text-xs text-telivity-mid-grey">{t('reservationWorkspace.pricePreview')}</p></>}
       </div>
@@ -927,6 +942,9 @@ function AvailabilityCalendar() {
         <LegendSwatch className="border border-emerald-400 bg-emerald-50" label={t('booking.legend.inhouse')} />
         <LegendSwatch className="border border-violet-300 bg-violet-50" label={t('booking.legend.departing')} />
         <LegendSwatch className="bg-orange-100" label={t('reservations.tape.legendBlocked')} />
+        <span className="inline-flex items-center gap-1.5"><span className="inline-flex h-3 w-6 items-center justify-center rounded-sm bg-gray-300"><Wrench size={9} aria-hidden/></span>{t('reservations.tape.legendOutOfOrder', { defaultValue: 'Ремонт' })}</span>
+        <span className="inline-flex items-center gap-1.5"><span className="inline-flex h-3 w-6 items-center justify-center rounded-sm bg-gray-200"><Ban size={9} aria-hidden/></span>{t('reservations.tape.legendOutOfService', { defaultValue: 'Не работает' })}</span>
+        {showHistory && <LegendSwatch className="border border-dashed border-gray-400 bg-gray-50 opacity-70" label={t('reservations.tape.legendHistory', { defaultValue: 'История: только просмотр, номер не занимает' })} />}
         <LegendSwatch className="bg-yellow-100" label={t('reservations.tape.legendDirty')} />
         <LegendSwatch className="bg-telivity-teal/40" label={t('reservations.tape.legendSelecting')} />
       </div>
@@ -936,10 +954,11 @@ function AvailabilityCalendar() {
           <thead className="sticky top-0 z-20 bg-white">
             <tr className="bg-telivity-teal/5 border-b border-gray-100">
               <th className="px-3 py-2 text-left text-xs font-semibold text-telivity-slate w-40 sticky left-0 bg-white z-30">{t('reservations.room')}</th>
-              {days.map((d) => (
-                <th key={d.toISOString()} className="px-1 py-2 text-center text-xs font-medium text-telivity-slate min-w-[60px]">
+              {days.map((d, index) => (
+                <th key={d.toISOString()} className={'px-1 py-2 text-center text-xs font-medium min-w-[60px] ' + (index === todayIndex ? 'bg-red-50 text-red-700' : 'text-telivity-slate')}
+                  aria-current={index === todayIndex ? 'date' : undefined}>
                   <div>{format(d, 'EEE', { locale: dateLocale })}</div>
-                  <div className="text-telivity-mid-grey">{format(d, 'd MMM', { locale: dateLocale })}</div>
+                  <div className={index === todayIndex ? 'font-semibold' : 'text-telivity-mid-grey'}>{index === todayIndex ? t('reservations.today') : format(d, 'd MMM', { locale: dateLocale })}</div>
                 </th>
               ))}
             </tr>
@@ -951,24 +970,41 @@ function AvailabilityCalendar() {
             </tr>)}
             {visibleRooms.map((room, i) => (
               <tr key={room.id} className={`border-b border-gray-50 ${i % 2 === 1 ? 'bg-gray-50/30' : ''}`}>
-                <td className="px-3 py-2 text-xs font-medium text-telivity-navy sticky left-0 bg-white">{room.number}<div className="mt-1 text-[12px] text-telivity-mid-grey">{roomTypes.find((rt) => rt.id === room.roomTypeId)?.name}</div></td>
-                <td colSpan={dayCount} className="p-0"><div className="relative h-20">
+                <td className="px-3 py-2 text-xs font-medium text-telivity-navy sticky left-0 bg-white">{room.number}
+                  {room.status === 'out_of_order' && <span className="ml-1 inline-flex items-center gap-0.5 rounded bg-gray-300 px-1 text-[10px] text-gray-800"><Wrench size={10} aria-hidden/>{t('reservations.tape.legendOutOfOrder', { defaultValue: 'Ремонт' })}</span>}
+                  {room.status === 'out_of_service' && <span className="ml-1 inline-flex items-center gap-0.5 rounded bg-gray-200 px-1 text-[10px] text-gray-700"><Ban size={10} aria-hidden/>{t('reservations.tape.legendOutOfService', { defaultValue: 'Не работает' })}</span>}
+                  <div className="mt-1 text-[12px] text-telivity-mid-grey">{roomTypes.find((rt) => rt.id === room.roomTypeId)?.name}</div></td>
+                <td colSpan={dayCount} className="p-0"><div className={'relative ' + (showHistory ? 'h-24' : 'h-20')}>
                   <div className="grid h-full" style={{ gridTemplateColumns: 'repeat(' + dayCount + ', minmax(60px, 1fr))' }}>{dayKeys.map(date => {
                     const state = cellState(room, date); const free = state === 'free' && !calendarQuery.isFetching && calendarQuery.data?.complete === true && hasPermission('reservations.write', 'rateplans.read');
                     return <button key={date} disabled={!free} aria-label={t('reservationWorkspace.selectNight', { room: room.number, date })}
                       onMouseDown={e => { if (free) { e.preventDefault(); setDrag({ roomId: room.id, anchor: date, hovered: date }); } }}
                       onMouseEnter={() => { if (drag?.roomId === room.id && date >= drag.anchor) setDrag({ ...drag, hovered: date }); }}
                       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setPrefill({ roomId: room.id, roomNumber: room.number, roomTypeId: room.roomTypeId ?? '', checkInDate: date, checkOutDate: format(addDays(new Date(date + 'T00:00:00'), 1), 'yyyy-MM-dd') }); } }}
-                      className={'h-full border-r border-gray-100 ' + (isSelected(room.id, date) ? 'bg-telivity-teal/50' : state === 'blocked' ? 'bg-orange-100' : state === 'dirty' ? 'bg-yellow-100' : 'hover:bg-primary-50')}
-                      title={state === 'blocked' ? t('reservations.tape.legendBlocked') : state === 'dirty' ? t('reservations.tape.legendDirty') : date}>{priceMode && pricesQuery.data?.roomTypeId === room.roomTypeId && <span className="block pt-14 text-[12px] font-medium text-gray-600">{formatMoney(pricesQuery.data.prices.find((p: any) => p.date === date)?.totalAmount, currencyCode)}</span>}</button>
+                      className={'h-full border-r border-gray-100 ' + (isSelected(room.id, date) ? 'bg-telivity-teal/50' : state === 'ooo' ? 'bg-gray-300' : state === 'oos' ? 'bg-gray-200' : state === 'blocked' ? 'bg-orange-100' : state === 'dirty' ? 'bg-yellow-100' : 'hover:bg-primary-50')}
+                      title={state === 'ooo' ? t('reservations.tape.legendOutOfOrder', { defaultValue: 'Ремонт' }) : state === 'oos' ? t('reservations.tape.legendOutOfService', { defaultValue: 'Не работает' }) : state === 'blocked' ? t('reservations.tape.legendBlocked') : state === 'dirty' ? t('reservations.tape.legendDirty') : date}>{priceMode && pricesQuery.data?.roomTypeId === room.roomTypeId && <span className="block pt-14 text-[12px] font-medium text-gray-600">{formatMoney(pricesQuery.data.prices.find((p: any) => p.date === date)?.totalAmount, currencyCode)}</span>}</button>
                   })}</div>
+                  {todayIndex >= 0 && <div aria-hidden className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-red-500/70" style={{ left: 'calc(' + (todayIndex + 0.5) / dayCount * 100 + '% - 1px)' }}/>}
+                  {(historyByRoom.get(room.id) ?? []).map(res => {
+                    const left = res.arrivalDate < dayKeys[0] ? 0 : dayKeys.indexOf(res.arrivalDate);
+                    const right = res.departureDate > dayKeys[dayCount - 1] ? dayCount : dayKeys.indexOf(res.departureDate);
+                    if (left < 0 || right <= left) return null;
+                    const label = res.status === 'checked_out' ? t('reservations.tape.historyCheckedOut', { defaultValue: 'Выехал' }) : res.status === 'no_show' ? t('reservations.tape.historyNoShow', { defaultValue: 'Незаезд' }) : t('reservations.tape.historyCancelled', { defaultValue: 'Отменена' });
+                    return <button key={'history-' + res.id} onClick={() => { hideHover(); setDetailRes(res); }}
+                      aria-label={t('reservations.tape.historyOpen', { defaultValue: 'История: {{label}}, {{number}}', label, number: res.confirmationNumber })}
+                      className="absolute bottom-0.5 z-0 flex h-5 items-center gap-1 overflow-hidden rounded border border-dashed border-gray-400 bg-gray-50 px-1.5 text-left text-[11px] text-gray-600 opacity-70 hover:opacity-100"
+                      style={{ left: 'calc(' + left/dayCount*100 + '% + 2px)', width: 'calc(' + (right-left)/dayCount*100 + '% - 4px)' }}>
+                      <History size={10} aria-hidden className="shrink-0"/><span className="truncate"><strong>{label}</strong> · {res.guestName || res.confirmationNumber?.slice(-6)}</span>
+                    </button>;
+                  })}
                   {(reservationsByRoom.get(room.id) ?? []).filter(r => !statusFilter || r.status === statusFilter).map(res => {
                     const left = res.arrivalDate < dayKeys[0] ? 0 : dayKeys.indexOf(res.arrivalDate);
                     const right = res.departureDate > dayKeys[dayCount - 1] ? dayCount : dayKeys.indexOf(res.departureDate);
                     if (left < 0 || right <= left) return null;
                     const tone = statusTone(res.status);
                     const ledger = ledgerByStay.get(res.id);
-                    const option = tone === 'tentative' ? optionState(res.optionUntil) : 'none';
+                    const option = tone === 'tentative' ? optionState(res.optionUntil, now) : 'none';
+                    const minutesLeft = option === 'soon' && res.optionUntil ? Math.max(0, Math.round((new Date(res.optionUntil).getTime() - now) / 60_000)) : null;
                     const sameBooking = !!hover && hover.reservation.bookingId != null && hover.reservation.bookingId === res.bookingId && hover.reservation.id !== res.id;
                     return <div key={res.id}
                       className={'group absolute top-1.5 flex h-[4.25rem] items-stretch overflow-hidden rounded-lg border text-left shadow-sm transition-shadow hover:shadow-md focus-within:ring-2 focus-within:ring-telivity-teal ' + BAR_CLASSES[tone] + (sameBooking ? ' ring-2 ring-telivity-teal ring-offset-1' : '')}
@@ -988,7 +1024,7 @@ function AvailabilityCalendar() {
                         </span>
                         <span className="mt-0.5 flex items-center gap-1 truncate text-xs">
                           {option === 'expired' ? <><AlertCircle size={12} className="text-red-600" /><span className="font-semibold text-red-700">{t('booking.legend.expired')}</span></>
-                            : option === 'soon' ? <><Clock3 size={12} /><span>{t('booking.legend.soon')}</span></>
+                            : option === 'soon' ? <><Clock3 size={12} /><span>{minutesLeft != null && minutesLeft < 180 ? t('reservations.tape.minutesLeft', { defaultValue: 'осталось {{count}} мин', count: minutesLeft }) : t('booking.legend.soon')}</span></>
                             : hasPermission('folios.read') ? (ledgerQuery.isError ? t('reservations.tape.ledgerUnavailable') : ledgerQuery.isPending ? '…'
                               : ledger?.hasBalanceDue ? <span className="font-semibold text-red-700">{t('reservations.tape.balanceDue')}</span>
                               : ledger?.hasPostedPayment ? t('reservations.tape.paymentRecorded') : t('reservations.tape.noPaymentRecorded'))

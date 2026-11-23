@@ -99,6 +99,29 @@ export const ratePlans = pgTable('rate_plans', {
  * Rate Restrictions — stay controls per rate plan per date (KB 5.3).
  * MinLOS, MaxLOS, CTA, CTD — the core yield management levers.
  */
+/**
+ * Price calendar rule: a season, holiday or promo over a date range for some (or all, when empty) room types.
+ * A percent changes the plan's base price, a fixed price replaces it. Applied by RatePlanService in the order
+ * manual day price → holiday → season → base → one promo → room type min/max.
+ */
+export const priceRules = pgTable('price_rules', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  propertyId: uuid('property_id').notNull().references(() => properties.id),
+  kind: varchar('kind', { length: 20 }).notNull().$type<'season' | 'holiday' | 'promo'>(),
+  name: varchar('name', { length: 120 }).notNull(),
+  startDate: date('start_date').notNull(),
+  endDate: date('end_date').notNull(),
+  roomTypeIds: jsonb('room_type_ids').$type<string[]>().notNull().default([]),
+  adjustmentType: varchar('adjustment_type', { length: 20 }).notNull().$type<'percent' | 'fixed_price'>(),
+  value: numeric('value', { precision: 12, scale: 2 }).notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  reason: text('reason').notNull(),
+  createdBy: uuid('created_by'),
+  revision: integer('revision').notNull().default(1),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const rateRestrictions = pgTable('rate_restrictions', {
   id: uuid('id').primaryKey().defaultRandom(),
   propertyId: uuid('property_id').notNull().references(() => properties.id),

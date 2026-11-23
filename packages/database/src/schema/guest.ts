@@ -46,6 +46,9 @@ export const guests = pgTable('guests', {
   vipLevel: vipLevelEnum('vip_level').notNull().default('none'),
   companyName: varchar('company_name', { length: 255 }),
   loyaltyNumber: varchar('loyalty_number', { length: 50 }),
+  /** Hotel's own guest level (regular / returning / vip); privileges are text for staff, never an automatic discount. */
+  guestTier: varchar('guest_tier', { length: 20 }).notNull().default('regular'),
+  privileges: text('privileges'),
 
   // Preferences (KB 5.7: bed type, floor, view, smoking, pillow, dietary)
   preferences: jsonb('preferences').$type<Record<string, string>>(),

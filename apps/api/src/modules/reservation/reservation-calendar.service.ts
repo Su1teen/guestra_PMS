@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { and, asc, eq, gt, lt, notInArray, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, lt, notInArray, sql } from 'drizzle-orm';
 import { bookings, guests, reservations, rooms, roomTypes, icalBlocks, icalFeeds, folios, roomInventoryBlocks, properties, ratePlans } from '@telivityhaip/database';
 import { activeInventoryBlockConditions } from '../room/room-inventory-policy';
 import { DRIZZLE } from '../../database/database.module';
@@ -26,7 +26,7 @@ export class ReservationCalendarService {
       const property = dto.propertyId;
       const roomRows = await tx.select().from(rooms).where(and(eq(rooms.propertyId, property), eq(rooms.isActive, true))).orderBy(asc(rooms.number));
       const types = await tx.select().from(roomTypes).where(eq(roomTypes.propertyId, property));
-      const rows = await tx.select({
+      const stayFields = {
         id: reservations.id, guestId: reservations.guestId, roomId: reservations.roomId,
         roomTypeId: reservations.roomTypeId, ratePlanId: reservations.ratePlanId,
         arrivalDate: reservations.arrivalDate, departureDate: reservations.departureDate,
@@ -39,13 +39,18 @@ export class ReservationCalendarService {
         optionUntil: reservations.optionUntil, requiredDeposit: reservations.requiredDeposit, guaranteeType: reservations.guaranteeType,
         confirmedAt: reservations.confirmedAt, proposalSentAt: reservations.proposalSentAt, confirmationSentAt: reservations.confirmationSentAt,
         detailsConfirmedAt: reservations.detailsConfirmedAt,
-        specialRequests: reservations.specialRequests, ratePlanName: ratePlans.name,
-      }).from(reservations)
+        specialRequests: reservations.specialRequests, ratePlanName: ratePlans.name, priceType: reservations.priceType,
+      };
+      const stays = (statusFilter: any) => tx.select(stayFields).from(reservations)
         .innerJoin(bookings, and(eq(bookings.id, reservations.bookingId), eq(bookings.propertyId, property)))
         .leftJoin(ratePlans, and(eq(ratePlans.id, reservations.ratePlanId), eq(ratePlans.propertyId, property)))
         .innerJoin(guests, eq(guests.id, reservations.guestId))
-        .where(and(eq(reservations.propertyId, property), lt(reservations.arrivalDate, dto.checkOut), gt(reservations.departureDate, dto.checkIn), notInArray(reservations.status, ['cancelled', 'no_show', 'checked_out'] as any)))
+        .where(and(eq(reservations.propertyId, property), lt(reservations.arrivalDate, dto.checkOut), gt(reservations.departureDate, dto.checkIn), statusFilter))
         .orderBy(asc(reservations.arrivalDate), asc(reservations.id));
+      const CLOSED = ['cancelled', 'no_show', 'checked_out'] as any;
+      const rows = await stays(notInArray(reservations.status, CLOSED));
+      // History view: closed stays are shown read-only and never block a room.
+      const historyRows = dto.includeHistory ? await stays(inArray(reservations.status, CLOSED)) : [];
       const blocks = await tx.select({ id: icalBlocks.id, roomTypeId: icalBlocks.roomTypeId, startDate: icalBlocks.startDate, endDate: icalBlocks.endDate })
         .from(icalBlocks).innerJoin(icalFeeds, and(eq(icalFeeds.id, icalBlocks.feedId), eq(icalFeeds.propertyId, property), eq(icalFeeds.isActive, true)))
         .where(and(eq(icalBlocks.propertyId, property), lt(icalBlocks.startDate, dto.checkOut), gt(icalBlocks.endDate, dto.checkIn)));
@@ -55,6 +60,8 @@ export class ReservationCalendarService {
       const inventoryBlocks=await tx.select().from(roomInventoryBlocks).where(activeInventoryBlockConditions(property,dto.checkOut));
       return { checkIn: dto.checkIn, checkOut: dto.checkOut, complete: true, rooms: roomRows, roomTypes: types,
         reservations: rows.map(({ firstName, lastName, ...row }: any) => ({ ...row, guestName: [firstName, lastName].filter(Boolean).join(' ') })), blocks, availability,
+        ...(dto.includeHistory ? { history: historyRows.map(({ firstName, lastName, ...row }: any) => ({ ...row, guestName: [firstName, lastName].filter(Boolean).join(' ') })) } : {}),
+        timezone: settings?.timezone ?? 'UTC', today,
         inventoryBlocks:inventoryBlocks.map((block:any)=>({...block,overdue:block.endDate<=today,releaseRequired:true})) };
     }, { isolationLevel: 'repeatable read', accessMode: 'read only' });
   }

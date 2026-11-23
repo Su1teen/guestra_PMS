@@ -20,6 +20,16 @@ export class SearchGuestsDto {
   @IsString()
   loyaltyNumber?: string;
 
+  @ApiPropertyOptional({ description: 'Room number: only a guest staying in that room now at this property; check the document' })
+  @IsOptional()
+  @IsString()
+  roomNumber?: string;
+
+  @ApiPropertyOptional({ enum: ['regular', 'returning', 'vip'] })
+  @IsOptional()
+  @IsEnum(['regular', 'returning', 'vip'])
+  guestTier?: string;
+
   @ApiPropertyOptional({ enum: ['none', 'silver', 'gold', 'platinum', 'diamond'] })
   @IsOptional()
   @IsEnum(['none', 'silver', 'gold', 'platinum', 'diamond'])

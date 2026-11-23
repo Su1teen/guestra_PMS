@@ -159,6 +159,12 @@ export const reservations = pgTable('reservations', {
   // Tentative (option) booking → confirmed on guarantee
   /** Hold deadline of a pending booking; past it the option is released or staff is reminded (property setting). */
   optionUntil: timestamp('option_until', { withTimezone: true }),
+  /** standard | complimentary | barter | chef | marketing — set by a person with reservations.price_type, with reason. */
+  priceType: varchar('price_type', { length: 20 }).notNull().default('standard'),
+  priceTypeReason: text('price_type_reason'),
+  priceTypeCounterparty: varchar('price_type_counterparty', { length: 200 }),
+  priceTypeApprovedBy: uuid('price_type_approved_by'),
+  priceTypeSetAt: timestamp('price_type_set_at', { withTimezone: true }),
   /** How the confirmed booking is guaranteed: deposit | card | company | none. */
   guaranteeType: varchar('guarantee_type', { length: 20 }),
   /** Payments + deposits needed for automatic confirmation (null = manual confirmation only). */

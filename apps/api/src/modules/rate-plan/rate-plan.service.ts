@@ -8,7 +8,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { eq, and, lte, gte, sql, desc, or } from 'drizzle-orm';
-import { ratePlans, rateRestrictions, roomTypes, cancellationPolicies, groupProfiles, properties, auditLogs, rateChangeRequests, rateMutationFences } from '@telivityhaip/database';
+import { ratePlans, rateRestrictions, priceRules, roomTypes, cancellationPolicies, groupProfiles, properties, auditLogs, rateChangeRequests, rateMutationFences } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { createHash } from 'node:crypto';
 import Decimal from 'decimal.js';
@@ -20,6 +20,7 @@ import type { LiveRateChangeDto, LiveCalendarQueryDto } from './dto/live-rate.dt
 import type { WebhookEvent } from '@telivityhaip/shared';
 import { TaxService } from '../tax/tax.service';
 import { calculateCanonicalRoomPricing } from './canonical-room-pricing';
+import { finishPrice, startingPrice, type PriceBounds, type PriceRuleLike, type PriceStep } from './price-rules';
 import { normaliseBands, occupancySupplementDetail, planHasSupplements, validateChildSupplements, type ChildAgeBand, type OccupancySupplement } from './child-pricing';
 import { CreateRatePlanDto } from './dto/create-rate-plan.dto';
 import { UpdateRatePlanDto } from './dto/update-rate-plan.dto';
@@ -46,6 +47,8 @@ export interface EffectiveRateResult {
   occupancyAdjustment?: OccupancyBand | null;
   override?: { restrictionId: string; amount: number | null; reason: string | null } | null;
   isTaxInclusive?: boolean;
+  /** «Почему такая цена»: the price calendar steps for the night, in the order they were applied. */
+  priceSteps?: PriceStep[];
 }
 
 @Injectable()
@@ -259,7 +262,13 @@ export class RatePlanService {
       }
     }
 
-    let effectiveRate = baseRate;
+    // Price calendar: a holiday or season changes the base price of a base plan; derived plans inherit it from the parent.
+    const ruleDate = context?.stayDate ?? context?.checkIn;
+    const rulesApply = ratePlan.type !== 'derived' || !ratePlan.parentRatePlanId;
+    const calendarRules = ruleDate ? await this.priceRulesFor(propertyId, db) : [];
+    const start = ruleDate && rulesApply ? startingPrice(baseRate, ruleDate, ratePlan.roomTypeId, calendarRules) : null;
+    const priceSteps: PriceStep[] = start ? [...start.steps] : [];
+    let effectiveRate = start ? start.amount : baseRate;
     let nights = context?.nights;
     if (!nights && context?.checkIn && context?.checkOut) {
       nights = nightsBetween(context.checkIn, context.checkOut);
@@ -297,7 +306,11 @@ export class RatePlanService {
         const day = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday'][new Date(stayDate + 'T00:00:00Z').getUTCDay()]!;
         effectiveRate += monetary.dayOfWeekOverrides?.[day] ?? 0;
         override = { restrictionId: monetary.id, amount: monetary.rateOverride == null ? null : Number(monetary.rateOverride), reason: monetary.overrideReason ?? null };
+        if (monetary.rateOverride != null) priceSteps.push({ step: 'manual', label: 'Ручная цена на день' + (monetary.overrideReason ? ` (${monetary.overrideReason})` : ''), amount: Number(effectiveRate.toFixed(2)) });
       }
+      const finish = finishPrice(Math.max(0, effectiveRate), stayDate, ratePlan.roomTypeId, calendarRules,
+        await this.priceBoundsFor(ratePlan.roomTypeId, propertyId, db), { promo: rulesApply });
+      if (finish.steps.length) { effectiveRate = finish.amount; priceSteps.push(...finish.steps); }
     }
 
     return {
@@ -310,7 +323,30 @@ export class RatePlanService {
       occupancyAdjustment: occupancyAdjustment ?? null,
       override,
       isTaxInclusive: ratePlan.isTaxInclusive,
+      ...(priceSteps.length ? { priceSteps } : {}),
     };
+  }
+
+  /** A throw-away copy that prices with unsaved price calendar rules (preview); the live service is untouched. */
+  withPriceRulesDraft(draft: { propertyId: string; rules: PriceRuleLike[]; bounds?: Record<string, PriceBounds> }) {
+    const copy = new RatePlanService(this.db, this.outbox, this.reports, this.taxes);
+    copy.priceRulesDraft = draft;
+    return copy;
+  }
+
+  /** Active price calendar rules of the property; a preview instance sees its draft instead. */
+  async priceRulesFor(propertyId: string, db?: any): Promise<PriceRuleLike[]> {
+    if (this.priceRulesDraft && this.priceRulesDraft.propertyId === propertyId) return this.priceRulesDraft.rules;
+    const rows = await (db ?? this.db).select().from(priceRules).where(and(eq(priceRules.propertyId, propertyId), eq(priceRules.isActive, true)));
+    return rows ?? [];
+  }
+
+  async priceBoundsFor(roomTypeId: string | null | undefined, propertyId: string, db?: any): Promise<PriceBounds | null> {
+    if (!roomTypeId) return null;
+    if (this.priceRulesDraft?.bounds && this.priceRulesDraft.propertyId === propertyId && this.priceRulesDraft.bounds[roomTypeId]) return this.priceRulesDraft.bounds[roomTypeId]!;
+    const [row] = await (db ?? this.db).select({ minPrice: roomTypes.minPrice, maxPrice: roomTypes.maxPrice }).from(roomTypes)
+      .where(and(eq(roomTypes.id, roomTypeId), eq(roomTypes.propertyId, propertyId)));
+    return row ?? null;
   }
 
   async getStayOccupancyPct(propertyId: string, stayDate: string, db?: any): Promise<number | undefined> {
@@ -546,6 +582,8 @@ export class RatePlanService {
   }
 
   private pricingDraft?: { plan: any; restrictions: any[] };
+  /** Set only on a throw-away preview instance: unsaved price calendar rules and bounds. */
+  priceRulesDraft?: { propertyId: string; rules: PriceRuleLike[]; bounds?: Record<string, PriceBounds> };
   private reportService() { return this.reports ?? new ReportsService(this.db); }
   private clean(dto: any): any {
     const { requestId: _request, expectedRevision: _revision, reason: _reason, propertyId: _property,

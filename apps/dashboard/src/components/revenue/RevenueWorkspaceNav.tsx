@@ -7,6 +7,7 @@ import { propertyHref } from '../../lib/navigation';
 const items = [
   ['/revenue', 'Обзор', 'Overview', 'revenue.manage'],
   ['/dynamic-pricing', 'Симуляция цен', 'Price simulation', 'revenue.manage'],
+  ['/price-calendar', 'Календарь цен', 'Price calendar', 'rateplans.read'],
   ['/rate-plans', 'Тарифы и ограничения', 'Rates & restrictions', 'rateplans.read'],
   ['/reports?report=booking-pace', 'Прирост и темп продаж', 'Pickup & Pace', 'reports.view'],
   ['/reports?report=occupancy-trend', 'Динамика загрузки', 'Occupancy trend', 'reports.view'],
