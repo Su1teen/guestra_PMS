@@ -7,7 +7,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { pgTable, uuid, varchar, numeric, timestamp, boolean } from 'drizzle-orm/pg-core';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { properties, guests, roomTypes, bookings, folios, charges, depositLedgerEntries, auditLogs } from './schema/index.js';
+import { properties, bookings, folios, charges, depositLedgerEntries, auditLogs } from './schema/index.js';
 import { listTrackedMigrationFiles, resolveMigrationsDirectory, runAllMigrations } from './migration-runner.js';
 
 // Only test infrastructure creates/drops a fresh database; financial fixtures use Drizzle.
@@ -40,8 +40,9 @@ describe.runIf(process.env['PMS_LIVE_PG'] === '1')('0040 historical provenance a
     const resA = randomUUID(), resB = randomUUID(), folioA = randomUUID(), folioB = randomUUID();
     const date = new Date('2027-05-01T12:00:00Z');
     await db.insert(properties).values({ id: p, name: 'Migration test', code: p.slice(0, 16), countryCode: 'KZ', currencyCode: 'KZT', timezone: 'UTC', totalRooms: 1 });
-    await db.insert(guests).values({ id: guest, firstName: 'Migration', lastName: 'Test' });
-    await db.insert(roomTypes).values({ id: type, propertyId: p, name: 'Standard', code: 'STD', maxOccupancy: 2, defaultOccupancy: 1 });
+    // Guests and room types gained columns in 0048; insert only the columns a pre-0040 table has.
+    await client`INSERT INTO guests (id, first_name, last_name) VALUES (${guest}, 'Migration', 'Test')`;
+    await client`INSERT INTO room_types (id, property_id, name, code, max_occupancy, default_occupancy) VALUES (${type}, ${p}, 'Standard', 'STD', 2, 1)`;
     // Pre-0040 database: insert only columns that existed then (later migrations add rate plan columns).
     await client`INSERT INTO rate_plans (id, property_id, room_type_id, name, code, type, base_amount, currency_code)
       VALUES (${rate}, ${p}, ${type}, 'BAR', 'BAR', 'bar', '100', 'KZT')`;
