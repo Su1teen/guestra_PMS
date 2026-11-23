@@ -26,6 +26,7 @@ import { DocumentLinkService } from './document-link.service';
 import { OptionExpiryScheduler } from './option-expiry.scheduler';
 import { RevenueAllocationService } from './revenue-allocation.service';
 import { StayMoneyService } from './stay-money.service';
+import { ReservationAdjustmentsService } from './reservation-adjustments.service';
 import { PublicDocumentController } from './public-document.controller';
 import { RatePlanModule } from '../rate-plan/rate-plan.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -64,6 +65,7 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     OptionExpiryScheduler,
     RevenueAllocationService,
     StayMoneyService,
+    ReservationAdjustmentsService,
     DocumentLinkService,
   ],
   exports: [
@@ -75,6 +77,7 @@ import { MigrationLegacyIdMapModule } from '../migration/migration-legacy-id-map
     ReservationConfirmationService,
     RevenueAllocationService,
     StayMoneyService,
+    ReservationAdjustmentsService,
     DocumentLinkService,
   ],
 })

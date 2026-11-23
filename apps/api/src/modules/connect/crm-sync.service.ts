@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { and, asc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import {
   auditLogs, bookings, charges, folios, guests, integrationLinks, payments, properties, ratePlans, reservations, rooms, roomTypes,
@@ -54,6 +54,32 @@ export class CrmSyncService {
   private async localLinks(db: any, propertyId: string, localEntityType: string, localEntityId: string) {
     return db.select().from(integrationLinks).where(and(eq(integrationLinks.propertyId, propertyId), eq(integrationLinks.sourceSystem, SOURCE),
       eq(integrationLinks.localEntityType, localEntityType), eq(integrationLinks.localEntityId, localEntityId)));
+  }
+
+  /**
+   * Stays of a CRM customer at this property, for the CRM guest card and the AI agent. The guest is found only through
+   * the recorded customer link of this property — never by name or phone — and only this property's stays are listed.
+   */
+  async guestHistory(propertyId: string, customerId: string, db: any = this.db) {
+    const link = await this.link(db, propertyId, 'customer', customerId, 'guest');
+    if (!link) return { propertyId, customerId, linked: false, guest: null, stays: [] };
+    const [guest] = await db.select({ id: guests.id, firstName: guests.firstName, lastName: guests.lastName, vipLevel: guests.vipLevel,
+      guestTier: guests.guestTier, privileges: guests.privileges }).from(guests).where(eq(guests.id, link.localEntityId));
+    if (!guest) return { propertyId, customerId, linked: false, guest: null, stays: [] };
+    const rows = await db.select({ id: reservations.id, confirmationNumber: bookings.confirmationNumber, arrivalDate: reservations.arrivalDate,
+      departureDate: reservations.departureDate, status: reservations.status, adults: reservations.adults, children: reservations.children,
+      totalAmount: reservations.totalAmount, currencyCode: reservations.currencyCode, priceType: reservations.priceType,
+      roomType: roomTypes.name, roomNumber: rooms.number })
+      .from(reservations)
+      .leftJoin(bookings, and(eq(bookings.id, reservations.bookingId), eq(bookings.propertyId, reservations.propertyId)))
+      .leftJoin(roomTypes, and(eq(roomTypes.id, reservations.roomTypeId), eq(roomTypes.propertyId, reservations.propertyId)))
+      .leftJoin(rooms, and(eq(rooms.id, reservations.roomId), eq(rooms.propertyId, reservations.propertyId)))
+      .where(and(eq(reservations.propertyId, propertyId), eq(reservations.guestId, guest.id)))
+      .orderBy(desc(reservations.arrivalDate)).limit(50);
+    const completed = rows.filter((row: any) => row.status === 'checked_out');
+    return { propertyId, customerId, linked: true, guest, totals: { stays: rows.length, completedStays: completed.length,
+      nights: completed.reduce((sum: number, row: any) => sum + Math.max(0, Math.round((Date.parse(row.departureDate) - Date.parse(row.arrivalDate)) / 86_400_000)), 0) },
+      stays: rows };
   }
 
   /** Full staff view of one stay: guest, category, room, folio ledger and scheduled services. */

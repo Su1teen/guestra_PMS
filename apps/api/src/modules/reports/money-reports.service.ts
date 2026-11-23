@@ -1,10 +1,11 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, gte, inArray, lt, or } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, lt, or } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { folios, guests, integrationLinks, managementInputs, payments, properties, reservationRevenueAllocations, reservations } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { zonedTimeToUtc } from '../../common/date/zoned-time';
 import { reportDates } from './reporting-policy';
+import { NO_COMMISSION_PRICE_TYPES, ZERO_REVENUE_PRICE_TYPES } from '../reservation/reservation-adjustments.service';
 
 /** Payment statuses that are money received. Refunds are child rows with originalPaymentId. */
 const RECEIVED = ['captured', 'settled', 'partially_refunded', 'refunded'];
@@ -16,7 +17,7 @@ const d = (v: Decimal.Value | null | undefined) => new Decimal(v ?? 0);
 const money = (v: Decimal) => Number(v.toFixed(2));
 
 interface Stay { id: string; bookingId: string; status: string; arrivalDate: string; departureDate: string; totalAmount: string;
-  confirmationNumber: string; source: string; createdAt: Date; guestName: string; crmReservationId: string | null }
+  confirmationNumber: string; source: string; createdAt: Date; guestName: string; crmReservationId: string | null; priceType: string }
 
 /**
  * Money reports for the sales head and management, by the date money arrived in the property's time zone.
@@ -84,7 +85,7 @@ export class MoneyReportsService {
     const crm = new Map(links.map((l: any) => [l.localEntityId, l.externalEntityId]));
     return rows.map(({ r, firstName, lastName }: any) => ({ id: r.id, bookingId: r.bookingId, status: r.status, arrivalDate: String(r.arrivalDate),
       departureDate: String(r.departureDate), totalAmount: r.totalAmount, confirmationNumber: r.confirmationNumber, source: r.source, createdAt: r.createdAt,
-      guestName: [firstName, lastName].filter(Boolean).join(' '), crmReservationId: (crm.get(r.id) as string | undefined) ?? null }));
+      guestName: [firstName, lastName].filter(Boolean).join(' '), crmReservationId: (crm.get(r.id) as string | undefined) ?? null, priceType: r.priceType ?? 'standard' }));
   }
 
   /** Net saved split per stay and category (amount and cost). */
@@ -162,7 +163,8 @@ export class MoneyReportsService {
     const rate = Number(f.property.settings?.commissionRatePercent ?? 10);
     const perStay = new Map<string, { stay: Stay; paid: Decimal; accommodation: Decimal }>();
     for (const item of f.items) {
-      if (!item.stay || EXCLUDED.includes(item.stay.status) || d(item.stay.totalAmount).lessThanOrEqualTo(0)) continue;
+      // R7: complimentary, barter and «для шефа» stays never earn a commission.
+      if (!item.stay || EXCLUDED.includes(item.stay.status) || NO_COMMISSION_PRICE_TYPES.includes(item.stay.priceType) || d(item.stay.totalAmount).lessThanOrEqualTo(0)) continue;
       const share = this.shares(item.stay, f.splits)['accommodation']?.share ?? new Decimal(0);
       const signed = item.refund ? item.amount.negated() : item.amount;
       const row = perStay.get(item.stay.id) ?? { stay: item.stay, paid: new Decimal(0), accommodation: new Decimal(0) };
@@ -192,7 +194,30 @@ export class MoneyReportsService {
       }
     }
     for (const p of f.penalties) revenue['penalty'] = revenue['penalty']!.plus(p.amount);
-    return { property: f.property, revenue, cost };
+    // Complimentary and barter stays earn nothing, but their nights and the cost of included services count (3.3).
+    const free = await this.freeStays(propertyId, from, to);
+    for (const stay of free.rows) cost = cost.plus(stay.cost);
+    return { property: f.property, revenue, cost, free };
+  }
+
+  /** Complimentary / barter nights in the period and the cost of their included services, prorated by night. */
+  private async freeStays(propertyId: string, from: string, to: string) {
+    const end = new Date(Date.parse(to) + 86_400_000).toISOString().slice(0, 10);
+    const rows = await this.db.select({ id: reservations.id, priceType: reservations.priceType, arrivalDate: reservations.arrivalDate, departureDate: reservations.departureDate,
+      status: reservations.status }).from(reservations).where(and(eq(reservations.propertyId, propertyId), inArray(reservations.priceType, [...ZERO_REVENUE_PRICE_TYPES]),
+      lt(reservations.arrivalDate, end), gt(reservations.departureDate, from)));
+    const stays = rows.filter((r: any) => !EXCLUDED.includes(r.status));
+    const splits = await this.splits(propertyId, stays.map((r: any) => r.id));
+    const out = stays.map((r: any) => {
+      const arrival = String(r.arrivalDate), departure = String(r.departureDate);
+      const nights = Math.max(1, Math.round((Date.parse(departure) - Date.parse(arrival)) / 86_400_000));
+      const first = arrival > from ? arrival : from, last = departure < end ? departure : end;
+      const inPeriod = Math.max(0, Math.round((Date.parse(last) - Date.parse(first)) / 86_400_000));
+      const stayCost = Object.values(splits.get(r.id) ?? {}).reduce((sum, v) => sum.plus(v.cost), new Decimal(0));
+      return { id: r.id, priceType: r.priceType, nights: inPeriod, cost: stayCost.times(inPeriod).div(nights) };
+    }).filter((r: any) => r.nights > 0);
+    return { rows: out, nights: out.reduce((n: number, r: any) => n + r.nights, 0), stays: out.length,
+      cost: out.reduce((sum: Decimal, r: any) => sum.plus(r.cost), new Decimal(0)) };
   }
 
   private async inputs(propertyId: string, from: string, to: string) {
@@ -237,6 +262,7 @@ export class MoneyReportsService {
       basis: 'payment_date', revenue, revenueTotal: line('revenue_total', 'Итого доходы', revenueTotal, planRevenue, prevRevenueTotal),
       cost: line('cost', 'Себестоимость (включённые услуги)', now.cost, inputs.budget?.['cost'] ?? null, prev.cost),
       expenses, expensesTotal: line('expenses_total', 'Итого расходы', expensesTotal, null, prevExpensesTotal),
-      result: line('result', 'Результат', result, null, prevResult), expensesFilled: inputs.expenses !== null };
+      result: line('result', 'Результат', result, null, prevResult), expensesFilled: inputs.expenses !== null,
+      complimentary: { stays: now.free.stays, nights: now.free.nights, cost: money(now.free.cost), previousNights: prev.free.nights } };
   }
 }

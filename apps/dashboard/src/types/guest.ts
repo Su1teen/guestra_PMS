@@ -5,6 +5,8 @@ export interface Guest {
   email?: string;
   phone?: string;
   vipLevel?: string;
+  guestTier?: string | null;
+  privileges?: string | null;
   isDnr?: boolean;
   dnrReason?: string;
   dnrDate?: string;

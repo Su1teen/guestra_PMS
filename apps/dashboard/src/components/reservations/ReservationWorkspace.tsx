@@ -17,6 +17,7 @@ import ReservationCommercialActions from './ReservationCommercialActions';
 import { ReservationOpsNotes, ReservationMessageCompose } from './ReservationCommunication';
 import type { Reservation } from './types';
 import ReservationLifecycleActions from './ReservationLifecycleActions';
+import ReservationPriceDecisions from './ReservationPriceDecisions';
 import ReservationServicesPanel from '../services/ReservationServicesPanel';
 import FolioDocumentButton from '../folios/FolioDocumentButton';
 import ReservationConfirmationCard from './ReservationConfirmationCard';
@@ -189,6 +190,7 @@ export default function ReservationWorkspace({ reservationId, initial, onClose, 
           {reservation.notes && <div className="rounded-lg bg-gray-50 p-3 text-sm"><p className="mb-1 text-xs text-telivity-mid-grey">{t('reservations.notes')}</p><p className="whitespace-pre-wrap">{reservation.notes}</p></div>}
           {propertyId && <ReservationOpsNotes reservationId={reservation.id} propertyId={propertyId} readOnly={mode === 'drawer'}/>}
           {mode === 'page' && propertyId && <ReservationLifecycleActions reservation={reservation} propertyId={propertyId} onWorkflow={go}/>}
+          {mode === 'page' && propertyId && <ReservationPriceDecisions reservation={reservation} propertyId={propertyId}/>}
           {hasPermission('folios.read') && <div className="rounded-xl border p-4"><p className="mb-2 text-xs font-semibold text-gray-500">{t('frontDesk.accountSummary')}</p>{propertyId && previewFolio && <div className="mb-3"><FolioDocumentActions propertyId={propertyId} folioId={previewFolio.id} guestEmail={envelope?.guest?.email} compact hideOpen/></div>}<QueryRows query={folioQuery}>{(rows: any[]) => rows.map(f => <div key={f.id} className="flex justify-between text-sm"><span>{t('frontDesk.balance')}</span><strong>{formatMoney(f.balance, f.currencyCode ?? currencyCode)}</strong></div>)}</QueryRows>
             {previewFolio && <div className="mt-3 grid grid-cols-2 gap-3 text-xs"><div><p>{t('folios.charges')}</p><QueryRows query={chargesQuery}>{(rows: any[]) => rows.slice(-3).reverse().map(c => <p key={c.id} className="mt-1 flex justify-between gap-2"><span className="truncate">{c.description}</span><span>{formatMoney(c.amount, c.currencyCode ?? currencyCode)}</span></p>)}</QueryRows></div>{hasPermission('folios.read') && <div><p>{t('folios.payments')}</p><QueryRows query={paymentsQuery}>{(rows: any[]) => rows.slice(0,3).map(p => <p key={p.id} className="mt-1">{formatMoney(p.amount, p.currencyCode ?? currencyCode)}</p>)}</QueryRows></div>}</div>}
           </div>}

@@ -273,6 +273,24 @@ export class GuestService {
       conditions.push(eq(guests.vipLevel, dto.vipLevel as any));
     }
 
+    if (dto.guestTier) {
+      conditions.push(eq(guests.guestTier, dto.guestTier));
+    }
+
+    // R9: a room number finds a guest only together with this property and a stay in that room right now.
+    // The match is a lead, not an identification: staff checks the document before acting on it.
+    if (dto.roomNumber) {
+      const staying = this.db.select({ id: reservations.id }).from(reservations)
+        .innerJoin(rooms, and(eq(rooms.id, reservations.roomId), eq(rooms.propertyId, propertyId)))
+        .where(and(eq(reservations.propertyId, propertyId), eq(rooms.number, dto.roomNumber.trim()),
+          inArray(reservations.status, ['checked_in', 'stayover', 'due_out'] as any)));
+      conditions.push(or(
+        inArray(guests.id, this.db.select({ guestId: reservations.guestId }).from(reservations).where(inArray(reservations.id, staying))),
+        inArray(guests.id, this.db.select({ guestId: reservationGuests.guestId }).from(reservationGuests)
+          .where(and(eq(reservationGuests.propertyId, propertyId), inArray(reservationGuests.reservationId, staying)))),
+      ));
+    }
+
     if (dto.isDnr !== undefined) {
       conditions.push(eq(guests.isDnr, dto.isDnr));
     }
@@ -302,6 +320,7 @@ export class GuestService {
       total: Number(countResult[0]?.count ?? 0),
       page,
       limit,
+      ...(dto.roomNumber ? { verifyDocument: true } : {}),
     };
   }
 
