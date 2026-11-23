@@ -170,6 +170,10 @@ export class AncillaryService {
         quantity: dto.quantity ?? 1,
         amountOverride: dto.amountOverride,
         includedInRate: dto.includedInRate ?? true,
+        basis: dto.basis ?? null,
+        allocationAmount: dto.allocationAmount ?? null,
+        unitCost: dto.unitCost ?? null,
+        revenueCategory: dto.revenueCategory ?? null,
       })
       .returning();
 

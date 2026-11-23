@@ -77,6 +77,12 @@ export const properties = pgTable('properties', {
     optionHoldHours?: number;
     /** Hold in minutes for short options (1–90); when set it takes precedence over optionHoldHours. */
     optionHoldMinutes?: number;
+    /** Children from this age count as adults for per-guest package components; younger ones are free (null = every child counts). */
+    packageChildFromAge?: number;
+    /** Manager commission on accommodation paid, percent (reports; default 10). */
+    commissionRatePercent?: number;
+    /** Hours before arrival after which a cancellation is suggested to retain the prepayment (default 24). */
+    lateCancellationHours?: number;
     /** What happens when an option expires without guarantee: release the room or remind staff. */
     optionExpiryAction?: 'cancel' | 'notify';
     /** Send the guest confirmation automatically when a booking becomes confirmed (default true). */

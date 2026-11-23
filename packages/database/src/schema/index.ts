@@ -268,6 +268,7 @@ export {
   services,
   ratePlanComponents,
   reservationServices,
+  reservationRevenueAllocations,
   serviceAgentBookingModeEnum,
   serviceBookingStatusEnum,
   serviceBookings,
