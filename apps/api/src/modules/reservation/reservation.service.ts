@@ -447,7 +447,11 @@ export class ReservationService {
   // active is a payment-integrity hazard (released/refunded deposits, expired
   // auths cannot be silently reinstated). The correct workflow is to create a
   // NEW reservation. Do not add uncancel()/reactivate() here.
-  async cancel(id: string, propertyId: string, dto: CancelReservationDto) {
+  /**
+   * `onlyFrom` narrows the statuses the cancel may claim from. Releasing an unpaid option passes
+   * ['pending'] so a booking confirmed by a payment in the same moment is never cancelled.
+   */
+  async cancel(id: string, propertyId: string, dto: CancelReservationDto, options: { onlyFrom?: ReservationStatus[] } = {}) {
     const reservation = await this.findByIdRaw(id, propertyId);
     assertTransition(reservation.status as ReservationStatus, 'cancelled');
     const cancellationReason = resolveCancellationReason(dto);
@@ -457,7 +461,7 @@ export class ReservationService {
     const updated = await this.claimTransition(
       id,
       propertyId,
-      ['pending', 'confirmed', 'assigned'],
+      options.onlyFrom ?? ['pending', 'confirmed', 'assigned'],
       {
         status: 'cancelled',
         cancelledAt: new Date(),

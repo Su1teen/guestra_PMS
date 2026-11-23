@@ -12,7 +12,7 @@ import { ReservationConfirmationService } from './reservation-confirmation.servi
 import { FolioService } from '../folio/folio.service';
 import { PaymentService } from '../payment/payment.service';
 
-import { BOOKING_POLICY_DEFAULTS, GUARANTEE_TYPES, MANUAL_PREPAYMENT_METHODS, type GuaranteeType, type ManualPrepaymentMethod } from './guarantee';
+import { BOOKING_POLICY_DEFAULTS, GUARANTEE_TYPES, OPTION_EXPIRED_REASON, MANUAL_PREPAYMENT_METHODS, type GuaranteeType, type ManualPrepaymentMethod } from './guarantee';
 
 export { GUARANTEE_TYPES, type GuaranteeType };
 
@@ -34,7 +34,7 @@ export interface OptionChangeInput {
   reason?: string;
 }
 
-type PropertySettings = { depositPercentage?: number; optionHoldHours?: number;
+type PropertySettings = { depositPercentage?: number; optionHoldHours?: number; optionHoldMinutes?: number;
   optionExpiryAction?: 'cancel' | 'notify'; autoSendConfirmation?: boolean } | null | undefined;
 
 export interface HoldOverrides {
@@ -86,6 +86,8 @@ export class ReservationGuaranteeService {
         if (Number.isNaN(optionUntil.getTime())) throw new BadRequestException('optionUntil must be a valid date-time');
         if (optionUntil.getTime() <= now.getTime()) throw new BadRequestException('Option deadline must be in the future');
       }
+    } else if (settings?.optionHoldMinutes && settings.optionHoldMinutes > 0) {
+      optionUntil = new Date(now.getTime() + settings.optionHoldMinutes * 60_000);
     } else if (settings?.optionHoldHours && settings.optionHoldHours > 0) {
       optionUntil = new Date(now.getTime() + settings.optionHoldHours * 3_600_000);
     }
@@ -246,7 +248,7 @@ export class ReservationGuaranteeService {
           .where(and(eq(reservations.bookingId, folio.bookingId), eq(reservations.propertyId, payload.propertyId!))).limit(1);
         reservationId = stay?.id ?? null;
       }
-      if (reservationId) await this.confirmIfGuaranteed(reservationId, payload.propertyId!);
+      if (reservationId) await this.afterMoney(reservationId, payload.propertyId!, payload.entityId);
     });
   }
 
@@ -256,8 +258,26 @@ export class ReservationGuaranteeService {
     await this.safely(async () => {
       const [deposit] = await this.db.select({ reservationId: depositLedgerEntries.reservationId }).from(depositLedgerEntries)
         .where(and(eq(depositLedgerEntries.id, payload.entityId), eq(depositLedgerEntries.propertyId, payload.propertyId!)));
-      if (deposit?.reservationId) await this.confirmIfGuaranteed(deposit.reservationId, payload.propertyId!);
+      if (deposit?.reservationId) await this.afterMoney(deposit.reservationId, payload.propertyId!, payload.entityId);
     });
+  }
+
+  /**
+   * Money reached a booking: confirm it when the guarantee is covered. Money for an option already
+   * released on its deadline stays recorded, but the room is not taken back automatically; staff get
+   * a task to decide (rebook or refund).
+   */
+  private async afterMoney(reservationId: string, propertyId: string, sourceId: string) {
+    const [row] = await this.db.select({ id: reservations.id, bookingId: reservations.bookingId, status: reservations.status,
+      cancellationReason: reservations.cancellationReason }).from(reservations)
+      .where(and(eq(reservations.id, reservationId), eq(reservations.propertyId, propertyId)));
+    if (!row) return;
+    if (row.status === 'cancelled' && row.cancellationReason === OPTION_EXPIRED_REASON) {
+      await this.webhooks.emit('reservation.paid_after_option_expiry', 'reservation', row.id,
+        { reservationId: row.id, bookingId: row.bookingId, sourceId }, propertyId);
+      return;
+    }
+    await this.confirmIfGuaranteed(reservationId, propertyId);
   }
 
   private async safely(work: () => Promise<void>) {
@@ -265,6 +285,13 @@ export class ReservationGuaranteeService {
       // Listeners must never break the payment that triggered them; staff can still confirm manually.
       this.logger.error(`Automatic confirmation failed: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+
+  /** Properties with at least one tentative stay past its deadline (internal scheduler; trusted server-side ids). */
+  async propertiesWithExpiredOptions(now = new Date()): Promise<string[]> {
+    const rows = await this.db.selectDistinct({ propertyId: reservations.propertyId }).from(reservations)
+      .where(and(eq(reservations.status, 'pending'), isNotNull(reservations.optionUntil), lt(reservations.optionUntil, now)));
+    return rows.map((r: any) => r.propertyId);
   }
 
   /**
@@ -276,11 +303,17 @@ export class ReservationGuaranteeService {
     const action = (settings?.optionExpiryAction ?? BOOKING_POLICY_DEFAULTS.optionExpiryAction) === 'cancel' ? 'cancel' : 'notify';
     const expired = await this.db.select().from(reservations).where(and(eq(reservations.propertyId, propertyId),
       eq(reservations.status, 'pending'), isNotNull(reservations.optionUntil), lt(reservations.optionUntil, now)));
-    const result = { action, expired: expired.length, cancelled: 0, notified: 0, failed: 0 };
+    const result = { action, expired: expired.length, cancelled: 0, notified: 0, confirmed: 0, skipped: 0, failed: 0 };
     for (const row of expired) {
       try {
+        // Money that arrived just before the deadline wins: confirm instead of releasing.
+        if (row.requiredDeposit != null) {
+          const outcome = await this.confirmIfGuaranteed(row.id, propertyId);
+          if (outcome.confirmed > 0) { result.confirmed += 1; continue; }
+        }
         if (action === 'cancel') {
-          await this.reservationService.cancel(row.id, propertyId, { cancellationReason: 'Истёк срок опции: гарантия не получена' });
+          // Claims only from 'pending': a payment confirming the booking at the same moment leaves one final state.
+          await this.reservationService.cancel(row.id, propertyId, { cancellationReason: OPTION_EXPIRED_REASON }, { onlyFrom: ['pending'] });
           result.cancelled += 1;
         } else {
           await this.webhooks.emit('reservation.option_expired', 'reservation', row.id,
@@ -288,6 +321,8 @@ export class ReservationGuaranteeService {
           result.notified += 1;
         }
       } catch (error) {
+        // Confirmed or cancelled by someone else in the same moment: that state is final, nothing to do.
+        if (error instanceof ConflictException) { result.skipped += 1; continue; }
         result.failed += 1;
         this.logger.warn(`Option sweep for ${row.id} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -391,7 +426,7 @@ export class ReservationGuaranteeService {
     const reason = input.reason?.trim() || 'Опция снята вручную: гарантия не получена';
     let released = 0;
     for (const row of rows) {
-      await this.reservationService.cancel(row.id, propertyId, { cancellationReason: reason });
+      await this.reservationService.cancel(row.id, propertyId, { cancellationReason: reason }, { onlyFrom: ['pending'] });
       await this.db.insert(auditLogs).values({ propertyId, entityType: 'reservation', entityId: row.id, action: 'option_released',
         ...actorFields(actor), description: reason, previousValue: { status: 'pending', optionUntil: row.optionUntil ?? null }, newValue: { status: 'cancelled' } });
       released += 1;

@@ -75,6 +75,8 @@ export const properties = pgTable('properties', {
     childAgeBands?: Array<{ code: string; label: string; minAge: number; maxAge: number; occupiesBed: boolean }>;
     /** Hours a staff-created tentative booking is held before the option expires (default 48). */
     optionHoldHours?: number;
+    /** Hold in minutes for short options (1–90); when set it takes precedence over optionHoldHours. */
+    optionHoldMinutes?: number;
     /** What happens when an option expires without guarantee: release the room or remind staff. */
     optionExpiryAction?: 'cancel' | 'notify';
     /** Send the guest confirmation automatically when a booking becomes confirmed (default true). */

@@ -17,6 +17,11 @@ describe('ReservationGuaranteeService.holdTerms', () => {
     expect(terms.requiredDeposit).toBe('30000.00');
   });
 
+  it('holds a short option in minutes, ahead of the hours setting', () => {
+    const terms = ReservationGuaranteeService.holdTerms({ optionHoldMinutes: 90, optionHoldHours: 48 }, '100000.00', {}, now);
+    expect(terms.optionUntil?.toISOString()).toBe('2027-01-10T11:30:00.000Z');
+  });
+
   it('lets staff override or clear both terms', () => {
     const settings = { optionHoldHours: 48, depositPercentage: 30 };
     const custom = ReservationGuaranteeService.holdTerms(settings, '100000.00', { optionUntil: '2027-01-11T09:00:00.000Z', requiredDeposit: '5000' }, now);
@@ -149,7 +154,7 @@ describe('manual prepayment and option handling', () => {
     const svc = new ReservationGuaranteeService(db, {} as any, {} as any, reservationService as any, {} as any, {} as any, {} as any);
     const result = await svc.releaseOption('r1', 'p1', { wholeBooking: true });
     expect(result.released).toBe(2);
-    expect(reservationService.cancel).toHaveBeenCalledWith('r2', 'p1', { cancellationReason: 'Опция снята вручную: гарантия не получена' });
+    expect(reservationService.cancel).toHaveBeenCalledWith('r2', 'p1', { cancellationReason: 'Опция снята вручную: гарантия не получена' }, { onlyFrom: ['pending'] });
     expect(inserts.map((i) => i.action)).toEqual(['option_released', 'option_released']);
   });
 
@@ -169,5 +174,44 @@ describe('manual prepayment and option handling', () => {
     const result = await svc.sweepExpiredOptions('p1', new Date('2027-01-12T00:00:00Z'));
     expect(result).toMatchObject({ action: 'notify', notified: 1, cancelled: 0 });
     expect(webhooks.emit).toHaveBeenCalledWith('reservation.option_expired', 'reservation', 'r1', expect.anything(), 'p1');
+  });
+
+  it('releases an unpaid option on its deadline only from the tentative state', async () => {
+    const reservationService = { cancel: vi.fn(async () => ({})) };
+    const { db } = queryDb([[{ settings: { optionExpiryAction: 'cancel' } }], [pending]]);
+    const svc = new ReservationGuaranteeService(db, {} as any, { emit: vi.fn() } as any, reservationService as any, {} as any, {} as any, {} as any);
+    vi.spyOn(svc, 'confirmIfGuaranteed').mockResolvedValue({ confirmed: 0 } as any);
+    const result = await svc.sweepExpiredOptions('p1', new Date('2027-01-12T00:00:00Z'));
+    expect(result).toMatchObject({ action: 'cancel', cancelled: 1, confirmed: 0 });
+    expect(reservationService.cancel).toHaveBeenCalledWith('r1', 'p1', { cancellationReason: 'Истёк срок опции: гарантия не получена' }, { onlyFrom: ['pending'] });
+  });
+
+  it('confirms instead of releasing when the guarantee arrived before the sweep', async () => {
+    const reservationService = { cancel: vi.fn() };
+    const { db } = queryDb([[{ settings: { optionExpiryAction: 'cancel' } }], [pending]]);
+    const svc = new ReservationGuaranteeService(db, {} as any, { emit: vi.fn() } as any, reservationService as any, {} as any, {} as any, {} as any);
+    vi.spyOn(svc, 'confirmIfGuaranteed').mockResolvedValue({ confirmed: 1 } as any);
+    const result = await svc.sweepExpiredOptions('p1', new Date('2027-01-12T00:00:00Z'));
+    expect(result).toMatchObject({ confirmed: 1, cancelled: 0 });
+    expect(reservationService.cancel).not.toHaveBeenCalled();
+  });
+
+  it('leaves one final state when a payment confirms the booking at the moment of release', async () => {
+    const reservationService = { cancel: vi.fn(async () => { throw new ConflictException('concurrent'); }) };
+    const { db } = queryDb([[{ settings: { optionExpiryAction: 'cancel' } }], [pending]]);
+    const svc = new ReservationGuaranteeService(db, {} as any, { emit: vi.fn() } as any, reservationService as any, {} as any, {} as any, {} as any);
+    vi.spyOn(svc, 'confirmIfGuaranteed').mockResolvedValue({ confirmed: 0 } as any);
+    const result = await svc.sweepExpiredOptions('p1', new Date('2027-01-12T00:00:00Z'));
+    expect(result).toMatchObject({ cancelled: 0, skipped: 1, failed: 0 });
+  });
+
+  it('records money for a released option and asks staff to decide instead of taking the room back', async () => {
+    const webhooks = { emit: vi.fn() };
+    const { db } = queryDb([[{ reservationId: 'r1', bookingId: 'b1' }], [{ id: 'r1', bookingId: 'b1', status: 'cancelled', cancellationReason: 'Истёк срок опции: гарантия не получена' }]]);
+    const svc = new ReservationGuaranteeService(db, {} as any, webhooks as any, {} as any, {} as any, {} as any, {} as any);
+    const confirmIfGuaranteed = vi.spyOn(svc, 'confirmIfGuaranteed');
+    await svc.onPayment({ event: 'payment.received', propertyId: 'p1', entityId: 'pay1', entityType: 'payment', data: { folioId: 'f1' } } as any);
+    expect(webhooks.emit).toHaveBeenCalledWith('reservation.paid_after_option_expiry', 'reservation', 'r1', { reservationId: 'r1', bookingId: 'b1', sourceId: 'pay1' }, 'p1');
+    expect(confirmIfGuaranteed).not.toHaveBeenCalled();
   });
 });

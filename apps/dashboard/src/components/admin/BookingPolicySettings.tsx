@@ -19,6 +19,7 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
   const queryClient = useQueryClient();
   const policyQuery = useBookingPolicy(propertyId);
   const [holdHours, setHoldHours] = useState('');
+  const [holdUnit, setHoldUnit] = useState<'minutes' | 'hours'>('hours');
   const [expiry, setExpiry] = useState<'notify' | 'cancel'>('notify');
   const [deposit, setDeposit] = useState('');
   const [autoSend, setAutoSend] = useState(true);
@@ -27,7 +28,8 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
   useEffect(() => {
     const p = policyQuery.data;
     if (!p) return;
-    setHoldHours(p.optionHoldHours != null ? String(p.optionHoldHours) : '');
+    setHoldUnit(p.optionHoldMinutes != null ? 'minutes' : 'hours');
+    setHoldHours(p.optionHoldMinutes != null ? String(p.optionHoldMinutes) : p.optionHoldHours != null ? String(p.optionHoldHours) : '');
     setExpiry(p.optionExpiryAction ?? 'notify');
     setDeposit(p.depositPercentage != null ? String(p.depositPercentage) : '');
     setAutoSend(p.autoSendConfirmation);
@@ -40,10 +42,12 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
     if (sorted.some((b, i) => i > 0 && b.minAge <= sorted[i - 1]!.maxAge)) return t('policy.bandsOverlap');
     return null;
   })();
+  const holdError = holdUnit === 'minutes' && holdHours.trim() && (Number(holdHours) < 1 || Number(holdHours) > 90) ? t('policy.holdMinutesMax') : null;
 
   const save = useMutation({
     mutationFn: () => api.patch(`/v1/properties/${propertyId}/booking-policy`, {
-      optionHoldHours: holdHours.trim() ? Number(holdHours) : null,
+      optionHoldHours: holdUnit === 'hours' && holdHours.trim() ? Number(holdHours) : null,
+      optionHoldMinutes: holdUnit === 'minutes' && holdHours.trim() ? Number(holdHours) : null,
       optionExpiryAction: expiry,
       depositPercentage: deposit.trim() ? Number(deposit) : null,
       autoSendConfirmation: autoSend,
@@ -69,8 +73,15 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <label className="block">
             <span className="label">{t('policy.holdHours')}</span>
-            <input className="field tabular-nums" inputMode="numeric" value={holdHours} placeholder={t('policy.noAutoDeadline')}
-              onChange={(e) => setHoldHours(e.target.value.replace(/\D/g, ''))} />
+            <div className="flex gap-2">
+              <input className="field tabular-nums" inputMode="numeric" value={holdHours} placeholder={t('policy.noAutoDeadline')}
+                onChange={(e) => setHoldHours(e.target.value.replace(/\D/g, ''))} />
+              <select className="field w-28 shrink-0" aria-label={t('policy.holdHours')} value={holdUnit} onChange={(e) => setHoldUnit(e.target.value as 'minutes' | 'hours')}>
+                <option value="minutes">{t('policy.holdUnitMinutes')}</option>
+                <option value="hours">{t('policy.holdUnitHours')}</option>
+              </select>
+            </div>
+            {holdError && <span role="alert" className="mt-1 block text-xs text-red-700">{holdError}</span>}
           </label>
           <label className="block">
             <span className="label">{t('policy.expiry')}</span>
@@ -126,7 +137,7 @@ export default function BookingPolicySettings({ propertyId }: { propertyId: stri
       </section>
 
       <div className="flex justify-end">
-        <button type="button" className="btn-primary btn-lg" disabled={!!bandsError || save.isPending || policyQuery.isPending} onClick={() => save.mutate()}>
+        <button type="button" className="btn-primary btn-lg" disabled={!!bandsError || !!holdError || save.isPending || policyQuery.isPending} onClick={() => save.mutate()}>
           {save.isPending ? t('common.saving') : t('common.save')}
         </button>
       </div>

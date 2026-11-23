@@ -16,6 +16,8 @@ export class BookingPolicyDto {
   @ValidateNested({ each: true }) @Type(() => ChildAgeBandDto) childAgeBands?: ChildAgeBandDto[] | null;
   @ApiPropertyOptional({ description: 'Option hold in hours; null = no automatic deadline' }) @IsOptional() @IsInt() @Min(1) @Max(24 * 60)
   optionHoldHours?: number | null;
+  @ApiPropertyOptional({ description: 'Short option hold in minutes (1–90); takes precedence over optionHoldHours; null = use hours' })
+  @IsOptional() @IsInt() @Min(1) @Max(90) optionHoldMinutes?: number | null;
   @ApiPropertyOptional({ enum: ['cancel', 'notify'] }) @IsOptional() @IsIn(['cancel', 'notify']) optionExpiryAction?: 'cancel' | 'notify' | null;
   @ApiPropertyOptional({ description: 'Guarantee share of the stay total that confirms automatically; null = manual confirmation' })
   @IsOptional() @IsNumber() @Min(0) @Max(100) depositPercentage?: number | null;
