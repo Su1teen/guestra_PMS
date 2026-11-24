@@ -20,6 +20,7 @@ import {
 import { OPTION_EXPIRED_REASON } from '../reservation/guarantee';
 import { ReservationGuaranteeService } from '../reservation/reservation-guarantee.service';
 import { WebhookService, type WebhookPayload } from '../webhook/webhook.service';
+import { invoiceDescription } from './invoice-description';
 
 type Request = typeof remotePaymentRequests.$inferSelect;
 type Status = 'creating' | 'unknown' | 'sent' | 'paid' | 'failed' | 'expired' | 'cancelled';
@@ -226,7 +227,7 @@ export class RemotePaymentService {
       .from(bookings).innerJoin(properties, eq(properties.id, bookings.propertyId))
       .where(and(eq(bookings.id, row.bookingId), eq(bookings.propertyId, row.propertyId)));
     // The guest sees up to 60 characters in Kaspi; no personal data goes into it.
-    const description = [`Предоплата брони ${context?.confirmationNumber ?? ''}`.trim(), context?.propertyName].filter(Boolean).join(', ').slice(0, 60);
+    const description = invoiceDescription(context?.confirmationNumber, context?.propertyName);
     let invoice: QutPayInvoice;
     try {
       invoice = await provider.createPhoneInvoice({ amount: Number(row.amount), phone, orderId: row.id, description,
