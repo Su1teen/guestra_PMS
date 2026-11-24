@@ -9,6 +9,8 @@ import { ConnectReadinessController } from './connect-readiness.controller';
 import { StaffConnectSubscriptionsController } from './staff-connect-subscriptions.controller';
 import { ConnectV2Controller } from './connect-v2.controller';
 import { ConnectV2Service } from './connect-v2.service';
+import { ConnectRemotePaymentController } from './connect-remote-prepayment.controller';
+import { RemotePaymentModule } from '../remote-payment/remote-payment.module';
 import { ConnectV2Guard } from './connect-v2.guard';
 import { ConnectSandboxService } from './connect-sandbox.service';
 import { ConnectInboxService } from './connect-inbox.service';
@@ -41,8 +43,8 @@ import { EmailModule } from '../agent/guest-comms/email.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule, GuestInboxModule, EmailModule, NotificationsModule, ReportsModule, PropertyModule],
-  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController, CrmReportsController, CrmBookingTermsController, CrmPriceCalendarController, ReservationChatController],
+  imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule, GuestInboxModule, EmailModule, NotificationsModule, ReportsModule, PropertyModule, RemotePaymentModule],
+  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectRemotePaymentController, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController, CrmReportsController, CrmBookingTermsController, CrmPriceCalendarController, ReservationChatController],
   providers: [
     CredentialAdminGuard,
     ConnectV2Service, ConnectV2Guard, ConnectInboxService, ConnectSandboxService, ReservationChatService,

@@ -211,7 +211,7 @@ export class ReservationGuaranteeService {
    * Confirms the booking's tentative stays when the money received covers their guarantee.
    * Only stays with a guarantee amount qualify; the others wait for a manual decision.
    */
-  async confirmIfGuaranteed(reservationId: string, propertyId: string) {
+  async confirmIfGuaranteed(reservationId: string, propertyId: string, options: { notifyGuest?: boolean } = {}) {
     const [row] = await this.db.select({ bookingId: reservations.bookingId }).from(reservations)
       .where(and(eq(reservations.id, reservationId), eq(reservations.propertyId, propertyId)));
     if (!row) return { confirmed: 0 };
@@ -226,7 +226,7 @@ export class ReservationGuaranteeService {
     for (const stay of waiting) {
       try {
         // One guest confirmation per booking: it lists every room.
-        await this.confirm(stay.id, propertyId, { guaranteeType: 'deposit', notifyGuest: confirmed === 0 ? undefined : false }, undefined, 'auto');
+        await this.confirm(stay.id, propertyId, { guaranteeType: 'deposit', notifyGuest: confirmed === 0 ? options.notifyGuest : false }, undefined, 'auto');
         confirmed += 1;
       } catch (error) {
         if (!(error instanceof ConflictException)) throw error; // confirmed concurrently

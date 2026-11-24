@@ -95,6 +95,14 @@ export const WEBHOOK_EVENTS = {
   'payment.refunded': 'payment.refunded',
   'payment.failed': 'payment.failed',
 
+  // Remote payment requests (an invoice in the guest's payment app, e.g. Kaspi)
+  'payment_request.sent': 'payment_request.sent',
+  'payment_request.paid': 'payment_request.paid',
+  'payment_request.failed': 'payment_request.failed',
+  'payment_request.expired': 'payment_request.expired',
+  'payment_request.cancelled': 'payment_request.cancelled',
+  'payment_request.needs_review': 'payment_request.needs_review',
+
   // Booking Request events
   'booking_request.created': 'booking_request.created',
   'booking_request.accepted': 'booking_request.accepted',

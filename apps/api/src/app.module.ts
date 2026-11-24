@@ -24,6 +24,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { WebhookModule } from './modules/webhook/webhook.module';
 import { ChannelModule } from './modules/channel/channel.module';
 import { ConnectModule } from './modules/connect/connect.module';
+import { RemotePaymentModule } from './modules/remote-payment/remote-payment.module';
 import { EventsModule } from './modules/events/events.module';
 import { TaxModule } from './modules/tax/tax.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -88,6 +89,7 @@ const imports: any[] = [
   WebhookModule,
   ChannelModule,
   ConnectModule,
+  RemotePaymentModule,
   EventsModule,
   TaxModule,
   AuthModule,

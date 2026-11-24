@@ -47,7 +47,7 @@ export class ConnectBookingService {
 
   /**
    * Book a room — Agent 4.5 (Hotel Booking Agent).
-   * Agent bookings auto-confirm (skip pending status).
+   * A signed quote may carry the property's prepayment terms: the booking is then a tentative stay with a hold.
    */
   async book(dto: AgentBookDto, acceptedQuote?: ConnectAcceptedQuote) {
     if (acceptedQuote) assertQuoteMatches(acceptedQuote, dto);
@@ -206,6 +206,8 @@ export class ConnectBookingService {
       }
       const baseAmountDec = new Decimal(pricing?.lineItems[0]?.rate ?? ratePlan.baseAmount);
       const totalAmountDec = new Decimal(pricing?.totalAmount ?? baseAmountDec.times(nights));
+      const prepayment = acceptedQuote?.prepayment;
+      const optionUntil = prepayment?.holdMinutes == null ? null : new Date(Date.now() + prepayment.holdMinutes * 60_000);
 
       const [booking] = await tx
         .insert(bookings)
@@ -242,7 +244,8 @@ export class ConnectBookingService {
           adults: dto.adults,
           children: dto.children ?? 0,
           specialRequests: dto.specialRequests,
-          status: 'assigned',
+          status: prepayment ? 'pending' : 'assigned',
+          ...(prepayment ? { requiredDeposit: prepayment.amount, optionUntil, guaranteeType: 'deposit' } : {}),
         })
         .returning();
 
@@ -283,7 +286,7 @@ export class ConnectBookingService {
       : this.buildNightlyBreakdown(baseAmount, nights, arrival, taxRate);
 
     let paymentStatus: 'none' | 'authorized' | 'charged' = 'none';
-    const depositAmount: number | undefined = undefined;
+    const depositAmount = reservation.requiredDeposit == null ? undefined : Number(reservation.requiredDeposit);
 
     if (dto.paymentMethod === 'prepaid' || dto.paymentMethod === 'virtual_card') {
       // In a real system, process payment via paymentService
@@ -315,7 +318,7 @@ export class ConnectBookingService {
       externalReference: dto.externalReference,
       reservationId: reservation.id,
       guestId: reservation.guestId,
-      status: 'assigned',
+      status: reservation.status,
       roomTypeId: roomType.id,
       roomTypeCode: roomType.code,
       roomTypeName: roomType.name,
@@ -338,6 +341,7 @@ export class ConnectBookingService {
       ).description,
       paymentStatus,
       depositAmount,
+      ...(reservation.optionUntil ? { optionUntil: reservation.optionUntil.toISOString() } : {}),
       bookedAt: new Date().toISOString(),
       integrationContext: dto.integrationContext,
     };
@@ -797,6 +801,7 @@ export class ConnectBookingService {
       checkIn: reservation.arrivalDate, checkOut: reservation.departureDate,
       adults: reservation.adults, children: reservation.children,
       totalAmount: Number(reservation.totalAmount), currencyCode: reservation.currencyCode,
+      ...(reservation.requiredDeposit != null ? { depositAmount: Number(reservation.requiredDeposit), optionUntil: reservation.optionUntil?.toISOString() ?? null } : {}),
       roomAssigned: Boolean(reservation.roomId), integrationContext: booking.integrationContext,
     };
   }

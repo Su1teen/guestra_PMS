@@ -74,12 +74,15 @@ export class ConnectSandboxService {
    if(stay&&pricing) {
     refs['bookingId']=randomUUID();refs['reservationId']=randomUUID();refs['roomId']=randomUUID();refs['folioId']=randomUUID();
     const status=historical?'checked_out':input.stage==='cancelled'?'cancelled':input.stage==='pending_payment'?'pending':inside?'checked_in':'confirmed';
+    const paymentTerms = status === 'pending' ? pricing.prepayment : undefined;
     await tx.insert(rooms).values({id:refs['roomId'],propertyId:input.propertyId,roomTypeId:registered.roomTypeId,number:'FX-'+refs['roomId'].slice(0,8),status:inside?'occupied':'vacant_clean'});
     await tx.insert(bookings).values({id:refs['bookingId'],propertyId:input.propertyId,guestId:refs['guestId'],confirmationNumber:'FIX-'+refs['bookingId'],source:'agent',
      integrationContext:{sourceSystem:'guestra_crm',customerId:input.customerId,conversationId:input.conversationId,requestId:input.requestId,fixtureId:input.fixtureId}});
     await tx.insert(reservations).values({id:refs['reservationId'],propertyId:input.propertyId,bookingId:refs['bookingId'],guestId:refs['guestId'],roomId:refs['roomId'],
      roomTypeId:registered.roomTypeId,ratePlanId:registered.ratePlanId,arrivalDate:arrival,departureDate:departure,nights:pricing.nights,status,
      totalAmount:pricing.totalAmount,currencyCode:pricing.currency,adults:1,children:0,checkedInAt:inside?new Date():null,
+     ...(paymentTerms ? { requiredDeposit:paymentTerms.amount, guaranteeType:'deposit',
+       optionUntil:paymentTerms.holdMinutes == null ? null : new Date(Date.now() + paymentTerms.holdMinutes * 60_000) } : {}),
      checkedOutAt:historical?new Date():null,cancelledAt:status==='cancelled'?new Date():null});
     await tx.insert(folios).values({id:refs['folioId'],propertyId:input.propertyId,guestId:refs['guestId'],reservationId:refs['reservationId'],
      folioNumber:'FIX-'+refs['folioId'],currencyCode:property.currencyCode,totalCharges:pricing.totalAmount,balance:pricing.totalAmount});

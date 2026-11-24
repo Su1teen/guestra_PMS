@@ -1,4 +1,4 @@
-import { beforeAll, afterAll, beforeEach, describe, it, expect, vi } from 'vitest';
+import { beforeAll, afterAll, beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { randomUUID,createHash,createHmac } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
@@ -11,10 +11,12 @@ import {Test} from '@nestjs/testing';
 import {ValidationPipe} from '@nestjs/common';
 import request from 'supertest';
 import { properties, roomTypes, rooms, ratePlans, taxProfiles, taxRules, reservations, reservationGuests,
-  bookings, guests, guestPropertyLinks, integrationLinks, domainEventOutbox, auditLogs, charges, folios, payments,
+  bookings, guests, guestPropertyLinks, integrationLinks, remotePaymentRequests, domainEventOutbox, auditLogs, charges, folios, payments,
   services,serviceResources,serviceBookings,serviceResourceAllocations,serviceRequests,serviceOperations,connectCredentials } from '@telivityhaip/database';
 import { ConnectBookingService } from './connect-booking.service';
 import { ConnectV2Service } from './connect-v2.service';
+import { RemotePaymentService } from '../remote-payment/remote-payment.service';
+import { ReservationGuaranteeService } from '../reservation/reservation-guarantee.service';
 import { connectOperations,integrationDeployment,sandboxProperties,sandboxFixtures } from './connect-operation-schema';
 import {ConnectSandboxService,fixtureStages} from './connect-sandbox.service';
 import { AvailabilityService } from '../reservation/availability.service';
@@ -67,7 +69,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
   }
   async function clear() {
     const links = await db.select().from(guestPropertyLinks).where(eq(guestPropertyLinks.propertyId,ids.property));
-    for(const table of [sandboxFixtures,connectOperations,serviceOperations,serviceResourceAllocations,serviceBookings,serviceRequests,charges,folios,reservationGuests,reservations,bookings,integrationLinks,
+    for(const table of [remotePaymentRequests,payments,sandboxFixtures,connectOperations,serviceOperations,serviceResourceAllocations,serviceBookings,serviceRequests,charges,folios,reservationGuests,reservations,bookings,integrationLinks,
       guestPropertyLinks,domainEventOutbox,auditLogs]) await db.delete(table as any).where(eq((table as any).propertyId,ids.property));
     for(const link of links)await db.delete(guests).where(eq(guests.id,link.guestId));
   }
@@ -118,6 +120,200 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
     expect(JSON.stringify(read)).not.toContain('acceptedQuoteHash');
     const events=await v2.events(ids.property,0,100);
     expect(events.events.some((event:any)=>event.entityId===read.id)).toBe(true);
+  });
+  describe('remote prepayment by Kaspi invoice', () => {
+    const secret = 'isolated-webhook-signing-key-fixture';
+    const payConfig = new ConfigService({INTEGRATION_ENVIRONMENT:'test',
+      CONNECT_QUOTE_SIGNING_SECRET:'isolated-test-signing-secret-32-characters',
+      QUTPAY_API_KEY:'qp_test_fixture', QUTPAY_WEBHOOK_SECRET:secret, QUTPAY_PROPERTY_IDS:ids.property});
+    /** In-memory provider: idempotent create, list by order id, cancel, and what the guest does. */
+    function provider() {
+      const invoices = new Map<string, any>(), byKey = new Map<string, string>(), calls: Array<{method:string;path:string;body?:any}> = [];
+      const failures: Array<Response | Error> = [], notKaspi = new Set<string>();
+      const handler = async (url: unknown, init?: RequestInit) => {
+        const target = new URL(String(url)), path = target.pathname.replace('/api/v1', ''), method = init?.method ?? 'GET';
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        calls.push({method, path, body});
+        const failure = failures.shift();
+        if (failure instanceof Error) throw failure;
+        if (failure) return failure;
+        if (method === 'POST' && path === '/invoices') {
+          if (notKaspi.has(body.customer.phone)) return Response.json({error:'kaspi_customer_not_found', message:'not a customer'}, {status:422});
+          const key = new Headers(init!.headers).get('Idempotency-Key')!;
+          if (byKey.has(key)) return Response.json({...invoices.get(byKey.get(key)!), idempotentReplay:true});
+          const id = 'inv_' + randomUUID().replace(/-/g, '').slice(0, 20).toUpperCase();
+          const invoice = {id, externalOrderId:body.externalOrderId, mode:'sandbox', kind:'phone', currency:'KZT', amount:body.amount,
+            refundedAmount:0, status:'pending', payUrl:`https://qut.kz/pay/${id}`, expiresAt:new Date(Date.now() + 86_400_000).toISOString(),
+            paidAt:null as string | null, description:body.description, metadata:body.metadata};
+          invoices.set(id, invoice); byKey.set(key, id);
+          return Response.json(invoice, {status:201});
+        }
+        if (method === 'GET' && path === '/invoices') {
+          const list = [...invoices.values()].filter(row => row.externalOrderId === target.searchParams.get('externalOrderId'));
+          return Response.json({total:list.length, invoices:list});
+        }
+        const match = /^\/invoices\/(inv_[A-Za-z0-9]+)(\/cancel)?$/.exec(path), invoice = match && invoices.get(match[1]!);
+        if (!invoice) return Response.json({error:'invoice_not_found', message:'missing'}, {status:404});
+        if (match![2]) {
+          if (!['new', 'pending'].includes(invoice.status)) return Response.json({error:'invoice_not_open', message:'closed'}, {status:409});
+          invoice.status = 'cancelled';
+        }
+        return Response.json(invoice);
+      };
+      const pay = (id: string) => Object.assign(invoices.get(id), {status:'paid', paidAt:new Date(Date.now() - 1000).toISOString()});
+      return {invoices, calls, failures, notKaspi, handler, pay};
+    }
+    function setup() {
+      const qut = provider();
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(qut.handler as any);
+      const sendConfirmation = vi.fn();
+      const listeners: Record<string, (payload: any) => Promise<void>> = {};
+      // Events reach the real listeners, as the event bus would deliver them.
+      const bus = {emit: vi.fn(async (event: string, entityType: string, entityId: string, data: any, propertyId?: string) => {
+        await listeners[event]?.({event, entityType, entityId, data, propertyId, timestamp:new Date().toISOString()});
+      }), dispatchPersisted: vi.fn()};
+      const reservationWithEvents = Object.assign(Object.create(ReservationService.prototype), {
+        db, availabilityService: availability, roomStatusService: roomStatus, webhookService: bus, eventOutbox: outbox,
+        folioService: folio, policyService: policy, depositSettlementService: settlement,
+      }) as ReservationService;
+      const guarantee = new ReservationGuaranteeService(db, outbox, bus as any, reservationWithEvents, {send:sendConfirmation} as any, folio, {} as any);
+      const remote = new RemotePaymentService(db, payConfig, folio, guarantee, bus as any);
+      listeners['payment.received'] = payload => guarantee.onPayment(payload);
+      listeners['reservation.cancelled'] = payload => remote.onStayClosed(payload);
+      const payV2 = new ConnectV2Service(db, payConfig, rates, taxes, booking, reservation, availability,
+        folio, policy, settlement, service, requests, {} as any, remote);
+      const callback = (invoiceId: string, signed = true) => {
+        const invoice = qut.invoices.get(invoiceId);
+        const raw = Buffer.from(JSON.stringify({event:`invoice.${invoice.status}`, invoice, sentAt:new Date().toISOString()}));
+        const timestamp = String(Math.floor(Date.now() / 1000));
+        const signature = createHmac('sha256', signed ? secret : 'forged-secret-of-sixteen').update(timestamp + '.').update(raw).digest('hex');
+        return remote.handleWebhook(raw, timestamp, 'sha256=' + signature);
+      };
+      const bookPending = async (checkIn = '2027-03-01', checkOut = '2027-03-03') => {
+        const quote = await payV2.quote({...input, checkIn, checkOut});
+        expect(quote.prepayment).toMatchObject({amount:'110.00'});
+        const booked = await payV2.book({...input, checkIn, checkOut, guestFirstName:'Test', idempotencyKey:randomUUID(),
+          acceptedQuote:quote.acceptedQuote, integrationContext:{sourceSystem:'guestra_crm', customerId:input.customerId}});
+        expect(booked.status).toBe('pending');
+        return booked;
+      };
+      const ask = (reservationId: string, phone = '+7 (700) 123-45-67', extra = {}) => remote.createForCustomer(input.customerId,
+        {propertyId:ids.property, reservationId, phone, source:'agent', conversationId:'conv-1', ...extra});
+      return {qut, fetchSpy, remote, guarantee, payV2, callback, bookPending, ask, bus, sendConfirmation};
+    }
+    beforeEach(async () => {
+      await db.update(properties).set({settings:{optionHoldMinutes:90, depositPercentage:50, optionExpiryAction:'cancel'}}).where(eq(properties.id, ids.property));
+    });
+    afterEach(async () => {
+      vi.restoreAllMocks();
+      await db.update(properties).set({settings:null}).where(eq(properties.id, ids.property));
+    });
+
+    it('holds the booking, sends one invoice per stay and records the verified payment once', async () => {
+      const {qut, remote, payV2, callback, bookPending, ask} = setup();
+      expect((await payV2.capabilities(ids.property)).features.paymentLinks).toBe(true);
+      const booked = await bookPending();
+      const stay = (await db.select().from(reservations).where(eq(reservations.id, booked.reservationId)))[0]!;
+      expect(stay).toMatchObject({status:'pending', requiredDeposit:'110.00', guaranteeType:'deposit'});
+      expect(stay.optionUntil!.getTime() - Date.now()).toBeGreaterThan(85 * 60_000);
+      await expect(remote.createForCustomer('other-contact', {propertyId:ids.property, reservationId:booked.reservationId, phone:'77001234567', source:'agent'}))
+        .rejects.toThrow('Customer is not linked');
+      await expect(ask(booked.reservationId, '12345')).rejects.toMatchObject({response:{code:'REMOTE_PAYMENT_INVALID_PHONE'}});
+      await expect(ask(booked.reservationId, '+7 700 123 45 67', {expectedAmount:'100.00'})).rejects.toMatchObject({response:{code:'REMOTE_PAYMENT_AMOUNT_CHANGED'}});
+      const first = await ask(booked.reservationId);
+      expect(first).toMatchObject({status:'sent', amount:'110.00', mode:'test', phone:'+7 700 ***-**-67', payUrl:expect.stringMatching(/^https:\/\/qut\.kz\/pay\/inv_/)});
+      const again = await ask(booked.reservationId, '87001234567', {expectedAmount:'110.00'});
+      expect(again.requestId).toBe(first.requestId);
+      const created = qut.calls.filter(call => call.method === 'POST' && call.path === '/invoices');
+      expect(created).toHaveLength(1);
+      expect(created[0]!.body).toMatchObject({kind:'phone', amount:110, customer:{phone:'77001234567'}, externalOrderId:first.requestId,
+        metadata:{propertyId:ids.property, reservationId:booked.reservationId, requestId:first.requestId}});
+      expect(created[0]!.body.description.length).toBeLessThanOrEqual(60);
+      expect(created[0]!.body.description).toMatch(/^Предоплата брони /);
+
+      // Another number: the first invoice is withdrawn before the second one goes out.
+      const second = await ask(booked.reservationId, '+7 701 000 00 01');
+      expect(second.requestId).not.toBe(first.requestId);
+      const firstInvoice = [...qut.invoices.values()].find(row => row.externalOrderId === first.requestId)!;
+      expect(firstInvoice.status).toBe('cancelled');
+      const secondInvoice = [...qut.invoices.values()].find(row => row.externalOrderId === second.requestId)!;
+
+      await expect(callback(secondInvoice.id, false)).rejects.toThrow('INVALID_WEBHOOK_SIGNATURE');
+      qut.pay(secondInvoice.id);
+      await Promise.all([callback(secondInvoice.id), callback(secondInvoice.id)]);
+      const rows = await db.select().from(payments).where(eq(payments.propertyId, ids.property));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({status:'captured', amount:'110.00', method:'other', gatewayProvider:'qutpay_test',
+        gatewayTransactionId:secondInvoice.id, idempotencyKey:`qutpay:${secondInvoice.id}`});
+      const after = await payV2.snapshot(ids.property, 'reservation', booked.reservationId, input.customerId);
+      expect(after.status).toBe('assigned');
+      const list = await remote.listForCustomer(ids.property, booked.reservationId, input.customerId);
+      expect(list.requests.map(r => [r.status, r.reviewReason])).toEqual([['paid', null], ['cancelled', null]]);
+      expect(list.requests[0]!.payUrl).toBeNull();
+      await expect(ask(booked.reservationId)).rejects.toMatchObject({response:{code:'REMOTE_PAYMENT_NOT_AWAITING_PREPAYMENT'}});
+    });
+
+    it('withdraws the invoice when the option is released, and a late payment is recorded for staff without restoring the room', async () => {
+      const {qut, remote, guarantee, bookPending, ask, bus} = setup();
+      const booked = await bookPending('2027-05-01', '2027-05-03');
+      const request = await ask(booked.reservationId);
+      const invoice = [...qut.invoices.values()].find(row => row.externalOrderId === request.requestId)!;
+      // The guest pays at the last second, but the provider reports it only after the option sweep.
+      qut.pay(invoice.id);
+      await db.update(reservations).set({optionUntil:new Date(Date.now() - 60_000)}).where(eq(reservations.id, booked.reservationId));
+      await guarantee.sweepExpiredOptions(ids.property);
+      const [stay] = await db.select().from(reservations).where(eq(reservations.id, booked.reservationId));
+      expect(stay!.status).toBe('cancelled');
+      const [row] = (await remote.listForReservation(ids.property, booked.reservationId)).requests;
+      expect(row).toMatchObject({status:'paid', reviewReason:'paid_after_option_expiry'});
+      const rows = await db.select().from(payments).where(eq(payments.propertyId, ids.property));
+      expect(rows).toHaveLength(1);
+      expect(bus.emit.mock.calls.map(call => call[0])).toContain('reservation.paid_after_option_expiry');
+    });
+
+    it('a cancelled stay withdraws its open invoice at the provider', async () => {
+      const {qut, guarantee, bookPending, ask, remote} = setup();
+      const booked = await bookPending('2027-06-01', '2027-06-03');
+      const request = await ask(booked.reservationId);
+      await db.update(reservations).set({optionUntil:new Date(Date.now() - 60_000)}).where(eq(reservations.id, booked.reservationId));
+      await guarantee.sweepExpiredOptions(ids.property);
+      const invoice = [...qut.invoices.values()].find(row => row.externalOrderId === request.requestId)!;
+      expect(invoice.status).toBe('cancelled');
+      expect((await remote.listForReservation(ids.property, booked.reservationId)).requests[0]).toMatchObject({status:'cancelled', reviewReason:null});
+      expect(await db.select().from(payments).where(eq(payments.propertyId, ids.property))).toHaveLength(0);
+    });
+
+    it('a number without Kaspi fails the attempt and a new attempt is allowed', async () => {
+      const {qut, bookPending, ask, remote} = setup();
+      const booked = await bookPending('2027-07-01', '2027-07-03');
+      qut.notKaspi.add('77000000404');
+      await expect(ask(booked.reservationId, '+7 700 000 04 04')).rejects.toMatchObject({response:{code:'REMOTE_PAYMENT_NOT_KASPI_CUSTOMER'}});
+      await expect(ask(booked.reservationId)).resolves.toMatchObject({status:'sent'});
+      const list = await remote.listForReservation(ids.property, booked.reservationId);
+      expect(list.requests.map(r => [r.status, r.errorCode])).toEqual([['sent', null], ['failed', 'kaspi_customer_not_found']]);
+    });
+
+    it('an unanswered create is settled by the scheduler from the order id, without a second push', async () => {
+      const {qut, bookPending, ask, remote} = setup();
+      const booked = await bookPending('2027-08-01', '2027-08-03');
+      // The provider issued the invoice but the answer was lost.
+      const original = qut.handler;
+      qut.failures.push(new Error('socket hang up'));
+      await expect(ask(booked.reservationId)).rejects.toMatchObject({response:{code:'REMOTE_PAYMENT_PROVIDER_UNCERTAIN'}});
+      let [row] = (await remote.listForReservation(ids.property, booked.reservationId)).requests;
+      expect(row).toMatchObject({status:'unknown'});
+      // The same request retried by the caller reuses the idempotency key.
+      await expect(ask(booked.reservationId)).resolves.toMatchObject({status:'sent', requestId:row!.requestId});
+      expect(qut.invoices.size).toBe(1);
+      expect(original).toBe(qut.handler);
+      // Webhook lost: the sweep reads the paid invoice and records it.
+      const invoice = [...qut.invoices.values()][0]!;
+      qut.pay(invoice.id);
+      await remote.sweep(new Date(Date.now() + 5 * 60_000));
+      [row] = (await remote.listForReservation(ids.property, booked.reservationId)).requests;
+      expect(row).toMatchObject({status:'paid'});
+      expect(await db.select().from(payments).where(eq(payments.propertyId, ids.property))).toHaveLength(1);
+    });
   });
   it('keeps returning identity and does not merge another external customer with the same phone',async()=>{
     const first=await purchase(),second=await purchase({checkIn:'2027-04-01',checkOut:'2027-04-03',

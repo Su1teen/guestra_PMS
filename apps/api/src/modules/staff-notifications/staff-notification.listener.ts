@@ -8,6 +8,15 @@ import {
 } from '../webhook/webhook-delivery.service';
 import { StaffNotificationService } from './staff-notification.service';
 
+/** What staff should do with a remote (Kaspi) payment the system could not settle on its own. */
+const REVIEW_MESSAGES: Record<string, string> = {
+  reservation_not_open: 'Гость оплатил счёт Kaspi, но бронь уже отменена или закрыта. Деньги записаны в фолио: оформите новую бронь или возврат.',
+  reservation_already_confirmed: 'Гость оплатил счёт Kaspi по уже подтверждённой брони. Проверьте, нет ли двойной оплаты.',
+  folio_not_open: 'Оплата Kaspi получена, но фолио брони закрыто. Разнесите платёж вручную.',
+  invoice_mismatch: 'Счёт Kaspi не совпадает с запросом (сумма или номер). Деньги не записаны: проверьте счёт в кабинете провайдера.',
+  provider_refund: 'По счёту Kaspi сделан возврат у провайдера. Внесите возврат в фолио с причиной.',
+};
+
 /**
  * Listens to domain events and creates staff-facing in-app notifications.
  */
@@ -31,18 +40,21 @@ export class StaffNotificationListener {
   @OnEvent('maintenance.created')
   @OnEvent('maintenance.completed')
   @OnEvent('payment.failed')
+  @OnEvent('payment_request.needs_review')
   async onHotelEvent(payload: WebhookPayload) {
     if (!payload.propertyId) return;
     const titles: Record<string, string> = { 'reservation.created': 'Новая бронь', 'reservation.confirmed': 'Бронь подтверждена', 'reservation.option_expired': 'Истёк срок опции — нет гарантии', 'reservation.paid_after_option_expiry': 'Оплата после истечения брони', 'reservation.checked_in': 'Гость заселён',
       'reservation.checked_out': 'Выезд оформлен', 'reservation.cancelled': 'Бронь отменена', 'reservation.room_moved': 'Номер изменён',
       'room.status_changed': 'Обновлён статус номера', 'guest_request.created': 'Новый запрос гостя', 'guest_request.completed': 'Запрос гостя выполнен',
-      'maintenance.created': 'Новая заявка на ремонт', 'maintenance.completed': 'Ремонт завершён', 'payment.failed': 'Не удалось принять оплату' };
-    const permission = payload.event.startsWith('reservation.') ? 'reservations.read' : payload.event.startsWith('room.') ? 'rooms.read' : payload.event.startsWith('payment.') ? 'folios.read' : 'ops.read';
+      'maintenance.created': 'Новая заявка на ремонт', 'maintenance.completed': 'Ремонт завершён', 'payment.failed': 'Не удалось принять оплату',
+      'payment_request.needs_review': 'Оплата Kaspi требует проверки' };
+    const permission = payload.event.startsWith('reservation.') ? 'reservations.read' : payload.event.startsWith('payment_request.') ? 'folios.read' : payload.event.startsWith('room.') ? 'rooms.read' : payload.event.startsWith('payment.') ? 'folios.read' : 'ops.read';
     const key = createHash('sha256').update(payload.logicalEventId ?? [payload.event, payload.entityId, payload.timestamp].join(':')).digest('hex');
     const title = titles[payload.event];
+    const review = payload.event === 'payment_request.needs_review' ? REVIEW_MESSAGES[String(payload.data?.['reviewReason'] ?? '')] : undefined;
     if (!title) return;
     await this.staffNotifications.create({ propertyId: payload.propertyId, type: 'hotel_event', title,
-      message: 'Откройте событие, чтобы проверить детали и дальнейшие действия.', severity: ['payment.failed', 'reservation.option_expired', 'reservation.paid_after_option_expiry'].includes(payload.event) ? 'warning' : 'info',
+      message: review ?? 'Откройте событие, чтобы проверить детали и дальнейшие действия.', severity: ['payment.failed', 'reservation.option_expired', 'reservation.paid_after_option_expiry', 'payment_request.needs_review'].includes(payload.event) ? 'warning' : 'info',
       sourceEvent: payload.event, sourceEntityType: payload.entityType, sourceEntityId: payload.entityId,
       requiredPermission: permission, deduplicationKey: key });
   }
