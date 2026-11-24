@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { QutPaySandbox, normalizeQutPayPhone, verifyQutPayWebhook } from './qut-pay-sandbox';
 
 const apiKey = 'qp_test_fixture';
-const input = { amount: 20_000, phone: '+7 (700) 123-45-67', orderId: 'deposit:123', description: '�।����� �஭�' };
+const input = { amount: 20_000, phone: '+7 (700) 123-45-67', orderId: 'deposit:123', description: 'Предоплата брони' };
 const fixture = {
   id: 'inv_SAMPLE', externalOrderId: input.orderId, status: 'pending', amount: input.amount,
   mode: 'sandbox', kind: 'phone', currency: 'KZT', payUrl: 'https://qut.kz/pay/inv_SAMPLE',
@@ -67,7 +67,7 @@ describe('QUT Pay sandbox phone invoices', () => {
 
 describe('QUT Pay sandbox webhook signatures', () => {
   const secret = 'fixture-webhook-secret';
-  const body = Buffer.from('{"label": "�।�����"}\n');
+  const body = Buffer.from('{"label": "предоплата"}\n');
   const timestamp = '1795480200';
   const now = Number(timestamp) * 1000;
   const signature = 'sha256=' + createHmac('sha256', secret).update(timestamp + '.').update(body).digest('hex');

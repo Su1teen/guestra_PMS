@@ -46,7 +46,7 @@ export class ConnectBookingService {
   ) {}
 
   /**
-   * Book a room - Agent 4.5 (Hotel Booking Agent).
+   * Book a room — Agent 4.5 (Hotel Booking Agent).
    * A signed quote may carry the sandbox property's configured prepayment terms.
    */
   async book(dto: AgentBookDto, acceptedQuote?: ConnectAcceptedQuote) {
@@ -348,7 +348,7 @@ export class ConnectBookingService {
   }
 
   /**
-   * Verify booking - Agent 4.7 (Confirmation Verification).
+   * Verify booking — Agent 4.7 (Confirmation Verification).
    */
   async verify(confirmationNumber: string) {
     const { booking, reservation } = await this.loadBookingByConfirmation(confirmationNumber);
@@ -419,7 +419,7 @@ export class ConnectBookingService {
   }
 
   /**
-   * Modify booking - Agent 4.6 (Modification & Cancellation).
+   * Modify booking — Agent 4.6 (Modification & Cancellation).
    */
   async modify(confirmationNumber: string, dto: AgentModifyDto) {
     const { booking, reservation } = await this.loadBookingByConfirmation(confirmationNumber);
@@ -526,7 +526,7 @@ export class ConnectBookingService {
         throw new BadRequestException('No availability for modified dates/room type');
       }
 
-      // Re-calculate rate - same-property scoped (was bare-id before).
+      // Re-calculate rate — same-property scoped (was bare-id before).
       const [ratePlan] = await this.db
         .select()
         .from(ratePlans)
@@ -586,7 +586,7 @@ export class ConnectBookingService {
   }
 
   /**
-   * Cancel booking - Agent 4.6 (Modification & Cancellation).
+   * Cancel booking — Agent 4.6 (Modification & Cancellation).
    * Delegates status + money settlement to ReservationService.cancel.
    */
   async cancel(confirmationNumber: string, reason?: string) {
@@ -681,7 +681,7 @@ export class ConnectBookingService {
         return guest;
       }
     }
-    // Try to find by email - but ONLY reuse a guest that is already linked to
+    // Try to find by email — but ONLY reuse a guest that is already linked to
     // THIS property via an existing reservation. The `guests` row is cross-property
     // by design, yet a bare email match would let one tenant attach to (and later,
     // via modify(), overwrite) another tenant's guest profile. Scope reuse to the
@@ -715,7 +715,7 @@ export class ConnectBookingService {
       .insert(guests)
       .values({
         firstName: dto.guestFirstName.trim(),
-        lastName: dto.guestLastName?.trim() || '�� 㪠����',
+        lastName: dto.guestLastName?.trim() || 'Не указана',
         email: dto.guestEmail ?? null,
         phone: dto.guestPhone ?? null,
         loyaltyNumber: dto.loyaltyNumber ?? null,

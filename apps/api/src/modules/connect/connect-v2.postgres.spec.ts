@@ -274,16 +274,16 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
         const port=(studioCrmServer.address() as any).port;
         const studio=new Integrations({environment:'test',sandbox:true,local:false,crmVersion:'v2',allowedHosts:['127.0.0.1'],integrationHosts:['127.0.0.1'],
           crmUrl:`https://127.0.0.1:${port}/api/integrations/agent`,crmKey,crmProperty:'les_borovoe',crmTenant:'org_les_live',pmsProperty:ids.property,pmsTenant:ids.property});
-        const conv={externalChatId:origin.externalChatId},guest={externalUserId:origin.externalUserId},attempt={externalMessageId:randomUUID(),correlationId:randomUUID(),text:'���� ���஭�஢���',attachments:[]};
+        const conv={externalChatId:origin.externalChatId},guest={externalUserId:origin.externalUserId},attempt={externalMessageId:randomUUID(),correlationId:randomUUID(),text:'Хочу забронировать',attachments:[]};
         const client={firstName:'Integration',lastName:'Test',displayName:'Integration Test',language:'ru'};
         inbound={body:await studio.inbound(conv,guest,attempt,client)};
         const duplicate=await studio.inbound(conv,guest,attempt,client);
         expect(duplicate.duplicate).toBe(true);
         expect(duplicate.context.customer.id).toBe(inbound.body.context.customer.id);
-        const returning=await studio.inbound(conv,guest,{...attempt,externalMessageId:randomUUID(),correlationId:randomUUID(),text:'� 㦥 ��ᠫ'},client);
+        const returning=await studio.inbound(conv,guest,{...attempt,externalMessageId:randomUUID(),correlationId:randomUUID(),text:'Я уже писал'},client);
         expect(returning.context.customer.id).toBe(inbound.body.context.customer.id);
         expect(returning.context.conversation.id).toBe(inbound.body.context.conversation.id);
-      } else inbound=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'���� ���஭�஢���'}).expect(201);
+      } else inbound=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'Хочу забронировать'}).expect(201);
       const identity={...origin,conversationId:inbound.body.context.conversation.id};
       const before=await pool.query('select (select count(*) from reservations)::int as reservations,(select count(*) from folios)::int as folios');
       const lead=await send('/requests/upsert',{...identity,idempotencyKey:randomUUID(),direction:'accommodation',checkIn:'2027-03-01T00:00:00Z',
@@ -296,11 +296,11 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
         .toEqual({total_amount:220,room_amount:220});
       async function approve(actionType:string,payload:any) {
         const key=randomUUID();
-        const proposed=await send('/v2/messages/outbound/prepare',{...identity,text:'���⢥न� ����⢨�',idempotencyKey:key,proposedAction:{actionType,payload}}).expect(201);
+        const proposed=await send('/v2/messages/outbound/prepare',{...identity,text:'Подтвердите действие',idempotencyKey:key,proposedAction:{actionType,payload}}).expect(201);
         expect(proposed.body.deliveryStatus).toBe('pending');
         await send('/messages/outbound/result',{...identity,messageId:proposed.body.messageId,idempotencyKey:key,success:true,
           externalMessageId:'simulator:'+proposed.body.messageId}).expect(200);
-        const confirmed=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'���⢥ত��'}).expect(201);
+        const confirmed=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'Подтверждаю'}).expect(201);
         return {proposalMessageId:proposed.body.messageId,confirmationMessageId:confirmed.body.messageId,idempotencyKey:randomUUID()};
       }
       const approval=await approve('book_accommodation',{offerId:offer.body.offer.id});
@@ -322,8 +322,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       const serviceResult=await send('/v2/actions',{...identity,...serviceApproval,actionType:'book_service',payload}).expect(200);
       expect(serviceResult.body.snapshot.totalAmount).toBe('50.00');
       expect(await db.select().from(charges).where(eq(charges.propertyId,ids.property))).toHaveLength(1);
-      const guestMessage=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'�㦭� ����⥭�'}).expect(201);
-      await send('/v2/guest-requests',{...identity,sourceMessageId:guestMessage.body.messageId,title:'�������⥫�� ����⥭�',
+      const guestMessage=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'Нужны полотенца'}).expect(201);
+      await send('/v2/guest-requests',{...identity,sourceMessageId:guestMessage.body.messageId,title:'Дополнительные полотенца',
         department:'housekeeping',priority:'medium',idempotencyKey:randomUUID()}).expect(200);
       expect(await db.select().from(serviceRequests).where(eq(serviceRequests.propertyId,ids.property))).toHaveLength(1);
       const cancelPayload={entityId:booked.id,expectedUpdatedAt:booked.updatedAt};
@@ -338,7 +338,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       const projected=await pool.query("select snapshot->>'status' as status from integration_projections where entity_id=$1",[booked.id]);
       expect(projected.rows[0].status).toBe('cancelled');
       await send('/v2/inbox/'+identity.conversationId+'/takeover',{propertyId:identity.propertyId,staffReference:'pms:test-staff'}).expect(200);
-      await send('/v2/messages/outbound/prepare',{...identity,text:'������� �⢥� AI',idempotencyKey:randomUUID()}).expect(409);
+      await send('/v2/messages/outbound/prepare',{...identity,text:'Поздний ответ AI',idempotencyKey:randomUUID()}).expect(409);
       const quote=await v2.quote(input);
       await request(api.getHttpServer()).post('/api/v1/connect/v2/book').set('x-api-key',pmsKey)
         .send({...input,guestFirstName:'Unauthorized',acceptedQuote:quote.acceptedQuote,idempotencyKey:randomUUID(),integrationContext:{sourceSystem:'guestra_crm',customerId:input.customerId}}).expect(403);

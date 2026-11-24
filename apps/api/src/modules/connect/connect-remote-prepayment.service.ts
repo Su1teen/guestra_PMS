@@ -146,7 +146,7 @@ export class ConnectRemotePrepaymentService {
     const provider = new QutPaySandbox(apiKey);
     const invoice = await this.callProvider(() => record.providerInvoiceId
       ? provider.getPhoneInvoice(record.providerInvoiceId)
-      : provider.createPhoneInvoice({ amount: Number(record.amount), phone, orderId, description: '�।����� �஭�஢����' }));
+      : provider.createPhoneInvoice({ amount: Number(record.amount), phone, orderId, description: 'Предоплата бронирования' }));
     await this.reconcile(record, invoice);
     if (invoice.status !== 'new' && invoice.status !== 'pending') {
       throw new ConflictException('REMOTE_PREPAYMENT_INVOICE_NOT_PAYABLE');
