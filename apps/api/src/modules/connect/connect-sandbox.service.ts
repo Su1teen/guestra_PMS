@@ -74,7 +74,7 @@ export class ConnectSandboxService {
    if(stay&&pricing) {
     refs['bookingId']=randomUUID();refs['reservationId']=randomUUID();refs['roomId']=randomUUID();refs['folioId']=randomUUID();
     const status=historical?'checked_out':input.stage==='cancelled'?'cancelled':input.stage==='pending_payment'?'pending':inside?'checked_in':'confirmed';
-    const paymentTerms = status === 'pending' ? pricing.sandboxPrepayment : undefined;
+    const paymentTerms = status === 'pending' ? pricing.prepayment : undefined;
     await tx.insert(rooms).values({id:refs['roomId'],propertyId:input.propertyId,roomTypeId:registered.roomTypeId,number:'FX-'+refs['roomId'].slice(0,8),status:inside?'occupied':'vacant_clean'});
     await tx.insert(bookings).values({id:refs['bookingId'],propertyId:input.propertyId,guestId:refs['guestId'],confirmationNumber:'FIX-'+refs['bookingId'],source:'agent',
      integrationContext:{sourceSystem:'guestra_crm',customerId:input.customerId,conversationId:input.conversationId,requestId:input.requestId,fixtureId:input.fixtureId}});

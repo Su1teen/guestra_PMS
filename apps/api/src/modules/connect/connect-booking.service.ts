@@ -47,7 +47,7 @@ export class ConnectBookingService {
 
   /**
    * Book a room — Agent 4.5 (Hotel Booking Agent).
-   * A signed quote may carry the sandbox property's configured prepayment terms.
+   * A signed quote may carry the property's prepayment terms: the booking is then a tentative stay with a hold.
    */
   async book(dto: AgentBookDto, acceptedQuote?: ConnectAcceptedQuote) {
     if (acceptedQuote) assertQuoteMatches(acceptedQuote, dto);
@@ -206,7 +206,7 @@ export class ConnectBookingService {
       }
       const baseAmountDec = new Decimal(pricing?.lineItems[0]?.rate ?? ratePlan.baseAmount);
       const totalAmountDec = new Decimal(pricing?.totalAmount ?? baseAmountDec.times(nights));
-      const prepayment = acceptedQuote?.sandboxPrepayment;
+      const prepayment = acceptedQuote?.prepayment;
       const optionUntil = prepayment?.holdMinutes == null ? null : new Date(Date.now() + prepayment.holdMinutes * 60_000);
 
       const [booking] = await tx

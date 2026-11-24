@@ -8,7 +8,7 @@ import { RatePlanService } from '../rate-plan/rate-plan.service';
 import { TaxService } from '../tax/tax.service';
 import { calculateCanonicalRoomPricing } from '../rate-plan/canonical-room-pricing';
 import { ConnectBookingService } from './connect-booking.service';
-import { ConnectRemotePrepaymentService } from './connect-remote-prepayment.service';
+import { RemotePaymentService } from '../remote-payment/remote-payment.service';
 import { ReservationGuaranteeService } from '../reservation/reservation-guarantee.service';
 import { ConnectSearchService } from './connect-search.service';
 import type {AgentSearchDto} from './dto/agent-search.dto';
@@ -33,13 +33,13 @@ export class ConnectV2Service {
     private readonly folioService:FolioService,private readonly policy:PolicyService,
     private readonly settlement:DepositSettlementService,private readonly serviceBookings:ConnectServiceBookingService,
     private readonly requests:ServiceRequestsService,private readonly searchService:ConnectSearchService,
-    @Optional() private readonly remotePrepayment?:ConnectRemotePrepaymentService) {}
+    @Optional() private readonly remotePayments?:RemotePaymentService) {}
   async capabilities(propertyId:string,credentialId?:string) {
     const [property]=await this.db.select().from(properties).where(eq(properties.id,propertyId));
     if(!property) throw new NotFoundException('PROPERTY_NOT_FOUND');
     const [deployment]=await this.db.select().from(integrationDeployment).limit(1);
     if(!deployment||deployment.environment!==this.config.get('INTEGRATION_ENVIRONMENT','production'))throw new ConflictException('INTEGRATION_DATABASE_NOT_ATTESTED');
-    const paymentLinks = await this.remotePrepayment?.available(propertyId) ?? false;
+    const paymentLinks = this.remotePayments?.isEnabled(propertyId) ?? false;
     return { contractVersion:'guestra-connect-v2',environment:this.config.get('INTEGRATION_ENVIRONMENT','production'),
       sourceSystem:'guestra_pms',propertyId,tenantId:property.organizationId ?? property.id,credentialId,deploymentId:deployment.deploymentId,
       ownership:['guests','inventory','reservations','stays','services','folios','payments'],
@@ -55,15 +55,19 @@ export class ConnectV2Service {
     const price=await calculateCanonicalRoomPricing({propertyId:dto.propertyId,ratePlanId:dto.ratePlanId,checkIn:dto.checkIn,checkOut:dto.checkOut,nights,
       isTaxInclusive:plan.isTaxInclusive,ratePlanService:this.rates,taxService:this.taxes,occupancy:{adults:dto.adults,children:dto.children??0}});
     const expiresAt=new Date(Date.now()+Math.min(900,Math.max(30,Number(this.config.get('CONNECT_QUOTE_TTL_SECONDS','300'))))*1000).toISOString();
-    const sandboxPrepayment = await this.sandboxPaymentTerms(dto.propertyId, price.totalAmount, price.currency);
+    const prepayment = await this.prepaymentTerms(dto.propertyId, price.totalAmount, price.currency);
     const quote={version:'connect-quote-v2' as const,...dto,children:dto.children??0,...price,expiresAt,
-      ...(sandboxPrepayment ? { sandboxPrepayment } : {})};
+      ...(prepayment ? { prepayment } : {})};
     return { ...price,nights,propertyId:dto.propertyId,roomTypeId:dto.roomTypeId,ratePlanId:dto.ratePlanId,roomTypeName:type.name,expiresAt,
-      ...(sandboxPrepayment ? { sandboxPrepayment } : {}),
+      ...(prepayment ? { prepayment } : {}),
       acceptedQuote:signQuote(quote,this.config.get('CONNECT_QUOTE_SIGNING_SECRET','')) };
   }
-  private async sandboxPaymentTerms(propertyId: string, totalAmount: string, currency: string) {
-    if (currency !== 'KZT' || !await this.remotePrepayment?.available(propertyId)) return undefined;
+  /**
+   * With remote prepayment enabled, an agent booking becomes a tentative stay (option) with the property's
+   * own hold time and guarantee share; the guest's Kaspi payment then confirms it. Without it, nothing changes.
+   */
+  private async prepaymentTerms(propertyId: string, totalAmount: string, currency: string) {
+    if (currency !== 'KZT' || !this.remotePayments?.isEnabled(propertyId)) return undefined;
     const [property] = await this.db.select({ settings: properties.settings }).from(properties).where(eq(properties.id, propertyId));
     const now = new Date();
     const terms = ReservationGuaranteeService.holdTerms(property?.settings, totalAmount, {}, now);
@@ -81,8 +85,8 @@ export class ConnectV2Service {
       return this.publicBooking(await this.booking.book({...input,integrationContext:{...input.integrationContext,acceptedQuoteHash:fingerprint(acceptedQuote)}}));
     }
     const quote=readQuote(acceptedQuote,this.config.get('CONNECT_QUOTE_SIGNING_SECRET',''));
-    const currentTerms = await this.sandboxPaymentTerms(dto.propertyId, quote.totalAmount, quote.currency);
-    if (fingerprint({ terms: currentTerms }) !== fingerprint({ terms: quote.sandboxPrepayment })) {
+    const currentTerms = await this.prepaymentTerms(dto.propertyId, quote.totalAmount, quote.currency);
+    if (fingerprint({ terms: currentTerms }) !== fingerprint({ terms: quote.prepayment })) {
       throw new ConflictException('PREPAYMENT_TERMS_CHANGED');
     }
     return this.publicBooking(await this.booking.book({...input,integrationContext:{...input.integrationContext,acceptedQuoteHash:fingerprint(acceptedQuote)}},quote));
