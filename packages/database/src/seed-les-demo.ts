@@ -241,7 +241,7 @@ async function main() {
 
   // ---------------------------------------------------------------- stays
   const end = addDays(today, ahead);
-  const rows = { bookings: [] as any[], reservations: [] as any[], folios: [] as any[], charges: [] as any[], payments: [] as any[], allocations: [] as any[], links: [] as any[] };
+  const rows = { bookings: [] as any[], reservations: [] as any[], folios: [] as any[], charges: [] as any[], payments: [] as any[], allocations: [] as any[] };
   const manifest: any[] = [];
   const dailyActual = new Map<string, Record<string, number>>();
   const addActual = (date: string, article: string, value: number) => {
@@ -326,9 +326,8 @@ async function main() {
           cost: amount(BREAKFAST.cost * adults * nights), currencyCode: CURRENCY, occurredAt: createdAt });
       const managed = crm && status !== 'cancelled' ? pick([0, 1, 2, 2, null]) : null;
       if (crm) {
-        rows.links.push({ propertyId, sourceSystem: 'guestra_crm', externalEntityType: 'reservation', externalEntityId: `res_demo_${conf}`, localEntityType: 'reservation', localEntityId: id,
-          metadata: { demo: true } });
-        manifest.push({ crmReservationId: `res_demo_${conf}`, pmsReservationId: id, confirmationNumber: conf, guest: { firstName: guest.firstName, lastName: guest.lastName, phone: guest.phone },
+        // CRM sync links the stay to its CRM copy; the CRM demo script attaches the closing manager to that copy.
+        manifest.push({ pmsReservationId: id, confirmationNumber: conf, guest: { firstName: guest.firstName, lastName: guest.lastName, phone: guest.phone },
           arrival, departure, nights, roomType: category.name, roomNumber: room.number, adults, children, total, status, source, createdAt: createdAt.toISOString(), manager: managed });
       }
 
@@ -426,7 +425,6 @@ async function main() {
     await chunked(rows.payments.filter((p) => !p.originalPaymentId), 500, (part) => tx.insert(schema.payments).values(part));
     await chunked(rows.payments.filter((p) => p.originalPaymentId), 500, (part) => tx.insert(schema.payments).values(part));
     await chunked(rows.allocations, 500, (part) => tx.insert(schema.reservationRevenueAllocations).values(part));
-    await chunked(rows.links, 500, (part) => tx.insert(schema.integrationLinks).values(part));
     await tx.insert(schema.houseAccounts).values({ id: accountId, propertyId, name: walkInName, kind: 'retail', status: 'open', currencyCode: CURRENCY,
       totalCharges: amount(walkTotal), totalPayments: amount(walkPaid), balance: amount(walkTotal - walkPaid) } as any);
     await chunked(walkCharges, 500, (part) => tx.insert(schema.charges).values(part));
