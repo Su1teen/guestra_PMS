@@ -17,12 +17,36 @@ import {
   roomInventoryBlocks,
   roomTypes,
   managementInputs,
+  guests,
 } from '@telivityhaip/database';
 import { MANAGEMENT_REVENUE_ARTICLES, MANAGEMENT_EXPENSE_ARTICLES, MANAGEMENT_LABELS, managementGroup, type ManagementMetrics, type ManagementRow, type ManagementReportData, type ManagementInput } from '@telivityhaip/shared';
 import { DRIZZLE } from '../../database/database.module';
 import { reportPaymentSumWhere } from '../payment/payment-ledger';
 import { reportDate, reportDates, priorYearDate, ratio } from './reporting-policy';
 import { activeInventoryBlockConditions, dayAfter } from '../room/room-inventory-policy';
+
+type ManagerColumn = 'day' | 'mtd' | 'ytd' | 'dayLy' | 'mtdLy' | 'ytdLy';
+
+/** Revenue departments of the manager's report, in display order. Tax is shown apart and is not revenue. */
+export const MANAGER_DEPARTMENTS = [
+  { key: 'accommodation', label: 'Проживание' },
+  { key: 'fnb', label: 'Ресторан и бар' },
+  { key: 'spa', label: 'SPA' },
+  { key: 'bath', label: 'Баня' },
+  { key: 'entertainment', label: 'Развлечения' },
+  { key: 'other', label: 'Прочие услуги' },
+  { key: 'fees', label: 'Сборы и штрафы' },
+  { key: 'adjustments', label: 'Корректировки' },
+] as const;
+/** Charge type → department. Room adjustments are already folded into 'room' by the ledger; package components are meals. */
+export const MANAGER_DEPARTMENT_OF: Record<string, string> = {
+  room: 'accommodation', package: 'fnb', food_beverage: 'fnb', minibar: 'fnb', spa: 'spa', bath: 'bath',
+  entertainment: 'entertainment', phone: 'other', laundry: 'other', parking: 'other', incidental: 'other', fee: 'fees', adjustment: 'adjustments',
+};
+/** Charge types posted by points of sale (never room, tax, package or fees). */
+export const OUTLET_CHARGE_TYPES = ['food_beverage', 'minibar', 'spa', 'bath', 'entertainment', 'phone', 'laundry', 'parking', 'incidental'] as const;
+const OUTLET_DEPARTMENTS: string[] = ['fnb', 'spa', 'bath', 'entertainment', 'other'];
+const ZERO_REVENUE_TYPES = ['complimentary', 'barter'];
 
 @Injectable()
 export class ReportsService {
@@ -605,6 +629,130 @@ export class ReportsService {
         mtdRevenue: periods.periods.mtd?.value ?? null, onBooks: periods.onBooksQuotedAmount.reservations,
         forecastRevenue: null, forecast: periods.forecast,
         comparisons: { previousDay: comparison(previousFinancial), sameDayLastWeek: comparison(lastWeekFinancial) } } };
+  }
+
+  /**
+   * Manager's report for one business date: the day, month to date and year to date, each with the same
+   * period a year earlier. Room statistics, earned revenue by department (charges by service date, tax
+   * excluded, the same ledger as every other report), revenue per outlet and money received.
+   */
+  async getManagerReport(propertyId: string, requestedDate?: string) {
+    if (requestedDate) reportDate(requestedDate);
+    return this.inSnapshot ? this.readManagerReport(propertyId, requestedDate) : this.snapshot(service => service.readManagerReport(propertyId, requestedDate));
+  }
+
+  private async readManagerReport(propertyId: string, requestedDate?: string) {
+    const { property, date } = await this.context(propertyId, requestedDate);
+    const ly = priorYearDate(date);
+    const ranges: Record<ManagerColumn, [string, string]> = {
+      day: [date, date], mtd: [`${date.slice(0, 7)}-01`, date], ytd: [`${date.slice(0, 4)}-01-01`, date],
+      dayLy: [ly, ly], mtdLy: [`${ly.slice(0, 7)}-01`, ly], ytdLy: [`${ly.slice(0, 4)}-01-01`, ly],
+    };
+    const columns = Object.fromEntries(await Promise.all((Object.keys(ranges) as ManagerColumn[]).map(async (key) =>
+      [key, { start: ranges[key][0], end: ranges[key][1], ...(await this.managerPeriod(propertyId, property, ranges[key][0], ranges[key][1])) }])));
+    return { date, propertyId, propertyName: property.name, currencyCode: property.currencyCode, timezone: property.timezone,
+      basis: 'charges.serviceDate', departments: MANAGER_DEPARTMENTS, columns };
+  }
+
+  /** Revenue of the points of sale (restaurant, bar, SPA, bath, activities) per department and outlet, with every charge. */
+  async getOutletRevenue(propertyId: string, startDate: string, endDate: string) {
+    const dates = reportDates(startDate, endDate);
+    if (dates.length > 366) throw new BadRequestException('At most 366 days');
+    return this.inSnapshot ? this.readOutletRevenue(propertyId, startDate, endDate) : this.snapshot(service => service.readOutletRevenue(propertyId, startDate, endDate));
+  }
+
+  private async readOutletRevenue(propertyId: string, startDate: string, endDate: string) {
+    const { property } = await this.context(propertyId, endDate);
+    const rows = await this.db.select({ id: charges.id, date: this.serviceDay(), type: charges.type, outlet: charges.outlet, description: charges.description,
+      amount: charges.amount, currencyCode: charges.currencyCode, folioId: charges.folioId, houseAccountId: charges.houseAccountId,
+      firstName: guests.firstName, lastName: guests.lastName, roomNumber: rooms.number })
+      .from(charges)
+      .leftJoin(folios, and(eq(folios.id, charges.folioId), eq(folios.propertyId, propertyId)))
+      .leftJoin(guests, eq(guests.id, folios.guestId))
+      .leftJoin(reservations, and(eq(reservations.id, folios.reservationId), eq(reservations.propertyId, propertyId)))
+      .leftJoin(rooms, and(eq(rooms.id, reservations.roomId), eq(rooms.propertyId, propertyId)))
+      .where(and(eq(charges.propertyId, propertyId), inArray(charges.type, OUTLET_CHARGE_TYPES as any),
+        gte(this.serviceDay(), startDate), lte(this.serviceDay(), endDate), ne(charges.revenueRole, 'deposit_credit')));
+    this.assertCurrency(rows, property.currencyCode, 'charges');
+    const groups = new Map<string, { department: string; outlet: string; checks: number; amount: Decimal; inHouse: Decimal }>();
+    for (const row of rows) {
+      const department = MANAGER_DEPARTMENT_OF[row.type] ?? 'other';
+      const outlet = row.outlet ?? MANAGER_DEPARTMENTS.find((d) => d.key === department)!.label;
+      const key = `${department}:${outlet}`;
+      const group = groups.get(key) ?? { department, outlet, checks: 0, amount: new Decimal(0), inHouse: new Decimal(0) };
+      group.checks += 1; group.amount = group.amount.plus(row.amount);
+      if (row.folioId) group.inHouse = group.inHouse.plus(row.amount);
+      groups.set(key, group);
+    }
+    const order: string[] = MANAGER_DEPARTMENTS.map((d) => d.key);
+    const outlets = [...groups.values()].sort((a, b) => order.indexOf(a.department) - order.indexOf(b.department) || b.amount.comparedTo(a.amount))
+      .map((g) => ({ department: g.department, outlet: g.outlet, checks: g.checks, amount: g.amount.toNumber(), inHouse: g.inHouse.toNumber(),
+        walkIn: g.amount.minus(g.inHouse).toNumber(), averageCheck: ratio(g.amount.toNumber(), g.checks) }));
+    const total = rows.reduce((sum: Decimal, row: any) => sum.plus(row.amount), new Decimal(0));
+    return { propertyId, propertyName: property.name, currencyCode: property.currencyCode, timezone: property.timezone, from: startDate, to: endDate,
+      basis: 'charges.serviceDate', departments: MANAGER_DEPARTMENTS.filter((d) => OUTLET_DEPARTMENTS.includes(d.key)),
+      totals: { amount: total.toNumber(), checks: rows.length, averageCheck: ratio(total.toNumber(), rows.length) }, outlets,
+      details: rows.sort((a: any, b: any) => String(a.date).localeCompare(String(b.date))).map((row: any) => ({ id: row.id, date: String(row.date),
+        department: MANAGER_DEPARTMENT_OF[row.type] ?? 'other', outlet: row.outlet ?? null, description: row.description, amount: Number(row.amount),
+        guestName: [row.firstName, row.lastName].filter(Boolean).join(' ') || null, roomNumber: row.roomNumber ?? null, inHouse: Boolean(row.folioId) })) };
+  }
+
+  private async managerPeriod(propertyId: string, property: any, start: string, end: string) {
+    const dates = reportDates(start, end);
+    const realised = ['checked_in', 'stayover', 'due_out', 'checked_out'];
+    const [inventory, rows, stays, cancelled, cashRows] = await Promise.all([
+      this.inventory(propertyId, end, property.timezone),
+      this.ledgerRows(propertyId, start, end, property.currencyCode),
+      this.db.select({ arrivalDate: reservations.arrivalDate, departureDate: reservations.departureDate, status: reservations.status,
+        adults: reservations.adults, children: reservations.children, priceType: reservations.priceType }).from(reservations)
+        .where(and(eq(reservations.propertyId, propertyId), lte(reservations.arrivalDate, end), sql`${reservations.departureDate} >= ${start}`,
+          inArray(reservations.status, [...realised, 'no_show'] as any))),
+      this.db.select({ count: sql<number>`count(*)::int` }).from(reservations).where(and(eq(reservations.propertyId, propertyId),
+        gte(this.localDay(reservations.cancelledAt, property.timezone), start), lte(this.localDay(reservations.cancelledAt, property.timezone), end))),
+      this.db.select({ method: payments.method, currencyCode: payments.currencyCode,
+        received: sql<string>`coalesce(sum(case when ${payments.amount}::numeric > 0 then ${payments.amount}::numeric else 0 end), 0)`,
+        refunded: sql<string>`coalesce(sum(case when ${payments.amount}::numeric < 0 then -${payments.amount}::numeric else 0 end), 0)`,
+      }).from(payments).where(and(reportPaymentSumWhere(propertyId), gte(this.localDay(payments.processedAt, property.timezone), start),
+        lte(this.localDay(payments.processedAt, property.timezone), end))).groupBy(payments.method, payments.currencyCode),
+    ]);
+    this.assertCurrency(cashRows, property.currencyCode, 'payments');
+    let available = 0, outOfOrder = 0, sold = 0, complimentary = 0, guestNights = 0;
+    for (const day of dates) {
+      const stock = inventory(day);
+      available += stock.availableRooms; outOfOrder += stock.outOfOrder + stock.outOfService;
+      for (const stay of stays) {
+        if (!realised.includes(stay.status) || !(stay.arrivalDate <= day && stay.departureDate > day)) continue;
+        if (ZERO_REVENUE_TYPES.includes(stay.priceType)) complimentary += 1; else sold += 1;
+        guestNights += Number(stay.adults ?? 0) + Number(stay.children ?? 0);
+      }
+    }
+    const inRange = (value: string) => value >= start && value <= end;
+    const departments: Record<string, Decimal> = Object.fromEntries(MANAGER_DEPARTMENTS.map((d) => [d.key, new Decimal(0)]));
+    let tax = new Decimal(0);
+    for (const row of rows) {
+      if (row.type === 'tax') { tax = tax.plus(row.total); continue; }
+      const key = MANAGER_DEPARTMENT_OF[row.type] ?? 'other';
+      departments[key] = departments[key]!.plus(row.total);
+    }
+    const revenue = Object.values(departments).reduce((sum, value) => sum.plus(value), new Decimal(0));
+    const room = departments['accommodation']!;
+    const byMethod: Record<string, number> = {};
+    let received = new Decimal(0), refunds = new Decimal(0);
+    for (const row of cashRows) {
+      if (row.method === 'city_ledger') continue;
+      byMethod[row.method] = new Decimal(byMethod[row.method] ?? 0).plus(row.received).toNumber();
+      received = received.plus(row.received); refunds = refunds.plus(row.refunded);
+    }
+    return {
+      rooms: { available, outOfOrder, sold, complimentary, occupied: sold + complimentary, occupancy: ratio(sold + complimentary, available, 4),
+        adr: ratio(room.toNumber(), sold), revpar: ratio(room.toNumber(), available), trevpar: ratio(revenue.toNumber(), available), guestNights,
+        arrivals: stays.filter((s: any) => realised.includes(s.status) && inRange(s.arrivalDate)).length,
+        departures: stays.filter((s: any) => s.status === 'checked_out' && inRange(s.departureDate)).length,
+        noShows: stays.filter((s: any) => s.status === 'no_show' && inRange(s.arrivalDate)).length,
+        cancellations: Number(cancelled[0]?.count ?? 0) },
+      revenue: { ...Object.fromEntries(Object.entries(departments).map(([key, value]) => [key, value.toNumber()])), total: revenue.toNumber(), tax: tax.toNumber() },
+      payments: { received: received.toNumber(), refunds: refunds.toNumber(), net: received.minus(refunds).toNumber(), byMethod },
+    };
   }
 
   /**

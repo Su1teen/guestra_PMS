@@ -75,6 +75,8 @@ export const chargeTypeEnum = pgEnum('charge_type', [
   'laundry',
   'parking',
   'spa',
+  'bath',           // Bath house / sauna (outlet department)
+  'entertainment',  // Karaoke, riding, ATV and other activities (outlet department)
   'incidental',     // Other incidental charges
   'fee',            // Late checkout, no-show fee, cancellation fee
   'adjustment',     // Manual correction
@@ -97,6 +99,8 @@ export const charges = pgTable('charges', {
   description: varchar('description', { length: 255 }).notNull(),
   amount: numeric('amount', { precision: 12, scale: 2 }).notNull(),
   currencyCode: varchar('currency_code', { length: 3 }).notNull(),
+  // Point of sale that posted the charge (restaurant, bar, SPA, bath, activities); NULL for PMS postings.
+  outlet: varchar('outlet', { length: 80 }),
 
   // Tax breakdown (posted separately per KB 5.10)
   taxAmount: numeric('tax_amount', { precision: 12, scale: 2 }).notNull().default('0'),

@@ -8,10 +8,10 @@ export class ListChargesDto {
   propertyId!: string;
 
   @ApiPropertyOptional({
-    enum: ['room', 'tax', 'food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'incidental', 'fee', 'adjustment', 'package'],
+    enum: ['room', 'tax', 'food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'bath', 'entertainment', 'incidental', 'fee', 'adjustment', 'package'],
   })
   @IsOptional()
-  @IsEnum(['room', 'tax', 'food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'incidental', 'fee', 'adjustment', 'package'])
+  @IsEnum(['room', 'tax', 'food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'bath', 'entertainment', 'incidental', 'fee', 'adjustment', 'package'])
   type?: string;
 
   @ApiPropertyOptional()

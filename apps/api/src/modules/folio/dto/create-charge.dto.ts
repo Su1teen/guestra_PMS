@@ -18,9 +18,9 @@ export class CreateChargeDto {
   propertyId!: string;
 
   @ApiProperty({
-    enum: ['room', 'tax', 'food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'incidental', 'fee', 'adjustment', 'package'],
+    enum: ['room', 'tax', 'food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'bath', 'entertainment', 'incidental', 'fee', 'adjustment', 'package'],
   })
-  @IsEnum(['room', 'tax', 'food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'incidental', 'fee', 'adjustment', 'package'])
+  @IsEnum(['room', 'tax', 'food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'bath', 'entertainment', 'incidental', 'fee', 'adjustment', 'package'])
   type!: string;
 
   @ApiProperty({ example: 'Room charge - Standard King' })
@@ -57,6 +57,12 @@ export class CreateChargeDto {
   @IsString()
   @MaxLength(20)
   taxCode?: string;
+
+  @ApiPropertyOptional({ example: 'Ресторан', description: 'Point of sale that posted the charge' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  outlet?: string;
 
   @ApiProperty({ description: 'Date the charge applies to' })
   @IsDateString()

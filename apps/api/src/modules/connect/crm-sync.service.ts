@@ -19,7 +19,7 @@ const SOURCE = 'guestra_crm';
 export const CRM_CHARGE_PREFIX = 'crm:fline:';
 export const CRM_PAYMENT_PREFIX = 'crm:payment:';
 const PAYMENT_METHODS: Record<string, 'credit_card' | 'bank_transfer' | 'cash'> = { card: 'credit_card', transfer: 'bank_transfer', cash: 'cash' };
-const CHARGE_TYPES = new Set(['food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'incidental', 'fee', 'package']);
+const CHARGE_TYPES = new Set(['food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'bath', 'entertainment', 'incidental', 'fee', 'package']);
 
 /**
  * Staff-level two-way mirror between Guestra CRM and this PMS.

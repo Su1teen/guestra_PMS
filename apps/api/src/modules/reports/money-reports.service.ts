@@ -1,20 +1,28 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, gt, gte, inArray, lt, or } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, lt, lte, or } from 'drizzle-orm';
 import Decimal from 'decimal.js';
-import { folios, guests, integrationLinks, managementInputs, payments, properties, reservationRevenueAllocations, reservations } from '@telivityhaip/database';
+import { charges, folios, guests, integrationLinks, managementInputs, payments, properties, reservationRevenueAllocations, reservations } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
 import { zonedTimeToUtc } from '../../common/date/zoned-time';
 import { reportDates } from './reporting-policy';
 import { NO_COMMISSION_PRICE_TYPES, ZERO_REVENUE_PRICE_TYPES } from '../reservation/reservation-adjustments.service';
+import { MANAGER_DEPARTMENT_OF, OUTLET_CHARGE_TYPES } from './reports.service';
 
 /** Payment statuses that are money received. Refunds are child rows with originalPaymentId. */
 const RECEIVED = ['captured', 'settled', 'partially_refunded', 'refunded'];
 const EXCLUDED = ['cancelled', 'no_show'];
-export const REVENUE_CATEGORIES = ['accommodation', 'fnb', 'bath', 'spa', 'other', 'penalty'] as const;
+export const REVENUE_CATEGORIES = ['accommodation', 'fnb', 'spa', 'bath', 'entertainment', 'other', 'penalty'] as const;
+/** Budget articles (entered per charge type) → report category. */
+const BUDGET_CATEGORY: Record<string, string> = { room: 'accommodation', package: 'accommodation', food_beverage: 'fnb', minibar: 'fnb', spa: 'spa',
+  bath: 'bath', entertainment: 'entertainment', phone: 'other', laundry: 'other', parking: 'other', incidental: 'other', fee: 'penalty', adjustment: 'other' };
 const CRM_SOURCE = 'guestra_crm';
 
 const d = (v: Decimal.Value | null | undefined) => new Decimal(v ?? 0);
 const money = (v: Decimal) => Number(v.toFixed(2));
+
+interface Item { id: string; at: Date; date: string; amount: Decimal; refund: boolean; stay: Stay | null; method: string;
+  /** Part of the payment that is stay money; the rest settles outlet charges. */
+  stayAmount?: Decimal }
 
 interface Stay { id: string; bookingId: string; status: string; arrivalDate: string; departureDate: string; totalAmount: string;
   confirmationNumber: string; source: string; createdAt: Date; guestName: string; crmReservationId: string | null; priceType: string }
@@ -33,6 +41,15 @@ export class MoneyReportsService {
     if (!row) throw new NotFoundException(`Property ${propertyId} not found`);
     return row;
   }
+
+  /** Charges of the points of sale whose service date falls in the period (property time zone). */
+  private async outletCharges(propertyId: string, from: string, to: string, tz: string): Promise<{ type: string; amount: string }[]> {
+    return this.db.select({ type: charges.type, amount: charges.amount }).from(charges)
+      .where(and(eq(charges.propertyId, propertyId), inArray(charges.type, [...OUTLET_CHARGE_TYPES] as any),
+        gte(charges.serviceDate, zonedTimeToUtc(from, '00:00', tz)), lt(charges.serviceDate, zonedTimeToUtc(this.nextDay(to), '00:00', tz))));
+  }
+
+  private nextDay(date: string) { return new Date(Date.parse(date) + 86_400_000).toISOString().slice(0, 10); }
 
   private localDate(at: Date, timeZone: string) {
     return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
@@ -65,12 +82,46 @@ export class MoneyReportsService {
       const stay = folio.reservationId ? byId.get(folio.reservationId) : firstOfBooking.get(folio.bookingId);
       const refund = Boolean(payment.originalPaymentId);
       if (!refund && !RECEIVED.includes(payment.status)) return null;
-      return { id: payment.id as string, date: this.localDate(new Date(payment.processedAt), tz), amount: d(payment.amount).abs(), refund, stay: stay ?? null, method: payment.method as string };
-    }).filter(Boolean) as { id: string; date: string; amount: Decimal; refund: boolean; stay: Stay | null; method: string }[];
+      return { id: payment.id as string, at: new Date(payment.processedAt), date: this.localDate(new Date(payment.processedAt), tz), amount: d(payment.amount).abs(),
+        refund, stay: stay ?? null, method: payment.method as string, stayAmount: d(payment.amount).abs() };
+    }).filter(Boolean) as Item[];
+    await this.applyStayLimit(propertyId, start, items, stays);
     const penalties = penaltyRows.map((r: any) => ({ date: this.localDate(new Date(r.occurredAt), tz), amount: d(r.amount), stay: byId.get(r.reservationId) ?? null,
       reason: r.reason as string | null }));
     const newBookings = created.map((r: any) => byId.get(r.id)).filter((s: Stay | undefined): s is Stay => Boolean(s) && !EXCLUDED.includes(s!.status));
     return { days, tz, property, items, penalties, newBookings, splits };
+  }
+
+  /**
+   * A folio payment also settles restaurant, SPA and other outlet charges. Only the part up to the stay
+   * price is stay money (split into accommodation and package components); the rest settles outlet
+   * charges, which the reports count from the charges themselves. Payments before the period count too.
+   */
+  private async applyStayLimit(propertyId: string, start: Date, items: Item[], stays: Stay[]) {
+    const withStay = items.filter((i) => i.stay);
+    if (!withStay.length) return;
+    const ids = [...new Set(withStay.map((i) => i.stay!.id))];
+    const firstOfBooking = new Map<string, string>();
+    for (const s of [...stays].sort((a, b) => a.arrivalDate.localeCompare(b.arrivalDate))) if (!firstOfBooking.has(s.bookingId)) firstOfBooking.set(s.bookingId, s.id);
+    const earlier = await this.db.select({ reservationId: folios.reservationId, bookingId: folios.bookingId, amount: payments.amount, status: payments.status,
+      originalPaymentId: payments.originalPaymentId }).from(payments).innerJoin(folios, and(eq(folios.id, payments.folioId), eq(folios.propertyId, propertyId)))
+      .where(and(eq(payments.propertyId, propertyId), lt(payments.processedAt, start), or(inArray(folios.reservationId, ids),
+        inArray(folios.bookingId, [...new Set(withStay.map((i) => i.stay!.bookingId))]))));
+    const paid = new Map<string, Decimal>();
+    for (const p of earlier) {
+      const stayId = p.reservationId ?? firstOfBooking.get(p.bookingId);
+      if (!stayId || !ids.includes(stayId)) continue;
+      const refund = Boolean(p.originalPaymentId);
+      if (!refund && !RECEIVED.includes(p.status)) continue;
+      paid.set(stayId, (paid.get(stayId) ?? new Decimal(0)).plus(refund ? d(p.amount).abs().negated() : d(p.amount).abs()));
+    }
+    for (const item of [...withStay].sort((a, b) => a.at.getTime() - b.at.getTime())) {
+      const stay = item.stay!;
+      const before = paid.get(stay.id) ?? new Decimal(0);
+      if (item.refund) { item.stayAmount = Decimal.min(item.amount, Decimal.max(before, 0)); paid.set(stay.id, before.minus(item.stayAmount)); continue; }
+      item.stayAmount = Decimal.min(item.amount, Decimal.max(d(stay.totalAmount).minus(before), 0));
+      paid.set(stay.id, before.plus(item.stayAmount));
+    }
   }
 
   private async stays(propertyId: string, ids: string[], bookingIds: string[]): Promise<Stay[]> {
@@ -129,12 +180,14 @@ export class MoneyReportsService {
       else if (kind === 'prepayment') day.prepayments = day.prepayments.plus(item.amount);
       else day.stayPayments = day.stayPayments.plus(item.amount);
       const shares = this.shares(item.stay, f.splits);
+      const sign = item.refund ? -1 : 1;
       details.push({ date: item.date, kind, paymentId: item.id, method: item.method, amount: money(item.refund ? item.amount.negated() : item.amount),
         reservationId: item.stay?.id ?? null, crmReservationId: item.stay?.crmReservationId ?? null, confirmationNumber: item.stay?.confirmationNumber ?? null,
         guestName: item.stay?.guestName ?? null, arrivalDate: item.stay?.arrivalDate ?? null, departureDate: item.stay?.departureDate ?? null,
         stayTotal: item.stay ? money(d(item.stay.totalAmount)) : null,
-        accommodation: money(item.amount.times(shares['accommodation']?.share ?? 0).times(item.refund ? -1 : 1)),
-        fnb: money(item.amount.times(shares['fnb']?.share ?? 0).times(item.refund ? -1 : 1)) });
+        accommodation: money((item.stayAmount ?? item.amount).times(shares['accommodation']?.share ?? 0).times(sign)),
+        fnb: money((item.stayAmount ?? item.amount).times(shares['fnb']?.share ?? 0).times(sign)),
+        services: money(item.amount.minus((item.stayAmount ?? item.amount)).times(sign)) });
     }
     for (const p of f.penalties) {
       const day = at.get(p.date);
@@ -142,7 +195,7 @@ export class MoneyReportsService {
       day.penalties = day.penalties.plus(p.amount);
       details.push({ date: p.date, kind: 'penalty', amount: money(p.amount), reservationId: p.stay?.id ?? null, crmReservationId: p.stay?.crmReservationId ?? null,
         confirmationNumber: p.stay?.confirmationNumber ?? null, guestName: p.stay?.guestName ?? null, arrivalDate: p.stay?.arrivalDate ?? null,
-        departureDate: p.stay?.departureDate ?? null, stayTotal: p.stay ? money(d(p.stay.totalAmount)) : null, reason: p.reason, accommodation: 0, fnb: 0 });
+        departureDate: p.stay?.departureDate ?? null, stayTotal: p.stay ? money(d(p.stay.totalAmount)) : null, reason: p.reason, accommodation: 0, fnb: 0, services: 0 });
     }
     const out = rows.map((r) => ({ date: r.date, newBookings: r.newBookings, prepayments: money(r.prepayments), stayPayments: money(r.stayPayments),
       penalties: money(r.penalties), refunds: money(r.refunds), total: money(r.prepayments.plus(r.stayPayments).plus(r.penalties).minus(r.refunds)) }));
@@ -166,7 +219,7 @@ export class MoneyReportsService {
       // R7: complimentary, barter and «для шефа» stays never earn a commission.
       if (!item.stay || EXCLUDED.includes(item.stay.status) || NO_COMMISSION_PRICE_TYPES.includes(item.stay.priceType) || d(item.stay.totalAmount).lessThanOrEqualTo(0)) continue;
       const share = this.shares(item.stay, f.splits)['accommodation']?.share ?? new Decimal(0);
-      const signed = item.refund ? item.amount.negated() : item.amount;
+      const signed = item.refund ? (item.stayAmount ?? item.amount).negated() : (item.stayAmount ?? item.amount);
       const row = perStay.get(item.stay.id) ?? { stay: item.stay, paid: new Decimal(0), accommodation: new Decimal(0) };
       row.paid = row.paid.plus(signed); row.accommodation = row.accommodation.plus(signed.times(share));
       perStay.set(item.stay.id, row);
@@ -187,13 +240,18 @@ export class MoneyReportsService {
     let cost = new Decimal(0);
     for (const item of f.items) {
       if (item.stay && EXCLUDED.includes(item.stay.status)) continue;
-      const signed = item.refund ? item.amount.negated() : item.amount;
+      const signed = item.refund ? (item.stayAmount ?? item.amount).negated() : (item.stayAmount ?? item.amount);
       for (const [category, s] of Object.entries(this.shares(item.stay, f.splits))) {
         revenue[category] = (revenue[category] ?? new Decimal(0)).plus(signed.times(s.share));
         cost = cost.plus(signed.times(s.costShare));
       }
     }
     for (const p of f.penalties) revenue['penalty'] = revenue['penalty']!.plus(p.amount);
+    // Points of sale (restaurant, bar, SPA, bath, activities) by the date the service was given.
+    for (const row of await this.outletCharges(propertyId, from, to, f.tz)) {
+      const category = MANAGER_DEPARTMENT_OF[row.type] ?? 'other';
+      revenue[category] = (revenue[category] ?? new Decimal(0)).plus(row.amount);
+    }
     // Complimentary and barter stays earn nothing, but their nights and the cost of included services count (3.3).
     const free = await this.freeStays(propertyId, from, to);
     for (const stay of free.rows) cost = cost.plus(stay.cost);
@@ -220,17 +278,29 @@ export class MoneyReportsService {
       cost: out.reduce((sum: Decimal, r: any) => sum.plus(r.cost), new Decimal(0)) };
   }
 
+  /**
+   * Plan and expenses of the period: daily entries of every input version that overlaps it (the latest
+   * revision of each entered period), summed for the dates inside the period. Nothing entered → null.
+   */
   private async inputs(propertyId: string, from: string, to: string) {
     const rows = await this.db.select().from(managementInputs).where(and(eq(managementInputs.propertyId, propertyId),
-      eq(managementInputs.startDate, from), eq(managementInputs.endDate, to))).orderBy(desc(managementInputs.createdAt));
-    const latest = (kind: string) => rows.find((r: any) => r.kind === kind) ?? null;
-    const byArticle = (row: any) => {
-      if (!row) return null;
+      lte(managementInputs.startDate, to), gte(managementInputs.endDate, from))).orderBy(desc(managementInputs.revision), desc(managementInputs.createdAt));
+    const collect = (kind: string, revenueToCategory: boolean) => {
+      const latest = new Map<string, any>();
+      for (const row of rows) {
+        const key = `${row.startDate}:${row.endDate}`;
+        if (row.kind === kind && !latest.has(key)) latest.set(key, row);
+      }
+      if (!latest.size) return null;
       const out: Record<string, Decimal> = {};
-      for (const e of row.entries ?? []) out[e.article] = (out[e.article] ?? new Decimal(0)).plus(e.amount);
+      for (const row of latest.values()) for (const e of row.entries ?? []) {
+        if (e.date < from || e.date > to) continue;
+        const key = revenueToCategory ? BUDGET_CATEGORY[e.article] ?? e.article : e.article;
+        out[key] = (out[key] ?? new Decimal(0)).plus(e.amount);
+      }
       return out;
     };
-    return { budget: byArticle(latest('budget')), expenses: byArticle(latest('expenses')) };
+    return { budget: collect('budget', true), expenses: collect('expenses', false) };
   }
 
   /**
@@ -247,13 +317,15 @@ export class MoneyReportsService {
     const line = (key: string, label: string, fact: Decimal | null, plan: Decimal | null, previous: Decimal | null) => ({ key, label,
       fact: fact === null ? null : money(fact), plan: plan === null ? null : money(plan), previous: previous === null ? null : money(previous),
       variance: fact !== null && plan !== null ? money(fact.minus(plan)) : null });
-    const labels: Record<string, string> = { accommodation: 'Проживание', fnb: 'Питание (F&B)', bath: 'Баня', spa: 'SPA', other: 'Прочее', penalty: 'Штрафы' };
+    const labels: Record<string, string> = { accommodation: 'Проживание', fnb: 'Ресторан, бар и питание в пакетах', spa: 'SPA', bath: 'Баня',
+      entertainment: 'Развлечения', other: 'Прочие услуги', penalty: 'Штрафы и сборы' };
     const revenue = REVENUE_CATEGORIES.map((c) => line(c, labels[c]!, now.revenue[c]!, inputs.budget?.[c] ?? null, prev.revenue[c]!));
     const revenueTotal = REVENUE_CATEGORIES.reduce((s, c) => s.plus(now.revenue[c]!), new Decimal(0));
     const prevRevenueTotal = REVENUE_CATEGORIES.reduce((s, c) => s.plus(prev.revenue[c]!), new Decimal(0));
     const planRevenue = inputs.budget ? REVENUE_CATEGORIES.reduce((s, c) => s.plus(inputs.budget![c] ?? 0), new Decimal(0)) : null;
     const expenseArticles = [...new Set([...Object.keys(inputs.expenses ?? {}), ...Object.keys(inputs.budget ?? {}).filter((a) => !(REVENUE_CATEGORIES as readonly string[]).includes(a) && a !== 'cost')])];
-    const expenses = expenseArticles.map((a) => line(a, a, inputs.expenses ? inputs.expenses[a] ?? new Decimal(0) : null, inputs.budget?.[a] ?? null, prevInputs.expenses?.[a] ?? null));
+    const expenseLabels: Record<string, string> = { operations: 'Операционные расходы', selling: 'Расходы на продажи', administration: 'Административные расходы', other: 'Прочие расходы' };
+    const expenses = expenseArticles.map((a) => line(a, expenseLabels[a] ?? a, inputs.expenses ? inputs.expenses[a] ?? new Decimal(0) : null, inputs.budget?.[a] ?? null, prevInputs.expenses?.[a] ?? null));
     const expensesTotal = inputs.expenses ? Object.values(inputs.expenses).reduce((s, v) => s.plus(v), new Decimal(0)) : null;
     const prevExpensesTotal = prevInputs.expenses ? Object.values(prevInputs.expenses).reduce((s, v) => s.plus(v), new Decimal(0)) : null;
     const result = expensesTotal === null ? null : revenueTotal.minus(now.cost).minus(expensesTotal);

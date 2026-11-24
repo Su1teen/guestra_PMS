@@ -24,6 +24,7 @@ export class PosService {
       amount: dto.amount,
       currencyCode: dto.currencyCode,
       serviceDate: dto.serviceDate,
+      outlet: dto.outlet,
     };
     // postCharge scopes the folio lookup by propertyId — a POS key for tenant A
     // cannot post onto tenant B's folio even with a guessed folioId.

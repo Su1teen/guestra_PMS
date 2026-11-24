@@ -12,6 +12,8 @@ function service(facts: any) {
   vi.spyOn(svc as any, 'facts').mockResolvedValue({ tz: 'Asia/Almaty', property: { name: 'LES Borovoe', currencyCode: 'KZT', settings: {} }, splits: split,
     penalties: [], newBookings: [], ...facts });
   vi.spyOn(svc as any, 'freeStays').mockResolvedValue({ rows: [], nights: 0, stays: 0, cost: new Decimal(0) });
+  vi.spyOn(svc as any, 'outletCharges').mockResolvedValue(facts.outlet ?? []);
+  vi.spyOn(svc as any, 'inputs').mockResolvedValue(facts.inputs ?? { budget: null, expenses: null });
   return svc;
 }
 
@@ -80,5 +82,33 @@ describe('MoneyReportsService', () => {
     const report = await svc.management('p', '2027-02-14', '2027-02-14');
     expect(report.complimentary).toEqual({ stays: 1, nights: 1, cost: 8000, previousNights: 1 });
     expect(report.cost.fact).toBe(16000);
+  });
+
+  it('counts a folio payment as stay money only up to the stay price; the rest settles outlet charges', async () => {
+    const r1 = stay({ arrivalDate: '2027-02-10' });
+    const svc = service({ days: ['2027-02-14'], items: [
+      { id: 'p1', date: '2027-02-14', amount: new Decimal(130000), stayAmount: new Decimal(100000), refund: false, stay: r1, method: 'card' },
+    ] });
+    const report = await svc.dayByDay('p', '2027-02-14', '2027-02-14');
+    expect(report.totals.total).toBe(130000);
+    expect(report.details[0]).toMatchObject({ accommodation: 92000, fnb: 8000, services: 30000 });
+    const commission = await svc.commissionBase('p', '2027-02-14', '2027-02-14');
+    expect(commission.rows[0]).toMatchObject({ accommodationPaid: 92000, commission: 9200 });
+  });
+
+  it('adds outlet revenue by department and reads the revenue plan entered per charge type', async () => {
+    const r1 = stay();
+    const svc = service({ days: ['2027-02-14'], items: [{ id: 'p1', date: '2027-02-14', amount: new Decimal(100000), refund: false, stay: r1, method: 'card' }],
+      outlet: [{ type: 'spa', amount: '15000.00' }, { type: 'entertainment', amount: '20000.00' }, { type: 'food_beverage', amount: '12000.00' }, { type: 'bath', amount: '25000.00' }],
+      inputs: { budget: { accommodation: new Decimal(90000), spa: new Decimal(10000) }, expenses: null } });
+    const report = await svc.management('p', '2027-02-14', '2027-02-14');
+    const by = Object.fromEntries(report.revenue.map((l: any) => [l.key, l]));
+    expect(by.accommodation).toMatchObject({ fact: 92000, plan: 90000, variance: 2000 });
+    expect(by.fnb.fact).toBe(20000);
+    expect(by.spa).toMatchObject({ fact: 15000, plan: 10000 });
+    expect(by.bath.fact).toBe(25000);
+    expect(by.entertainment.fact).toBe(20000);
+    expect(report.revenueTotal.fact).toBe(172000);
+    expect(report.expenses).toEqual([]);
   });
 });

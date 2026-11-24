@@ -821,6 +821,7 @@ export class FolioService {
         description: dto.description,
         amount: dto.amount,
         currencyCode: dto.currencyCode,
+        outlet: dto.outlet ?? null,
         taxAmount: dto.taxAmount ?? '0',
         taxRate: dto.taxRate,
         taxCode: dto.taxCode,
