@@ -23,7 +23,7 @@ async function bootstrap() {
   await preloadBookingRequestsModules();
 
   // AppModule calls bookingRequestsModules() while its imports array is
-  // evaluated — that requires preload above to have run first when the flag
+  // evaluated - that requires preload above to have run first when the flag
   // is on. Dynamic import keeps AppModule from loading before preload.
   const { AppModule } = await import('./app.module.js');
 
@@ -37,6 +37,7 @@ async function bootstrap() {
   // parser so req.body is a Buffer for that route; every other route still
   // receives parsed JSON.
   app.use('/api/v1/webhooks/stripe', raw({ type: 'application/json' }));
+  app.use('/api/v1/webhooks/qutpay', raw({ type: 'application/json' }));
   app.use(json());
 
   // Global prefix for all routes
@@ -51,15 +52,15 @@ async function bootstrap() {
     }),
   );
 
-  // Map unhandled (non-HTTP) errors to a generic 500 — no stack/SQL leakage.
+  // Map unhandled (non-HTTP) errors to a generic 500 - no stack/SQL leakage.
   app.useGlobalFilters(new AllExceptionsFilter());
 
-  // CORS — explicit allowlist from CORS_ORIGINS (no longer wide-open).
+  // CORS - explicit allowlist from CORS_ORIGINS (no longer wide-open).
   app.enableCors({ origin: corsOrigins(), credentials: true });
 
   // OpenAPI / Swagger
   const config = new DocumentBuilder()
-    .setTitle('HAIP — Hotel AI Platform')
+    .setTitle('HAIP - Hotel AI Platform')
     .setDescription(
       'Open-source, API-first hotel Property Management System. ' +
       'Part of Telivity\'s open-source travel infrastructure.',

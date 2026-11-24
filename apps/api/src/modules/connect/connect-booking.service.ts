@@ -46,8 +46,8 @@ export class ConnectBookingService {
   ) {}
 
   /**
-   * Book a room — Agent 4.5 (Hotel Booking Agent).
-   * Agent bookings auto-confirm (skip pending status).
+   * Book a room - Agent 4.5 (Hotel Booking Agent).
+   * A signed quote may carry the sandbox property's configured prepayment terms.
    */
   async book(dto: AgentBookDto, acceptedQuote?: ConnectAcceptedQuote) {
     if (acceptedQuote) assertQuoteMatches(acceptedQuote, dto);
@@ -206,6 +206,8 @@ export class ConnectBookingService {
       }
       const baseAmountDec = new Decimal(pricing?.lineItems[0]?.rate ?? ratePlan.baseAmount);
       const totalAmountDec = new Decimal(pricing?.totalAmount ?? baseAmountDec.times(nights));
+      const prepayment = acceptedQuote?.sandboxPrepayment;
+      const optionUntil = prepayment?.holdMinutes == null ? null : new Date(Date.now() + prepayment.holdMinutes * 60_000);
 
       const [booking] = await tx
         .insert(bookings)
@@ -242,7 +244,8 @@ export class ConnectBookingService {
           adults: dto.adults,
           children: dto.children ?? 0,
           specialRequests: dto.specialRequests,
-          status: 'assigned',
+          status: prepayment ? 'pending' : 'assigned',
+          ...(prepayment ? { requiredDeposit: prepayment.amount, optionUntil, guaranteeType: 'deposit' } : {}),
         })
         .returning();
 
@@ -283,7 +286,7 @@ export class ConnectBookingService {
       : this.buildNightlyBreakdown(baseAmount, nights, arrival, taxRate);
 
     let paymentStatus: 'none' | 'authorized' | 'charged' = 'none';
-    const depositAmount: number | undefined = undefined;
+    const depositAmount = reservation.requiredDeposit == null ? undefined : Number(reservation.requiredDeposit);
 
     if (dto.paymentMethod === 'prepaid' || dto.paymentMethod === 'virtual_card') {
       // In a real system, process payment via paymentService
@@ -315,7 +318,7 @@ export class ConnectBookingService {
       externalReference: dto.externalReference,
       reservationId: reservation.id,
       guestId: reservation.guestId,
-      status: 'assigned',
+      status: reservation.status,
       roomTypeId: roomType.id,
       roomTypeCode: roomType.code,
       roomTypeName: roomType.name,
@@ -338,13 +341,14 @@ export class ConnectBookingService {
       ).description,
       paymentStatus,
       depositAmount,
+      ...(reservation.optionUntil ? { optionUntil: reservation.optionUntil.toISOString() } : {}),
       bookedAt: new Date().toISOString(),
       integrationContext: dto.integrationContext,
     };
   }
 
   /**
-   * Verify booking — Agent 4.7 (Confirmation Verification).
+   * Verify booking - Agent 4.7 (Confirmation Verification).
    */
   async verify(confirmationNumber: string) {
     const { booking, reservation } = await this.loadBookingByConfirmation(confirmationNumber);
@@ -415,7 +419,7 @@ export class ConnectBookingService {
   }
 
   /**
-   * Modify booking — Agent 4.6 (Modification & Cancellation).
+   * Modify booking - Agent 4.6 (Modification & Cancellation).
    */
   async modify(confirmationNumber: string, dto: AgentModifyDto) {
     const { booking, reservation } = await this.loadBookingByConfirmation(confirmationNumber);
@@ -522,7 +526,7 @@ export class ConnectBookingService {
         throw new BadRequestException('No availability for modified dates/room type');
       }
 
-      // Re-calculate rate — same-property scoped (was bare-id before).
+      // Re-calculate rate - same-property scoped (was bare-id before).
       const [ratePlan] = await this.db
         .select()
         .from(ratePlans)
@@ -582,7 +586,7 @@ export class ConnectBookingService {
   }
 
   /**
-   * Cancel booking — Agent 4.6 (Modification & Cancellation).
+   * Cancel booking - Agent 4.6 (Modification & Cancellation).
    * Delegates status + money settlement to ReservationService.cancel.
    */
   async cancel(confirmationNumber: string, reason?: string) {
@@ -677,7 +681,7 @@ export class ConnectBookingService {
         return guest;
       }
     }
-    // Try to find by email — but ONLY reuse a guest that is already linked to
+    // Try to find by email - but ONLY reuse a guest that is already linked to
     // THIS property via an existing reservation. The `guests` row is cross-property
     // by design, yet a bare email match would let one tenant attach to (and later,
     // via modify(), overwrite) another tenant's guest profile. Scope reuse to the
@@ -711,7 +715,7 @@ export class ConnectBookingService {
       .insert(guests)
       .values({
         firstName: dto.guestFirstName.trim(),
-        lastName: dto.guestLastName?.trim() || 'Не указана',
+        lastName: dto.guestLastName?.trim() || '�� 㪠����',
         email: dto.guestEmail ?? null,
         phone: dto.guestPhone ?? null,
         loyaltyNumber: dto.loyaltyNumber ?? null,
@@ -797,6 +801,7 @@ export class ConnectBookingService {
       checkIn: reservation.arrivalDate, checkOut: reservation.departureDate,
       adults: reservation.adults, children: reservation.children,
       totalAmount: Number(reservation.totalAmount), currencyCode: reservation.currencyCode,
+      ...(reservation.requiredDeposit != null ? { depositAmount: Number(reservation.requiredDeposit), optionUntil: reservation.optionUntil?.toISOString() ?? null } : {}),
       roomAssigned: Boolean(reservation.roomId), integrationContext: booking.integrationContext,
     };
   }

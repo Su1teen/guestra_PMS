@@ -15,6 +15,8 @@ import { properties, roomTypes, rooms, ratePlans, taxProfiles, taxRules, reserva
   services,serviceResources,serviceBookings,serviceResourceAllocations,serviceRequests,serviceOperations,connectCredentials } from '@telivityhaip/database';
 import { ConnectBookingService } from './connect-booking.service';
 import { ConnectV2Service } from './connect-v2.service';
+import { ConnectRemotePrepaymentService, sandboxRemotePrepayments } from './connect-remote-prepayment.service';
+import { ReservationGuaranteeService } from '../reservation/reservation-guarantee.service';
 import { connectOperations,integrationDeployment,sandboxProperties,sandboxFixtures } from './connect-operation-schema';
 import {ConnectSandboxService,fixtureStages} from './connect-sandbox.service';
 import { AvailabilityService } from '../reservation/availability.service';
@@ -67,13 +69,14 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
   }
   async function clear() {
     const links = await db.select().from(guestPropertyLinks).where(eq(guestPropertyLinks.propertyId,ids.property));
-    for(const table of [sandboxFixtures,connectOperations,serviceOperations,serviceResourceAllocations,serviceBookings,serviceRequests,charges,folios,reservationGuests,reservations,bookings,integrationLinks,
+    for(const table of [sandboxRemotePrepayments,payments,sandboxFixtures,connectOperations,serviceOperations,serviceResourceAllocations,serviceBookings,serviceRequests,charges,folios,reservationGuests,reservations,bookings,integrationLinks,
       guestPropertyLinks,domainEventOutbox,auditLogs]) await db.delete(table as any).where(eq((table as any).propertyId,ids.property));
     for(const link of links)await db.delete(guests).where(eq(guests.id,link.guestId));
   }
   beforeAll(async () => {
     const migration=await readFile(resolve(process.cwd(),'../../integration-migrations/0001_domain_event_capture_v2.sql'),'utf8');
     await client.unsafe(migration); await client.unsafe(migration);
+    await client.unsafe(await readFile(resolve(process.cwd(),'../../integration-migrations/0002_remote_prepayment_sandbox.sql'),'utf8'));
     await db.insert(integrationDeployment).values({id:true,environment:'test',deploymentId:randomUUID()}).onConflictDoNothing();
     await db.insert(properties).values({id:ids.property,name:'Isolated Connect test',code:'V2-'+ids.property.slice(0,8),countryCode:'KZ',timezone:'Asia/Almaty',currencyCode:'KZT',totalRooms:2});
     await db.insert(roomTypes).values({id:ids.type,propertyId:ids.property,name:'Standard',code:'STD',maxOccupancy:2,defaultOccupancy:1});
@@ -118,6 +121,67 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
     expect(JSON.stringify(read)).not.toContain('acceptedQuoteHash');
     const events=await v2.events(ids.property,0,100);
     expect(events.events.some((event:any)=>event.entityId===read.id)).toBe(true);
+  });
+  it('holds a sandbox booking for an attested phone invoice and records its verified payment once', async () => {
+    await db.update(integrationDeployment).set({environment:'sandbox'}).where(eq(integrationDeployment.id,true));
+    const secret = 'isolated-webhook-signing-key-fixture';
+    const sandboxConfig = new ConfigService({INTEGRATION_ENVIRONMENT:'sandbox',
+      CONNECT_QUOTE_SIGNING_SECRET:'isolated-test-signing-secret-32-characters', QUTPAY_SANDBOX_PREPAYMENTS_ENABLED:'true',
+      QUTPAY_API_KEY:'qp_test_fixture', QUTPAY_WEBHOOK_SECRET:secret});
+    const sendConfirmation = vi.fn();
+    const guarantee = new ReservationGuaranteeService(db, outbox, delivery as any, reservation,
+      { send:sendConfirmation } as any, folio, {} as any);
+    const remotePayments = new ConnectRemotePrepaymentService(db, sandboxConfig, folio, guarantee);
+    const sandboxV2 = new ConnectV2Service(db, sandboxConfig, rates, taxes, booking, reservation, availability,
+      folio, policy, settlement, service, requests, {} as any, remotePayments);
+    const invoice = {id:'inv_TEST', externalOrderId:'', mode:'sandbox', kind:'phone', currency:'KZT',
+      amount:110, status:'pending', payUrl:'https://qut.kz/pay/inv_TEST', paidAt:null as string|null};
+    const provider = vi.spyOn(globalThis,'fetch').mockImplementation(async (_url,init) => {
+      if (init?.method === 'POST') {
+        const submitted = JSON.parse(String(init.body));
+        invoice.externalOrderId = submitted.externalOrderId;
+        expect(submitted).toMatchObject({amount:110,kind:'phone',customer:{phone:'77001234567'}});
+        expect(new Headers(init.headers).get('Idempotency-Key')).toBe(invoice.externalOrderId);
+      }
+      return Response.json(invoice);
+    });
+    const callback = async (invalidSignature = false) => {
+      const raw = Buffer.from(JSON.stringify({event:`invoice.${invoice.status}`,invoice}));
+      const timestamp = String(Math.floor(Date.now()/1000));
+      const signature = createHmac('sha256',secret).update(timestamp+'.').update(raw).digest('hex');
+      return remotePayments.webhook(raw, timestamp, 'sha256='+(invalidSignature ? '0'.repeat(64) : signature));
+    };
+    try {
+      const quote = await sandboxV2.quote(input);
+      expect(quote.sandboxPrepayment?.amount).toBe('110.00');
+      const booked = await sandboxV2.book({...input,guestFirstName:'Test',idempotencyKey:randomUUID(),
+        acceptedQuote:quote.acceptedQuote,integrationContext:{sourceSystem:'guestra_crm',customerId:input.customerId}});
+      expect(booked.status).toBe('pending');
+      const args = [booked.reservationId,ids.property,input.customerId] as const;
+      await expect(remotePayments.create(booked.reservationId,ids.property,'other-contact','77001234567'))
+        .rejects.toThrow('VERIFIED_IDENTITY_REQUIRED');
+      await expect(remotePayments.create(...args,'+7 (700) 123-45-67')).resolves.toMatchObject({status:'pending',payUrl:invoice.payUrl});
+      await expect(remotePayments.create(...args,'87001234567')).resolves.toMatchObject({invoiceId:invoice.id});
+      expect(provider.mock.calls.filter(([,init])=>init?.method==='POST')).toHaveLength(1);
+      invoice.status='expired';
+      await callback();
+      invoice.status='paid';
+      invoice.paidAt=new Date().toISOString();
+      await expect(callback(true)).rejects.toThrow('INVALID_WEBHOOK_SIGNATURE');
+      invoice.amount=111;
+      await expect(callback()).rejects.toThrow('REMOTE_PREPAYMENT_INVOICE_MISMATCH');
+      invoice.amount=110;
+      await Promise.all([callback(),callback()]);
+      const rows = await db.select().from(payments).where(eq(payments.propertyId,ids.property));
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({status:'captured',amount:'110.00',gatewayTransactionId:invoice.id});
+      const after=await sandboxV2.snapshot(ids.property,'reservation',booked.reservationId,input.customerId);
+      expect(after.status).toBe('assigned');
+      expect(sendConfirmation).not.toHaveBeenCalled();
+    } finally {
+      provider.mockRestore();
+      await db.update(integrationDeployment).set({environment:'test'}).where(eq(integrationDeployment.id,true));
+    }
   });
   it('keeps returning identity and does not merge another external customer with the same phone',async()=>{
     const first=await purchase(),second=await purchase({checkIn:'2027-04-01',checkOut:'2027-04-03',
@@ -210,16 +274,16 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
         const port=(studioCrmServer.address() as any).port;
         const studio=new Integrations({environment:'test',sandbox:true,local:false,crmVersion:'v2',allowedHosts:['127.0.0.1'],integrationHosts:['127.0.0.1'],
           crmUrl:`https://127.0.0.1:${port}/api/integrations/agent`,crmKey,crmProperty:'les_borovoe',crmTenant:'org_les_live',pmsProperty:ids.property,pmsTenant:ids.property});
-        const conv={externalChatId:origin.externalChatId},guest={externalUserId:origin.externalUserId},attempt={externalMessageId:randomUUID(),correlationId:randomUUID(),text:'Хочу забронировать',attachments:[]};
+        const conv={externalChatId:origin.externalChatId},guest={externalUserId:origin.externalUserId},attempt={externalMessageId:randomUUID(),correlationId:randomUUID(),text:'���� ���஭�஢���',attachments:[]};
         const client={firstName:'Integration',lastName:'Test',displayName:'Integration Test',language:'ru'};
         inbound={body:await studio.inbound(conv,guest,attempt,client)};
         const duplicate=await studio.inbound(conv,guest,attempt,client);
         expect(duplicate.duplicate).toBe(true);
         expect(duplicate.context.customer.id).toBe(inbound.body.context.customer.id);
-        const returning=await studio.inbound(conv,guest,{...attempt,externalMessageId:randomUUID(),correlationId:randomUUID(),text:'Я уже писал'},client);
+        const returning=await studio.inbound(conv,guest,{...attempt,externalMessageId:randomUUID(),correlationId:randomUUID(),text:'� 㦥 ��ᠫ'},client);
         expect(returning.context.customer.id).toBe(inbound.body.context.customer.id);
         expect(returning.context.conversation.id).toBe(inbound.body.context.conversation.id);
-      } else inbound=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'Хочу забронировать'}).expect(201);
+      } else inbound=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'���� ���஭�஢���'}).expect(201);
       const identity={...origin,conversationId:inbound.body.context.conversation.id};
       const before=await pool.query('select (select count(*) from reservations)::int as reservations,(select count(*) from folios)::int as folios');
       const lead=await send('/requests/upsert',{...identity,idempotencyKey:randomUUID(),direction:'accommodation',checkIn:'2027-03-01T00:00:00Z',
@@ -232,11 +296,11 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
         .toEqual({total_amount:220,room_amount:220});
       async function approve(actionType:string,payload:any) {
         const key=randomUUID();
-        const proposed=await send('/v2/messages/outbound/prepare',{...identity,text:'Подтвердите действие',idempotencyKey:key,proposedAction:{actionType,payload}}).expect(201);
+        const proposed=await send('/v2/messages/outbound/prepare',{...identity,text:'���⢥न� ����⢨�',idempotencyKey:key,proposedAction:{actionType,payload}}).expect(201);
         expect(proposed.body.deliveryStatus).toBe('pending');
         await send('/messages/outbound/result',{...identity,messageId:proposed.body.messageId,idempotencyKey:key,success:true,
           externalMessageId:'simulator:'+proposed.body.messageId}).expect(200);
-        const confirmed=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'Подтверждаю'}).expect(201);
+        const confirmed=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'���⢥ত��'}).expect(201);
         return {proposalMessageId:proposed.body.messageId,confirmationMessageId:confirmed.body.messageId,idempotencyKey:randomUUID()};
       }
       const approval=await approve('book_accommodation',{offerId:offer.body.offer.id});
@@ -258,8 +322,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       const serviceResult=await send('/v2/actions',{...identity,...serviceApproval,actionType:'book_service',payload}).expect(200);
       expect(serviceResult.body.snapshot.totalAmount).toBe('50.00');
       expect(await db.select().from(charges).where(eq(charges.propertyId,ids.property))).toHaveLength(1);
-      const guestMessage=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'Нужны полотенца'}).expect(201);
-      await send('/v2/guest-requests',{...identity,sourceMessageId:guestMessage.body.messageId,title:'Дополнительные полотенца',
+      const guestMessage=await send('/messages/inbound',{...origin,externalMessageId:randomUUID(),text:'�㦭� ����⥭�'}).expect(201);
+      await send('/v2/guest-requests',{...identity,sourceMessageId:guestMessage.body.messageId,title:'�������⥫�� ����⥭�',
         department:'housekeeping',priority:'medium',idempotencyKey:randomUUID()}).expect(200);
       expect(await db.select().from(serviceRequests).where(eq(serviceRequests.propertyId,ids.property))).toHaveLength(1);
       const cancelPayload={entityId:booked.id,expectedUpdatedAt:booked.updatedAt};
@@ -274,7 +338,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       const projected=await pool.query("select snapshot->>'status' as status from integration_projections where entity_id=$1",[booked.id]);
       expect(projected.rows[0].status).toBe('cancelled');
       await send('/v2/inbox/'+identity.conversationId+'/takeover',{propertyId:identity.propertyId,staffReference:'pms:test-staff'}).expect(200);
-      await send('/v2/messages/outbound/prepare',{...identity,text:'Поздний ответ AI',idempotencyKey:randomUUID()}).expect(409);
+      await send('/v2/messages/outbound/prepare',{...identity,text:'������� �⢥� AI',idempotencyKey:randomUUID()}).expect(409);
       const quote=await v2.quote(input);
       await request(api.getHttpServer()).post('/api/v1/connect/v2/book').set('x-api-key',pmsKey)
         .send({...input,guestFirstName:'Unauthorized',acceptedQuote:quote.acceptedQuote,idempotencyKey:randomUUID(),integrationContext:{sourceSystem:'guestra_crm',customerId:input.customerId}}).expect(403);

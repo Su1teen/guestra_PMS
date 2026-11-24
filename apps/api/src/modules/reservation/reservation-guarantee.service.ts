@@ -166,7 +166,7 @@ export class ReservationGuaranteeService {
       .returning();
     if (!updated) throw new ConflictException('Reservation changed while confirming');
     await tx.insert(auditLogs).values({ propertyId: row.propertyId, entityType: 'reservation', entityId: row.id, action: 'confirm',
-      ...actorFields(actor), description: mode === 'auto' ? 'Бронь подтверждена автоматически: гарантия получена' : 'Бронь подтверждена',
+      ...actorFields(actor), description: mode === 'auto' ? '�஭� ���⢥ত��� ��⮬���᪨: ��࠭�� ����祭�' : '�஭� ���⢥ত���',
       previousValue: { status: row.status, optionUntil: row.optionUntil ?? null },
       newValue: { status, guaranteeType, reason, mode } });
     await this.outbox.persist(tx, { event: 'reservation.confirmed', entityType: 'reservation', entityId: row.id,
@@ -211,7 +211,7 @@ export class ReservationGuaranteeService {
    * Confirms the booking's tentative stays when the money received covers their guarantee.
    * Only stays with a guarantee amount qualify; the others wait for a manual decision.
    */
-  async confirmIfGuaranteed(reservationId: string, propertyId: string) {
+  async confirmIfGuaranteed(reservationId: string, propertyId: string, options: { notifyGuest?: boolean } = {}) {
     const [row] = await this.db.select({ bookingId: reservations.bookingId }).from(reservations)
       .where(and(eq(reservations.id, reservationId), eq(reservations.propertyId, propertyId)));
     if (!row) return { confirmed: 0 };
@@ -226,7 +226,7 @@ export class ReservationGuaranteeService {
     for (const stay of waiting) {
       try {
         // One guest confirmation per booking: it lists every room.
-        await this.confirm(stay.id, propertyId, { guaranteeType: 'deposit', notifyGuest: confirmed === 0 ? undefined : false }, undefined, 'auto');
+        await this.confirm(stay.id, propertyId, { guaranteeType: 'deposit', notifyGuest: confirmed === 0 ? options.notifyGuest : false }, undefined, 'auto');
         confirmed += 1;
       } catch (error) {
         if (!(error instanceof ConflictException)) throw error; // confirmed concurrently
@@ -350,11 +350,11 @@ export class ReservationGuaranteeService {
     const reference = input.reference?.trim() || null;
     const payment = await this.payments.recordPayment({
       folioId: folio.id, propertyId, method: input.method, amount: amount.toFixed(2), currencyCode: row.currencyCode,
-      notes: ['Предоплата (отмечена вручную)', reference].filter(Boolean).join(': '),
+      notes: ['�।����� (�⬥祭� ������)', reference].filter(Boolean).join(': '),
       ...(input.receivedAt ? { processedAt: input.receivedAt } : {}),
     });
     await this.db.insert(auditLogs).values({ propertyId, entityType: 'reservation', entityId: row.id, action: 'prepayment_recorded',
-      ...actorFields(actor), description: `Предоплата принята вручную: ${amount.toFixed(2)} ${row.currencyCode}`,
+      ...actorFields(actor), description: `�।����� �ਭ�� ������: ${amount.toFixed(2)} ${row.currencyCode}`,
       newValue: { paymentId: payment.id, folioId: folio.id, amount: amount.toFixed(2), method: input.method, reference } });
     // The payment listener does the same; calling it here returns the outcome to the desk in this response.
     const outcome: { confirmed: number; required?: string } = row.status === 'pending'
@@ -411,7 +411,7 @@ export class ReservationGuaranteeService {
         const [after] = await tx.update(reservations).set(set)
           .where(and(eq(reservations.id, row.id), eq(reservations.propertyId, propertyId), eq(reservations.status, 'pending'))).returning();
         await tx.insert(auditLogs).values({ propertyId, entityType: 'reservation', entityId: row.id, action: 'option_changed', ...actorFields(actor),
-          description: optionUntil !== undefined ? (optionUntil ? 'Срок опции изменён' : 'Срок опции снят') : 'Сумма гарантии изменена',
+          description: optionUntil !== undefined ? (optionUntil ? '�ப ��樨 ������' : '�ப ��樨 ���') : '�㬬� ��࠭⨨ ��������',
           previousValue: { optionUntil: row.optionUntil ?? null, requiredDeposit: row.requiredDeposit ?? null },
           newValue: { optionUntil: after.optionUntil ?? null, requiredDeposit: after.requiredDeposit ?? null, reason: input.reason?.trim() || null } });
         updated.push(after);
@@ -423,7 +423,7 @@ export class ReservationGuaranteeService {
   /** Staff releases tentative stays by hand (nothing is released automatically by default): cancels them with the reason. */
   async releaseOption(reservationId: string, propertyId: string, input: { reason?: string; wholeBooking?: boolean }, actor?: AuditActor) {
     const rows = await this.pendingScope(this.db, reservationId, propertyId, !!input.wholeBooking, false);
-    const reason = input.reason?.trim() || 'Опция снята вручную: гарантия не получена';
+    const reason = input.reason?.trim() || '���� ��� ������: ��࠭�� �� ����祭�';
     let released = 0;
     for (const row of rows) {
       await this.reservationService.cancel(row.id, propertyId, { cancellationReason: reason }, { onlyFrom: ['pending'] });

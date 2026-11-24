@@ -1,4 +1,4 @@
-import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
+import { Injectable, Inject, NotFoundException, ConflictException, BadRequestException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { and, eq, asc, gt, sql } from 'drizzle-orm';
 import Decimal from 'decimal.js';
@@ -8,6 +8,8 @@ import { RatePlanService } from '../rate-plan/rate-plan.service';
 import { TaxService } from '../tax/tax.service';
 import { calculateCanonicalRoomPricing } from '../rate-plan/canonical-room-pricing';
 import { ConnectBookingService } from './connect-booking.service';
+import { ConnectRemotePrepaymentService } from './connect-remote-prepayment.service';
+import { ReservationGuaranteeService } from '../reservation/reservation-guarantee.service';
 import { ConnectSearchService } from './connect-search.service';
 import type {AgentSearchDto} from './dto/agent-search.dto';
 import { ReservationService } from '../reservation/reservation.service';
@@ -30,16 +32,18 @@ export class ConnectV2Service {
     private readonly reservationService:ReservationService,private readonly availability:AvailabilityService,
     private readonly folioService:FolioService,private readonly policy:PolicyService,
     private readonly settlement:DepositSettlementService,private readonly serviceBookings:ConnectServiceBookingService,
-    private readonly requests:ServiceRequestsService,private readonly searchService:ConnectSearchService) {}
+    private readonly requests:ServiceRequestsService,private readonly searchService:ConnectSearchService,
+    @Optional() private readonly remotePrepayment?:ConnectRemotePrepaymentService) {}
   async capabilities(propertyId:string,credentialId?:string) {
     const [property]=await this.db.select().from(properties).where(eq(properties.id,propertyId));
     if(!property) throw new NotFoundException('PROPERTY_NOT_FOUND');
     const [deployment]=await this.db.select().from(integrationDeployment).limit(1);
     if(!deployment||deployment.environment!==this.config.get('INTEGRATION_ENVIRONMENT','production'))throw new ConflictException('INTEGRATION_DATABASE_NOT_ATTESTED');
+    const paymentLinks = await this.remotePrepayment?.available(propertyId) ?? false;
     return { contractVersion:'guestra-connect-v2',environment:this.config.get('INTEGRATION_ENVIRONMENT','production'),
       sourceSystem:'guestra_pms',propertyId,tenantId:property.organizationId ?? property.id,credentialId,deploymentId:deployment.deploymentId,
       ownership:['guests','inventory','reservations','stays','services','folios','payments'],
-      features:{acceptedQuote:true,operationReceipts:true,durableEvents:true,authoritativeReadBack:true,paymentLinks:false} };
+      features:{acceptedQuote:true,operationReceipts:true,durableEvents:true,authoritativeReadBack:true,paymentLinks} };
   }
   async quote(dto:ConnectQuoteDto) {
     const nights=(Date.parse(dto.checkOut)-Date.parse(dto.checkIn))/86400000;
@@ -51,9 +55,20 @@ export class ConnectV2Service {
     const price=await calculateCanonicalRoomPricing({propertyId:dto.propertyId,ratePlanId:dto.ratePlanId,checkIn:dto.checkIn,checkOut:dto.checkOut,nights,
       isTaxInclusive:plan.isTaxInclusive,ratePlanService:this.rates,taxService:this.taxes,occupancy:{adults:dto.adults,children:dto.children??0}});
     const expiresAt=new Date(Date.now()+Math.min(900,Math.max(30,Number(this.config.get('CONNECT_QUOTE_TTL_SECONDS','300'))))*1000).toISOString();
-    const quote={version:'connect-quote-v2' as const,...dto,children:dto.children??0,...price,expiresAt};
+    const sandboxPrepayment = await this.sandboxPaymentTerms(dto.propertyId, price.totalAmount, price.currency);
+    const quote={version:'connect-quote-v2' as const,...dto,children:dto.children??0,...price,expiresAt,
+      ...(sandboxPrepayment ? { sandboxPrepayment } : {})};
     return { ...price,nights,propertyId:dto.propertyId,roomTypeId:dto.roomTypeId,ratePlanId:dto.ratePlanId,roomTypeName:type.name,expiresAt,
+      ...(sandboxPrepayment ? { sandboxPrepayment } : {}),
       acceptedQuote:signQuote(quote,this.config.get('CONNECT_QUOTE_SIGNING_SECRET','')) };
+  }
+  private async sandboxPaymentTerms(propertyId: string, totalAmount: string, currency: string) {
+    if (currency !== 'KZT' || !await this.remotePrepayment?.available(propertyId)) return undefined;
+    const [property] = await this.db.select({ settings: properties.settings }).from(properties).where(eq(properties.id, propertyId));
+    const now = new Date();
+    const terms = ReservationGuaranteeService.holdTerms(property?.settings, totalAmount, {}, now);
+    if (terms.requiredDeposit == null || new Decimal(terms.requiredDeposit).lte(0)) return undefined;
+    return { amount: terms.requiredDeposit, holdMinutes: terms.optionUntil ? (terms.optionUntil.getTime() - now.getTime()) / 60_000 : null };
   }
   async book(dto:ConnectBookV2Dto) {
     if(!dto.idempotencyKey || dto.integrationContext?.sourceSystem!=='guestra_crm' || !dto.integrationContext?.customerId)
@@ -66,6 +81,10 @@ export class ConnectV2Service {
       return this.publicBooking(await this.booking.book({...input,integrationContext:{...input.integrationContext,acceptedQuoteHash:fingerprint(acceptedQuote)}}));
     }
     const quote=readQuote(acceptedQuote,this.config.get('CONNECT_QUOTE_SIGNING_SECRET',''));
+    const currentTerms = await this.sandboxPaymentTerms(dto.propertyId, quote.totalAmount, quote.currency);
+    if (fingerprint({ terms: currentTerms }) !== fingerprint({ terms: quote.sandboxPrepayment })) {
+      throw new ConflictException('PREPAYMENT_TERMS_CHANGED');
+    }
     return this.publicBooking(await this.booking.book({...input,integrationContext:{...input.integrationContext,acceptedQuoteHash:fingerprint(acceptedQuote)}},quote));
   }
   private publicBooking(row:any) {
@@ -106,6 +125,7 @@ export class ConnectV2Service {
       return {sourceSystem:'guestra_pms',propertyId,tenantId:property?.organizationId ?? propertyId,entityType:type,id,guestId,
         bookingId:row.bookingId,confirmationNumber:booking?.confirmationNumber,status:row.status,checkIn:row.arrivalDate,checkOut:row.departureDate,
         roomTypeId:row.roomTypeId,ratePlanId:row.ratePlanId,adults:row.adults,children:row.children,totalAmount:row.totalAmount,currencyCode:row.currencyCode,updatedAt:row.updatedAt.toISOString(),
+        ...(row.requiredDeposit != null ? { requiredDeposit:row.requiredDeposit,optionUntil:row.optionUntil?.toISOString() ?? null } : {}),
         revision:Number(head?.payload?.integrationEnvelope?.revision ?? 0),integrationContext:this.context(booking?.integrationContext)};
     }
     if(type==='service_booking') {
