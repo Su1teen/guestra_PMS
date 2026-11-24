@@ -123,6 +123,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
     expect(events.events.some((event:any)=>event.entityId===read.id)).toBe(true);
   });
   it('holds a sandbox booking for an attested phone invoice and records its verified payment once', async () => {
+    vi.stubEnv('INTEGRATION_ENVIRONMENT', 'sandbox');
     await db.update(integrationDeployment).set({environment:'sandbox'}).where(eq(integrationDeployment.id,true));
     const secret = 'isolated-webhook-signing-key-fixture';
     const sandboxConfig = new ConfigService({INTEGRATION_ENVIRONMENT:'sandbox',
@@ -180,6 +181,7 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       expect(sendConfirmation).not.toHaveBeenCalled();
     } finally {
       provider.mockRestore();
+      vi.unstubAllEnvs();
       await db.update(integrationDeployment).set({environment:'test'}).where(eq(integrationDeployment.id,true));
     }
   });
