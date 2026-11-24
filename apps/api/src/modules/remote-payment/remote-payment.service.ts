@@ -326,12 +326,9 @@ export class RemotePaymentService {
       }
 
       // paid, partially_refunded, refunded: money reached the hotel.
-      let updated = row;
-      if (!row.paymentId && !row.paidAt) {
-        updated = await this.recordPaid(tx, row, invoice, identity, events);
-      } else {
-        [updated] = await tx.update(remotePaymentRequests).set(identity).where(eq(remotePaymentRequests.id, row.id)).returning();
-      }
+      let updated = !row.paymentId && !row.paidAt
+        ? await this.recordPaid(tx, row, invoice, identity, events)
+        : (await tx.update(remotePaymentRequests).set(identity).where(eq(remotePaymentRequests.id, row.id)).returning())[0];
       const refunded = new Decimal(invoice.refundedAmount);
       if (refunded.gt(updated.refundedAmount ?? 0)) {
         // A refund made at the provider: staff record it in the folio with a reason (refunds stay manual).
