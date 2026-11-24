@@ -16,6 +16,7 @@ import { properties, roomTypes, rooms, ratePlans, taxProfiles, taxRules, reserva
 import { ConnectBookingService } from './connect-booking.service';
 import { ConnectV2Service } from './connect-v2.service';
 import { RemotePaymentService } from '../remote-payment/remote-payment.service';
+import { QutPayClient } from '../payment/gateways/qut-pay';
 import { ReservationGuaranteeService } from '../reservation/reservation-guarantee.service';
 import { connectOperations,integrationDeployment,sandboxProperties,sandboxFixtures } from './connect-operation-schema';
 import {ConnectSandboxService,fixtureStages} from './connect-sandbox.service';
@@ -123,9 +124,10 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
   });
   describe('remote prepayment by Kaspi invoice', () => {
     const secret = 'isolated-webhook-signing-key-fixture';
-    const payConfig = new ConfigService({INTEGRATION_ENVIRONMENT:'test',
+    const payValues = {INTEGRATION_ENVIRONMENT:'test',
       CONNECT_QUOTE_SIGNING_SECRET:'isolated-test-signing-secret-32-characters',
-      QUTPAY_API_KEY:'qp_test_fixture', QUTPAY_WEBHOOK_SECRET:secret, QUTPAY_PROPERTY_IDS:ids.property});
+      QUTPAY_API_KEY:'qp_test_fixture', QUTPAY_WEBHOOK_SECRET:secret, QUTPAY_PROPERTY_IDS:ids.property};
+    const payConfig = new ConfigService(payValues);
     /** In-memory provider: idempotent create, list by order id, cancel, and what the guest does. */
     function provider() {
       const invoices = new Map<string, any>(), byKey = new Map<string, string>(), calls: Array<{method:string;path:string;body?:any}> = [];
@@ -163,9 +165,9 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       const pay = (id: string) => Object.assign(invoices.get(id), {status:'paid', paidAt:new Date(Date.now() - 1000).toISOString()});
       return {invoices, calls, failures, notKaspi, handler, pay};
     }
-    function setup() {
+    function setup(live = false) {
       const qut = provider();
-      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(qut.handler as any);
+      const fetchSpy = live ? null : vi.spyOn(globalThis, 'fetch').mockImplementation(qut.handler as any);
       const sendConfirmation = vi.fn();
       const listeners: Record<string, (payload: any) => Promise<void>> = {};
       // Events reach the real listeners, as the event bus would deliver them.
@@ -177,7 +179,8 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
         folioService: folio, policyService: policy, depositSettlementService: settlement,
       }) as ReservationService;
       const guarantee = new ReservationGuaranteeService(db, outbox, bus as any, reservationWithEvents, {send:sendConfirmation} as any, folio, {} as any);
-      const remote = new RemotePaymentService(db, payConfig, folio, guarantee, bus as any);
+      const remote = new RemotePaymentService(db, live ? new ConfigService({...payValues,
+        QUTPAY_API_KEY:process.env.QUTPAY_LIVE_TEST_KEY}) : payConfig, folio, guarantee, bus as any);
       listeners['payment.received'] = payload => guarantee.onPayment(payload);
       listeners['reservation.cancelled'] = payload => remote.onStayClosed(payload);
       const payV2 = new ConnectV2Service(db, payConfig, rates, taxes, booking, reservation, availability,
@@ -292,6 +295,21 @@ describe.runIf(process.env.PMS_LIVE_PG === '1')('Connect v2 on isolated PostgreS
       const list = await remote.listForReservation(ids.property, booked.reservationId);
       expect(list.requests.map(r => [r.status, r.errorCode])).toEqual([['sent', null], ['failed', 'kaspi_customer_not_found']]);
     });
+
+    // Opt-in check against the provider's own sandbox: QUTPAY_LIVE_TEST_KEY=qp_test_... (no money moves).
+    it.runIf(/^qp_test_/.test(process.env.QUTPAY_LIVE_TEST_KEY ?? ''))('against the provider sandbox: invoice, simulated payment, confirmed stay', async () => {
+      const {remote, payV2, bookPending, ask} = setup(true);
+      const booked = await bookPending('2027-08-01', '2027-08-03');
+      const sent = await ask(booked.reservationId, '+7 701 234 56 78');
+      expect(sent).toMatchObject({status:'sent', amount:'110.00', mode:'test', payUrl:expect.stringMatching(/^https:\/\/qut\.kz\/pay\/inv_/)});
+      const [row] = await db.select().from(remotePaymentRequests).where(eq(remotePaymentRequests.id, sent.requestId));
+      await new QutPayClient(process.env.QUTPAY_LIVE_TEST_KEY!).simulate(row!.providerInvoiceId!, 'paid');
+      expect((await remote.sweep(new Date(Date.now() + 20 * 60_000))).checked).toBeGreaterThan(0);
+      const after = await payV2.snapshot(ids.property, 'reservation', booked.reservationId, input.customerId);
+      expect(after.status).toBe('assigned');
+      const [paid] = await db.select().from(payments).where(eq(payments.idempotencyKey, `qutpay:${row!.providerInvoiceId}`));
+      expect(paid).toMatchObject({status:'captured', amount:'110.00', gatewayProvider:'qutpay_test'});
+    }, 60_000);
 
     it('an unanswered create is settled by the scheduler from the order id, without a second push', async () => {
       const {qut, bookPending, ask, remote} = setup();
