@@ -38,9 +38,9 @@ export const MANAGER_DEPARTMENTS = [
   { key: 'fees', label: 'Сборы и штрафы' },
   { key: 'adjustments', label: 'Корректировки' },
 ] as const;
-/** Charge type → department. Room adjustments are already folded into 'room' by the ledger. */
+/** Charge type → department. Room adjustments are already folded into 'room' by the ledger; package components are meals. */
 export const MANAGER_DEPARTMENT_OF: Record<string, string> = {
-  room: 'accommodation', package: 'accommodation', food_beverage: 'fnb', minibar: 'fnb', spa: 'spa', bath: 'bath',
+  room: 'accommodation', package: 'fnb', food_beverage: 'fnb', minibar: 'fnb', spa: 'spa', bath: 'bath',
   entertainment: 'entertainment', phone: 'other', laundry: 'other', parking: 'other', incidental: 'other', fee: 'fees', adjustment: 'adjustments',
 };
 /** Charge types posted by points of sale (never room, tax, package or fees). */

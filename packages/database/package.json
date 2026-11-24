@@ -41,6 +41,7 @@
     "test": "vitest run --passWithNoTests",
     "test:coverage": "vitest run --coverage",
     "seed": "tsx src/seed.ts",
+    "seed:les-demo": "tsx src/seed-les-demo.ts",
     "link-integration": "tsx src/link-integration-principal.ts",
     "migrate": "tsx src/run-migrations.ts",
     "db:generate": "drizzle-kit generate",

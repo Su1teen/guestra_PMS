@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { and, desc, eq, gt, gte, inArray, lt, or } from 'drizzle-orm';
+import { and, desc, eq, gt, gte, inArray, lt, lte, or } from 'drizzle-orm';
 import Decimal from 'decimal.js';
 import { charges, folios, guests, integrationLinks, managementInputs, payments, properties, reservationRevenueAllocations, reservations } from '@telivityhaip/database';
 import { DRIZZLE } from '../../database/database.module';
@@ -278,20 +278,29 @@ export class MoneyReportsService {
       cost: out.reduce((sum: Decimal, r: any) => sum.plus(r.cost), new Decimal(0)) };
   }
 
+  /**
+   * Plan and expenses of the period: daily entries of every input version that overlaps it (the latest
+   * revision of each entered period), summed for the dates inside the period. Nothing entered → null.
+   */
   private async inputs(propertyId: string, from: string, to: string) {
     const rows = await this.db.select().from(managementInputs).where(and(eq(managementInputs.propertyId, propertyId),
-      eq(managementInputs.startDate, from), eq(managementInputs.endDate, to))).orderBy(desc(managementInputs.createdAt));
-    const latest = (kind: string) => rows.find((r: any) => r.kind === kind) ?? null;
-    const byArticle = (row: any, revenueToCategory: boolean) => {
-      if (!row) return null;
+      lte(managementInputs.startDate, to), gte(managementInputs.endDate, from))).orderBy(desc(managementInputs.revision), desc(managementInputs.createdAt));
+    const collect = (kind: string, revenueToCategory: boolean) => {
+      const latest = new Map<string, any>();
+      for (const row of rows) {
+        const key = `${row.startDate}:${row.endDate}`;
+        if (row.kind === kind && !latest.has(key)) latest.set(key, row);
+      }
+      if (!latest.size) return null;
       const out: Record<string, Decimal> = {};
-      for (const e of row.entries ?? []) {
+      for (const row of latest.values()) for (const e of row.entries ?? []) {
+        if (e.date < from || e.date > to) continue;
         const key = revenueToCategory ? BUDGET_CATEGORY[e.article] ?? e.article : e.article;
         out[key] = (out[key] ?? new Decimal(0)).plus(e.amount);
       }
       return out;
     };
-    return { budget: byArticle(latest('budget'), true), expenses: byArticle(latest('expenses'), false) };
+    return { budget: collect('budget', true), expenses: collect('expenses', false) };
   }
 
   /**
