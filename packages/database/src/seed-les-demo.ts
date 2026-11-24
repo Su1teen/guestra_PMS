@@ -19,6 +19,7 @@
  *
  * It refuses to run without --confirm-demo: the data is invented and only belongs on demo properties.
  */
+import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
@@ -78,7 +79,8 @@ const chance = (p: number) => rand() < p;
 const round = (value: number, step = 1000) => Math.round(value / step) * step;
 
 /** Deterministic UUID inside a namespace of this script: <tag>-<property prefix>-4<n>. */
-const ns = propertyId.replace(/-/g, '').slice(0, 4);
+// Namespace of generated ids: a hash of the whole property id (demo property ids often share their first and last digits).
+const ns = createHash('sha1').update(propertyId).digest('hex').slice(0, 4);
 const uid = (tag: string, n: number) => `${tag.padEnd(8, '0').slice(0, 8)}-${ns}-4${(n >> 32).toString(16).padStart(3, '0').slice(-3)}-8${(Math.floor(n / 4096) % 4096).toString(16).padStart(3, '0')}-${(n % 4096).toString(16).padStart(4, '0')}${'0'.repeat(8)}`;
 const addDays = (date: string, n: number) => new Date(Date.parse(`${date}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const dayOfWeek = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
