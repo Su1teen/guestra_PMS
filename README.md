@@ -648,7 +648,7 @@ Before going live, verify the items in [`docs/deployment.md`](./docs/deployment.
 ### Run tests
 
 ```bash
-# Passing-test count: 2740 test cases across 358 files (skipped excluded)
+# Passing-test count: 2740 test cases across 359 files (skipped excluded)
 
 # API tests only
 pnpm --filter @telivityhaip/api test
@@ -1200,7 +1200,7 @@ HAIP is built in public and contributions are welcome.
 pnpm install          # Install dependencies
 pnpm build            # Build all workspace packages
 pnpm dev              # Start API in dev mode (hot reload)
-pnpm test             # Run all tests (2740 passing, 358 files with passes; skipped excluded)
+pnpm test             # Run all tests (2740 passing, 359 files with passes; skipped excluded)
 pnpm lint             # ESLint
 ```
 
