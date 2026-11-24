@@ -5,6 +5,7 @@ export interface ConnectAcceptedQuote {
   checkIn:string;checkOut:string;adults:number;children:number;customerId:string;
   totalAmount:string;currency:string;lineItems:Array<{date:string;rate:string;tax:string}>;
   expiresAt:string;
+  sandboxPrepayment?: { amount: string; holdMinutes: number | null };
 }
 export function canonical(value:unknown):string {
   if (Array.isArray(value)) return '['+value.map(canonical).join(',')+']';

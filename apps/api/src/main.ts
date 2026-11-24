@@ -37,6 +37,7 @@ async function bootstrap() {
   // parser so req.body is a Buffer for that route; every other route still
   // receives parsed JSON.
   app.use('/api/v1/webhooks/stripe', raw({ type: 'application/json' }));
+  app.use('/api/v1/webhooks/qutpay', raw({ type: 'application/json' }));
   app.use(json());
 
   // Global prefix for all routes

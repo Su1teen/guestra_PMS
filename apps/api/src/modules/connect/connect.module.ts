@@ -9,6 +9,8 @@ import { ConnectReadinessController } from './connect-readiness.controller';
 import { StaffConnectSubscriptionsController } from './staff-connect-subscriptions.controller';
 import { ConnectV2Controller } from './connect-v2.controller';
 import { ConnectV2Service } from './connect-v2.service';
+import { ConnectRemotePrepaymentController } from './connect-remote-prepayment.controller';
+import { ConnectRemotePrepaymentService } from './connect-remote-prepayment.service';
 import { ConnectV2Guard } from './connect-v2.guard';
 import { ConnectSandboxService } from './connect-sandbox.service';
 import { ConnectInboxService } from './connect-inbox.service';
@@ -42,10 +44,11 @@ import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [ReservationModule, WebhookModule, AuthModule, RatePlanModule, PolicyModule, TaxModule, FolioModule, ServiceRequestsModule, AccountingModule, GuestInboxModule, EmailModule, NotificationsModule, ReportsModule, PropertyModule],
-  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController, CrmReportsController, CrmBookingTermsController, CrmPriceCalendarController, ReservationChatController],
+  controllers: [ConnectController, ConnectCredentialsController, ServiceOperationsController, ConnectV2Controller, ConnectRemotePrepaymentController, ConnectInboxController, ConnectReadinessController, StaffConnectSubscriptionsController, CrmSyncController, CrmReportsController, CrmBookingTermsController, CrmPriceCalendarController, ReservationChatController],
   providers: [
     CredentialAdminGuard,
     ConnectV2Service, ConnectV2Guard, ConnectInboxService, ConnectSandboxService, ReservationChatService,
+    ConnectRemotePrepaymentService,
     ConnectSearchService,
     ConnectContentService,
     ConnectBookingService,
