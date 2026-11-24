@@ -413,7 +413,7 @@ export class GuestService {
       };
     });
 
-    const ancillaryTypes = new Set(['food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'incidental', 'fee', 'package']);
+    const ancillaryTypes = new Set(['food_beverage', 'minibar', 'phone', 'laundry', 'parking', 'spa', 'bath', 'entertainment', 'incidental', 'fee', 'package']);
     const serviceHistory = chargeRows.filter((c: any) => ancillaryTypes.has(c.type)).map((c: any) => {
       const folio = folioRows.find((f: any) => f.id === c.folioId);
       const stay = stays.find((s: any) => s.id === folio?.reservationId);

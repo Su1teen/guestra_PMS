@@ -22,6 +22,8 @@ export const POS_CHARGE_TYPES = [
   'laundry',
   'parking',
   'spa',
+  'bath',
+  'entertainment',
   'incidental',
   'fee',
 ] as const;
@@ -65,6 +67,12 @@ export class PostPosChargeDto {
   @ApiProperty({ description: 'Date the charge applies to (service date)' })
   @IsDateString()
   serviceDate!: string;
+
+  @ApiPropertyOptional({ example: 'Ресторан', description: 'Outlet name shown in revenue by outlet' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  outlet?: string;
 
   @ApiPropertyOptional({ description: 'External POS reference / check number' })
   @IsOptional()

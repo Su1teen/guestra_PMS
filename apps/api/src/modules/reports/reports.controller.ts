@@ -60,6 +60,21 @@ export class ReportsController {
     return this.moneyReports.management(propertyId, from, to);
   }
 
+  @Get('/manager-report')
+  @RequirePermissions('reports.view', 'management_dashboard.view')
+  @ApiOperation({ summary: "Manager's report: day, month and year to date with last year — rooms, revenue by department, money received" })
+  @ApiQuery({ name: 'propertyId', required: true }) @ApiQuery({ name: 'date', required: false })
+  managerReport(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Query('date') date?: string) {
+    return this.reportsService.getManagerReport(propertyId, date);
+  }
+
+  @Get('/outlet-revenue')
+  @ApiOperation({ summary: 'Revenue of points of sale per department and outlet, with every charge' })
+  @ApiQuery({ name: 'propertyId', required: true }) @ApiQuery({ name: 'from', required: true }) @ApiQuery({ name: 'to', required: true })
+  outletRevenue(@Query('propertyId', ParseUUIDPipe) propertyId: string, @Query('from') from: string, @Query('to') to: string) {
+    return this.reportsService.getOutletRevenue(propertyId, from, to);
+  }
+
   @Get('/management-report')
   @RequirePermissions('reports.view','management_dashboard.view')
   @ApiOperation({ summary:'Signed management hierarchy with versioned supplied budgets and expenses' })
